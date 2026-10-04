@@ -1,0 +1,936 @@
+openapi: 3.0.3
+info:
+  title: Nekopass API
+  version: 0.10.0
+  description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Admin-created accounts. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
+servers:
+  - url: /api/v1
+security:
+  - session: []
+  - httpSession: []
+paths:
+  /admin/updates:
+    get:
+      summary: Administrator only; check latest stable GitHub release
+      responses:
+        '200': {description: 'current_version, latest (version, url, published_at), update_available. Successful checks cached for 5 minutes; errors for 1 minute.'}
+        '403': {$ref: '#/components/responses/Error'}
+        '502': {description: GitHub unavailable or release files incomplete}
+  /admin/nodes/{id}/update:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    post:
+      summary: Administrator only; enqueue latest stable release for this online Agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: {type: string, example: v0.10.0}
+      responses:
+        '200': {description: 'generation, version and queued state; Agent protocol 9 and installed updater required. Update progress appears in admin nodes only. Uses fixed hajidishu/nekopass Releases; preserves node identity and quota state.'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {description: Offline/legacy node, pending task or version conflict}
+  /admin/nodes/{id}/ddns:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    get:
+      summary: Administrator only; node DDNS settings and latest synchronization status
+      responses:
+        '200': {description: 'node_id, node_name, protocol_version, online, config (including API token), generation, status and status_received_at. Never exposed to user APIs or other nodes.'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      summary: Administrator only; save Cloudflare DDNS and push to this node
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: {type: boolean, default: false}
+                provider: {type: string, enum: [cloudflare]}
+                record_name: {type: string, example: node.example.com}
+                token: {type: string, description: Cloudflare API token with DNS Edit permission}
+                zone_id: {type: string, description: '32 hex characters; blank discovers automatically and requires Zone Read permission'}
+                ipv4: {type: boolean, default: true}
+                ipv6: {type: boolean, default: false}
+                interval_seconds: {type: integer, minimum: 60, maximum: 86400, default: 300}
+                ttl: {type: integer, description: '1 for automatic or 60–86400 seconds', default: 300}
+                ipv4_url: {type: string, default: 'https://api.ipify.org'}
+                ipv6_url: {type: string, default: 'https://api6.ipify.org'}
+                use_for_ingress: {type: boolean, default: true}
+                use_for_egress: {type: boolean, default: true}
+      responses:
+        '200': {description: 'generation; state pending until Agent protocol 8 or newer reports. Enabled address binding replaces selected node addresses with record_name. Disabling preserves records and node addresses.'}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/nodes/{id}/ddns/run:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    post:
+      summary: Administrator only; request immediate reconciliation of enabled DDNS
+      responses:
+        '200': {description: generation}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {description: Save and enable DDNS first}
+  /wallet:
+    get:
+      summary: Current account balance and most recent 100 wallet entries
+      responses:
+        '200': {description: 'balance_cents integer, currency CNY, entries, minimum_recharge_cents, empty payment_channels until a gateway is implemented'}
+        '401': {$ref: '#/components/responses/Error'}
+  /orders:
+    get:
+      summary: Current account orders only, including manual recharge and balance purchases
+      parameters:
+        - {name: page, in: query, schema: {type: integer, minimum: 1, maximum: 100000, default: 1}}
+      responses:
+        '200': {description: 'items, total and page; 20 rows per page; historical plan names and purchase snapshots retained'}
+  /shop/plans:
+    get:
+      summary: Enabled plans with at least one price; prices are integer CNY cents keyed by cycle
+      responses:
+        '200': {description: Public sale plan array without private node addresses}
+  /shop/quote:
+    post:
+      summary: Preview balance purchase or renewal dates and price without charging
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id, cycle]
+              properties:
+                plan_id: {type: integer, format: int64}
+                cycle: {$ref: '#/components/schemas/BillingCycle'}
+      responses:
+        '200': {description: 'plan_id, plan_name, cycle, amount_cents, balance_cents, expires_at, next_reset_at, epoch, kind and replaces_plan'}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /shop/purchase:
+    post:
+      summary: Atomically debit wallet, record order and start a new quota epoch; same request_key replays without charging
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id, cycle, request_key, expected_price_cents, expected_epoch]
+              properties:
+                plan_id: {type: integer, format: int64}
+                cycle: {$ref: '#/components/schemas/BillingCycle'}
+                request_key: {type: string, pattern: '^[A-Za-z0-9_-]{16,80}$'}
+                expected_price_cents: {type: integer, format: int64, minimum: 0, description: Price returned by quote}
+                expected_epoch: {type: integer, format: int64, minimum: 0, description: Epoch returned by quote; stale concurrent confirmations are rejected}
+      responses:
+        '200': {description: 'id, balance_cents, expires_at and next_reset_at; replayed true for an existing request'}
+        '409': {description: Insufficient funds, stale quote, conflicting request key or rule limit exceeded}
+  /admin/users/{id}/recharge:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    post:
+      security: [{session: []}, {httpSession: []}, {adminKey: []}]
+      summary: Audited administrator recharge; does not invoke any payment gateway
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, note, request_key]
+              properties:
+                amount: {type: string, example: '100.00', description: Positive CNY amount with at most two decimal places}
+                note: {type: string, minLength: 1, maxLength: 300}
+                request_key: {type: string, pattern: '^[A-Za-z0-9_-]{16,80}$'}
+      responses:
+        '200': {description: 'id and balance_cents; identical replay does not credit twice'}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /site:
+    get:
+      security: []
+      summary: Public site name only; never returns connection settings or keys
+      responses:
+        '200':
+          description: Site branding
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  site_name: {type: string}
+  /admin/settings:
+    get:
+      security: [{session: []}, {httpSession: []}, {adminKey: []}]
+      summary: Read system settings and whether a management API key is configured
+      responses:
+        '200':
+          description: No plaintext key or key hash is returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  settings: {$ref: '#/components/schemas/SystemSettings'}
+                  api_key_configured: {type: boolean}
+        '403': {$ref: '#/components/responses/Error'}
+    put:
+      security: [{session: []}, {httpSession: []}, {adminKey: []}]
+      summary: Replace system settings; public endpoints do not rebind server listeners
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SystemSettings'}
+      responses:
+        '200': {description: Saved settings}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/settings/api-key:
+    post:
+      security: [{session: []}, {httpSession: []}, {adminKey: []}]
+      summary: Generate or replace the management API key; plaintext returned only once
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                key: {type: string, description: Empty generates a key; custom keys require 32–256 non-whitespace characters}
+      responses:
+        '200': {description: Object with key string; store securely}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    delete:
+      security: [{session: []}, {httpSession: []}, {adminKey: []}]
+      summary: Revoke the management API key without affecting node keys
+      responses:
+        '200': {description: Revoked}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/nodes/{id}/install-command:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    post:
+      security: [{session: []}, {httpSession: []}, {adminKey: []}]
+      summary: Issue a one-use node installation command with a settings snapshot
+      responses:
+        '200':
+          description: Treat the command as a secret until used or expired
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  command: {type: string}
+                  expires_at: {type: string, format: date-time}
+                  existing_node: {type: boolean, description: Bound nodes require upgrade on the original host}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /node-install/redeem:
+    post:
+      security: [{installTicket: []}]
+      summary: Atomically redeem a one-use installation credential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                current_token: {type: string, description: Required for already-bound nodes; exact existing node key}
+      responses:
+        '200':
+          description: Private connection and release configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  node_id: {type: integer, format: int64}
+                  server: {type: string}
+                  token: {type: string}
+                  version: {type: string}
+                  download_base: {type: string}
+        '401': {description: Invalid, expired or already-used ticket}
+        '409': {description: Bound node identity mismatch}
+  /profile:
+    get:
+      summary: Current account profile only, including when the current account is an administrator
+      responses:
+        '200': {description: Single-element user resource array; never returns other accounts}
+  /admin/announcement:
+    get:
+      summary: Admin reads the editable site announcement
+      responses:
+        '200': {description: Object with content string}
+        '403': {$ref: '#/components/responses/Error'}
+    put:
+      summary: Admin publishes the site announcement
+      requestBody: {$ref: '#/paths/~1announcement/put/requestBody'}
+      responses:
+        '200': {description: Saved announcement}
+  /admin/users:
+    get:
+      summary: Admin lists user accounts, plans and usage for the management area
+      responses:
+        '200': {description: User array}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      summary: Admin creates a non-admin account
+      requestBody: {$ref: '#/components/requestBodies/User'}
+      responses:
+        '200': {description: Created user ID}
+  /admin/users/{userID}:
+    parameters:
+      - name: userID
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    get:
+      summary: Admin loads a specific account for its dedicated rules page
+      responses:
+        '200': {description: Single-element user resource array}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      summary: Admin edits account and plan assignment
+      requestBody: {$ref: '#/components/requestBodies/User'}
+      responses:
+        '200': {description: Updated user ID}
+  /login:
+    post:
+      security: []
+      summary: Login and set an HttpOnly session cookie; Secure follows the trusted request protocol
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: {type: string}
+                password: {type: string}
+      responses:
+        '200': {description: 'id, username, is_admin; sets cookie'}
+        '401': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+  /logout:
+    post:
+      summary: Revoke current session
+      responses:
+        '200': {description: Logged out}
+  /me:
+    get:
+      summary: Current account
+      responses:
+        '200': {description: 'id, username, is_admin'}
+  /users:
+    get:
+      summary: All accounts for admin, own account otherwise
+      responses:
+        '200': {description: 'Array including traffic_bytes, charged_bytes, allocated_bytes and user settings; password hashes are never returned'}
+    post:
+      summary: Admin creates a non-admin user
+      requestBody: {$ref: '#/components/requestBodies/User'}
+      responses:
+        '200': {description: Created user ID}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /users/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    put:
+      summary: Admin updates account and plan assignment; empty password preserves it; direct limit overrides are rejected
+      requestBody: {$ref: '#/components/requestBodies/User'}
+      responses:
+        '200': {description: Updated user ID}
+        '409': {$ref: '#/components/responses/Error'}
+  /nodes:
+    get:
+      summary: Admin-only legacy alias for node management; users must use node-status or rule-nodes
+      responses:
+        '200': {description: Node array}
+    post:
+      summary: Admin creates node; its stable token remains visible in node management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, maxLength: 80}
+      responses:
+        '200': {description: 'id, token'}
+  /rules:
+    get:
+      summary: Current account rules only, including administrators
+      responses:
+        '200': {description: Rule array including node_name, username, traffic_bytes}
+    post:
+      summary: Create TCP rule on an authorized ingress node, optionally via an authorized plaintext exit
+      requestBody: {$ref: '#/components/requestBodies/Rule'}
+      responses:
+        '200': {description: Created rule ID}
+        '409': {$ref: '#/components/responses/Error'}
+  /rules/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    put:
+      summary: Update owned rule; owner cannot change; switching node requires authorization
+      requestBody: {$ref: '#/components/requestBodies/Rule'}
+      responses:
+        '200': {description: Updated rule ID}
+    delete:
+      summary: Delete owned rule and stop existing connections on next synchronization
+      responses:
+        '200': {description: Deleted}
+        '404': {$ref: '#/components/responses/Error'}
+  /announcement:
+    get:
+      summary: Read site announcement as plain text
+      responses:
+        '200': {description: 'Object with content string'}
+    put:
+      summary: Admin updates announcement (20000 UTF-8 bytes maximum)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: {type: string}
+      responses:
+        '200': {description: Saved announcement}
+  /rule-groups:
+    get:
+      summary: List accessible groups with user_id and rule_count
+      responses:
+        '200': {description: Array of groups}
+    post:
+      summary: Create group; ordinary users always own their groups
+      requestBody: {$ref: '#/components/requestBodies/Group'}
+      responses:
+        '200': {description: Group ID}
+  /rule-groups/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    put:
+      summary: Rename accessible group
+      requestBody: {$ref: '#/components/requestBodies/Group'}
+      responses:
+        '200': {description: Group ID}
+    delete:
+      summary: Delete group and move its rules to ungrouped
+      responses:
+        '200': {description: Deleted}
+  /nodes/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    put:
+      summary: Admin changes node name and displayed public address
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, public_address]
+              properties:
+                name: {type: string}
+                public_address: {type: string, description: IP or hostname without scheme or port; empty allowed}
+      responses:
+        '200': {description: Updated}
+  /rules/batch:
+    post:
+      summary: Atomically mutate 1–500 accessible rules; all ownership checks precede writes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, action]
+              properties:
+                ids: {type: array, minItems: 1, maxItems: 500, uniqueItems: true, items: {type: integer, format: int64}}
+                action: {type: string, enum: [enable, disable, delete, clear, group, switch]}
+                group_id: {type: integer, format: int64, description: For group action; 0 means ungrouped}
+                node_id: {type: integer, format: int64, description: For switch action; authorized for all selected users; random ports assigned}
+      responses:
+        '200': {description: 'ok and affected count; clear only resets display baseline, never quota or history'}
+        '403': {$ref: '#/components/responses/Error'}
+  /rules/import:
+    post:
+      summary: Atomic import; any invalid rule rolls back the complete batch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rules]
+              properties:
+                rules:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: {$ref: '#/components/schemas/RuleInput'}
+      responses:
+        '200': {description: Object with created ids array}
+  /rules/stats:
+    get:
+      summary: Actual traffic over last 24 hours grouped by hour; access restricted to current user's rules
+      parameters:
+        - name: rule_id
+          in: query
+          schema: {type: integer, format: int64}
+        - name: user_id
+          in: query
+          description: Deprecated; ignored. Scope comes from session or admin-managed path
+          schema: {type: integer, format: int64}
+      responses:
+        '200': {description: Array of time (timestamp) and bytes (int64); scope is current account or the explicit admin-managed user}
+  /rule-nodes:
+    get:
+      summary: Authorized nodes for creating own rules (id, name, public_address, port_min, port_max, online, tunnel_protocol)
+      responses:
+        '200': {description: Node choices array}
+  /node-status:
+    get:
+      summary: User probe grouped by allowed plan node groups; no address or admin configuration fields
+      responses:
+        '200':
+          description: Flat array grouped by group_id; stale metrics are null
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: {type: integer, format: int64}
+                    name: {type: string}
+                    group_id: {type: integer, format: int64}
+                    group_name: {type: string}
+                    enabled: {type: boolean}
+                    online: {type: boolean}
+                    updated_at: {type: string, format: date-time, nullable: true}
+                    metrics: {$ref: '#/components/schemas/Probe'}
+  /admin/plans:
+    get:
+      summary: Admin lists plans
+      responses:
+        '200': {description: Resource array}
+    post:
+      summary: Admin creates plans
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PlanInput'}
+      responses:
+        '200': {description: Created resource ID}
+  /admin/plans/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    put:
+      summary: Admin replaces configuration; send complete object
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PlanInput'}
+      responses:
+        '200': {description: Updated}
+        '409': {$ref: '#/components/responses/Error'}
+    delete:
+      summary: Admin deletes unused resource; referenced resources must be disabled instead
+      responses:
+        '200': {description: Deleted}
+        '409': {$ref: '#/components/responses/Error'}
+  /admin/nodes:
+    get:
+      summary: Admin lists nodes, including the saved per-node token; legacy hash-only nodes show empty until they connect or are edited
+      responses:
+        '200': {description: Resource array}
+    post:
+      summary: Admin creates nodes; stable token returned and available in the admin node list
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/NodeInput'}
+      responses:
+        '200': {description: Created resource ID}
+  /admin/nodes/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    put:
+      summary: Admin replaces configuration; empty token generates a new one and returns it, unchanged token is preserved
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/NodeInput'}
+      responses:
+        '200': {description: Updated}
+        '409': {$ref: '#/components/responses/Error'}
+    delete:
+      summary: Admin deletes unused resource; referenced resources must be disabled instead
+      responses:
+        '200': {description: Deleted}
+        '409': {$ref: '#/components/responses/Error'}
+  /admin/node-groups:
+    get:
+      summary: Admin lists node-groups
+      responses:
+        '200': {description: Resource array}
+    post:
+      summary: Admin creates node-groups
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/NodeGroupInput'}
+      responses:
+        '200': {description: Created resource ID}
+  /admin/node-groups/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    put:
+      summary: Admin replaces configuration; send complete object
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/NodeGroupInput'}
+      responses:
+        '200': {description: Updated}
+        '409': {$ref: '#/components/responses/Error'}
+    delete:
+      summary: Admin deletes unused resource; referenced resources must be disabled instead
+      responses:
+        '200': {description: Deleted}
+        '409': {$ref: '#/components/responses/Error'}
+  /admin/users/{userID}/rules:
+    parameters:
+      - name: userID
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    get:
+      summary: Admin-only rules; same contract as ordinary endpoint but scoped strictly to userID
+      responses:
+        '200': {description: Scoped result}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      summary: Admin-only rules; same contract as ordinary endpoint but scoped strictly to userID
+      responses:
+        '200': {description: Scoped result}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/users/{userID}/rules/{id}:
+    parameters:
+      - name: userID
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+      - {$ref: '#/components/parameters/ID'}
+    put:
+      summary: Admin-only rules/{id}; same contract as ordinary endpoint but scoped strictly to userID
+      responses:
+        '200': {description: Scoped result}
+        '403': {$ref: '#/components/responses/Error'}
+    delete:
+      summary: Admin-only rules/{id}; same contract as ordinary endpoint but scoped strictly to userID
+      responses:
+        '200': {description: Scoped result}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/users/{userID}/rules/batch:
+    parameters:
+      - name: userID
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    post:
+      summary: Admin-only rules/batch; same contract as ordinary endpoint but scoped strictly to userID
+      responses:
+        '200': {description: Scoped result}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/users/{userID}/rules/import:
+    parameters:
+      - name: userID
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    post:
+      summary: Admin-only rules/import; same contract as ordinary endpoint but scoped strictly to userID
+      responses:
+        '200': {description: Scoped result}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/users/{userID}/rules/stats:
+    parameters:
+      - name: userID
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    get:
+      summary: Admin-only rules/stats; same contract as ordinary endpoint but scoped strictly to userID
+      responses:
+        '200': {description: Scoped result}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/users/{userID}/rule-nodes:
+    parameters:
+      - name: userID
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    get:
+      summary: Admin-only rule-nodes; same contract as ordinary endpoint but scoped strictly to userID
+      responses:
+        '200': {description: Scoped result}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/users/{userID}/rule-groups:
+    parameters:
+      - name: userID
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    get:
+      summary: Admin-only rule-groups; same contract as ordinary endpoint but scoped strictly to userID
+      responses:
+        '200': {description: Scoped result}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      summary: Admin-only rule-groups; same contract as ordinary endpoint but scoped strictly to userID
+      responses:
+        '200': {description: Scoped result}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/users/{userID}/rule-groups/{id}:
+    parameters:
+      - name: userID
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+      - {$ref: '#/components/parameters/ID'}
+    put:
+      summary: Admin-only rule-groups/{id}; same contract as ordinary endpoint but scoped strictly to userID
+      responses:
+        '200': {description: Scoped result}
+        '403': {$ref: '#/components/responses/Error'}
+    delete:
+      summary: Admin-only rule-groups/{id}; same contract as ordinary endpoint but scoped strictly to userID
+      responses:
+        '200': {description: Scoped result}
+        '403': {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    session: {type: apiKey, in: cookie, name: nekopass_session, description: HTTPS session}
+    httpSession: {type: apiKey, in: cookie, name: nekopass_session_http, description: HTTP session; isolated from HTTPS cookies}
+    adminKey:
+      type: http
+      scheme: bearer
+      description: Optional alternative to session for all /admin/* API routes only. Owner must remain an enabled administrator. Does not authenticate HTML pages.
+    installTicket:
+      type: http
+      scheme: bearer
+      description: Short-lived one-use node-specific credential; not a management API key
+  parameters:
+    ID: {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+  responses:
+    Error:
+      description: JSON error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: {type: string}
+  requestBodies:
+    Group:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name]
+            properties:
+              name: {type: string, minLength: 1, maxLength: 64}
+              user_id: {type: integer, format: int64, description: Ignored; owner is session or admin-managed user}
+    User:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/UserInput'}
+    Rule:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/RuleInput'}
+  schemas:
+    BillingCycle:
+      type: string
+      enum: [monthly, quarterly, semiannual, annual, biennial, triennial, onetime]
+    SystemSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        site_name: {type: string, minLength: 1, maxLength: 64}
+        panel_url: {type: string, description: HTTP or HTTPS origin without subpath; may include port}
+        agent_host: {type: string, description: Hostname or IP without scheme or port}
+        agent_port: {type: integer, minimum: 1, maximum: 65535, default: 9443}
+        installer_url: {type: string, description: HTTPS installer script URL}
+        release_base_url: {type: string, description: HTTPS release directory without version or query string}
+        agent_version: {type: string, default: v0.6.0}
+        install_token_minutes: {type: integer, minimum: 5, maximum: 1440, default: 30}
+    UserInput:
+      type: object
+      required: [username, enabled, plan_id]
+      additionalProperties: false
+      properties:
+        username: {type: string, maxLength: 64}
+        password: {type: string, description: '12–72 bytes on creation; empty on edit preserves password'}
+        enabled: {type: boolean}
+        plan_id: {type: integer, format: int64, description: '0 unassigns plan; switching plan preserves consumption'}
+    RuleInput:
+      type: object
+      required: [node_id, enabled]
+      properties:
+        user_id: {type: integer, format: int64, description: Ignored; owner is session or admin-managed user}
+        node_id: {type: integer, format: int64}
+        egress_node_id: {type: integer, format: int64, minimum: 0, default: 0, description: '0 means direct; other IDs must be linked to the ingress and allowed by the user plan'}
+        name: {type: string, maxLength: 128, description: Defaults to first target if blank}
+        group_id: {type: integer, format: int64, description: 0 means ungrouped; must belong to owner}
+        listen_port: {type: integer, minimum: 0, maximum: 65535, description: '0 or omitted allocates randomly within the centrally configured node port range'}
+        targets: {type: array, minItems: 1, maxItems: 32, items: {type: string}, description: 'host:port or [IPv6]:port; required unless legacy target_host/target_port supplied'}
+        balance: {type: string, enum: [random, round_robin, least_connections], default: random}
+        speed_mbps: {type: integer, enum: [0], default: 0, deprecated: true, description: Configure rule speed in plan instead}
+        ip_limit: {type: integer, enum: [0], default: 0, deprecated: true, description: Configure IP cap in plan instead}
+        connection_limit: {type: integer, enum: [0], default: 0, deprecated: true, description: Configure connection cap in plan instead}
+        proxy_accept: {type: string, enum: ['off', v1, v2], default: 'off'}
+        proxy_send: {type: string, enum: ['off', v1, v2], default: 'off'}
+        proxy_trusted_cidrs: {type: array, maxItems: 64, items: {type: string}, description: Required when proxy_accept enabled}
+        target_host: {type: string, description: IP or DNS hostname without scheme or port}
+        target_port: {type: integer, minimum: 1, maximum: 65535}
+        enabled: {type: boolean}
+    PlanInput:
+      type: object
+      required: [name, enabled, speed_mbps, quota_bytes, max_rules, max_connections, duration_days, node_group_ids]
+      properties:
+        prices:
+          type: object
+          description: 'Input CNY decimal strings by BillingCycle; empty or null means not sold, 0 means free. Output plan prices are integer cents. No reset package.'
+          additionalProperties: {type: string, nullable: true}
+        name: {type: string, maxLength: 80}
+        description: {type: string}
+        enabled: {type: boolean}
+        speed_mbps: {type: integer, minimum: 0, maximum: 100000, description: Per-user combined-direction cap per node; 0 is unlimited}
+        quota_bytes: {type: integer, format: int64, minimum: -1, description: Cumulative global quota; -1 is unlimited; 0 is zero allowance; switching never resets usage}
+        max_rules: {type: integer, minimum: 0, maximum: 10000, description: 0 unlimited}
+        max_connections: {type: integer, minimum: 0, maximum: 1000000, description: 0 unlimited}
+        ip_limit: {type: integer, minimum: 0, maximum: 1000000}
+        rule_speed_mbps: {type: integer, minimum: 0, maximum: 100000}
+        rule_ip_limit: {type: integer, minimum: 0, maximum: 1000000}
+        rule_connection_limit: {type: integer, minimum: 0, maximum: 1000000}
+        duration_days: {type: integer, minimum: 0, maximum: 36500, description: 0 unlimited}
+        purchase_limit: {type: integer, minimum: 0, maximum: 1000000, default: 0, description: Per-user cumulative successful purchases including renewals; 0 means unlimited}
+        node_group_ids: {type: array, items: {type: integer, format: int64}}
+    NodeGroupInput:
+      type: object
+      required: [name, enabled, node_ids]
+      properties:
+        name: {type: string}
+        description: {type: string}
+        enabled: {type: boolean}
+        sort_order: {type: integer}
+        node_ids: {type: array, items: {type: integer, format: int64}}
+    NodeInput:
+      type: object
+      required: [name, enabled, group_ids]
+      properties:
+        token: {type: string, description: 'Administrator-editable node key. Empty generates a new 64-character key; custom values require 8–128 ASCII letters, digits, underscores or dashes. Saving an existing node with an empty key replaces its previous key.'}
+        name: {type: string}
+        public_address: {type: string, description: Admin-only metadata; used in authorized rule entrance addresses}
+        notes: {type: string, description: Admin only}
+        enabled: {type: boolean, default: true}
+        group_ids: {type: array, items: {type: integer, format: int64}}
+        allow_direct: {type: boolean, default: true, description: Whether users may select direct forwarding on this ingress}
+        ingress_enabled: {type: boolean, default: true, description: Whether this node may be used as an ingress; false still allows exit functionality}
+        tunnel_exit_enabled: {type: boolean, default: false}
+        tunnel_protocol: {type: string, enum: [plain_tcp, tls_h2], default: plain_tcp, description: TLS HTTP2 requires Agent protocol 7}
+        tunnel_listen_host: {type: string, default: '0.0.0.0'}
+        tunnel_listen_port: {type: integer, minimum: 0, maximum: 65535, description: Required at 1–65535 when tunnel_exit_enabled; low ports need native service bind capability}
+        tls: {$ref: '#/components/schemas/TunnelTLS'}
+        tunnel_public_host: {type: string, description: Host reachable from linked ingress nodes; required when tunnel_exit_enabled}
+        allowed_ingress_ids: {type: array, items: {type: integer, format: int64}, description: Ingress nodes allowed to use this exit}
+        listen_host: {type: string, default: '0.0.0.0'}
+        port_min: {type: integer, minimum: 1024, maximum: 65535, default: 1024}
+        port_max: {type: integer, minimum: 1024, maximum: 65535, default: 65535}
+        max_connections: {type: integer, minimum: 0, maximum: 1000000, default: 10000, description: 0 unlimited}
+        dial_timeout_seconds: {type: integer, minimum: 1, maximum: 120, default: 8}
+        idle_timeout_seconds: {type: integer, minimum: 10, maximum: 86400, default: 300}
+        probe_interval_seconds: {type: integer, minimum: 2, maximum: 60, default: 5}
+        disk_path: {type: string, default: '/'}
+        network_interfaces: {type: array, maxItems: 32, items: {type: string}, description: Empty selects default route interface}
+    TunnelTLS:
+      type: object
+      additionalProperties: false
+      description: Administrator-only TLS settings. DNS credentials and certificate private keys are never exposed by user node endpoints.
+      properties:
+        server_name: {type: string, description: Exit certificate domain and default SNI}
+        client_sni: {type: string, description: Optional ingress SNI override; certificate names remain verified}
+        fingerprint: {type: string, enum: [chrome, firefox], default: chrome}
+        certificate_mode: {type: string, enum: [self_signed, import, acme_dns, acme_http], default: self_signed}
+        certificate: {type: string, description: Public PEM chain for import}
+        private_key: {type: string, description: Matching private key for import; administrator-only}
+        root_ca: {type: string, description: Optional public issuer CA for private imported/ACME certificates}
+        acme_root_ca: {type: string, description: Optional public CA for a private ACME directory; no insecure verification bypass}
+        path: {type: string, default: /api/stream}
+        public_port: {type: integer, minimum: 0, maximum: 65535, default: 0}
+        pool_size: {type: integer, minimum: 1, maximum: 8, default: 2}
+        stream_window_mib: {type: integer, minimum: 1, maximum: 64, default: 16}
+        connection_window_mib: {type: integer, minimum: 1, maximum: 256, default: 64}
+        max_streams: {type: integer, minimum: 1, maximum: 1024, default: 256}
+        site_title: {type: string, default: Welcome}
+        acme_email: {type: string}
+        acme_directory: {type: string, default: 'https://acme-v02.api.letsencrypt.org/directory'}
+        http_challenge_port: {type: integer, minimum: 1, maximum: 65535, default: 80}
+        dns_provider: {type: string, enum: [cloudflare, alidns, dnspod]}
+        dns_credentials: {type: object, additionalProperties: {type: string}}
+    Probe:
+      type: object
+      nullable: true
+      description: Server-level Linux metrics; not user billing traffic. Missing ready flags are false; omitted numeric counters are zero.
+      properties:
+        sampled_at: {type: integer, format: int64}
+        cpu_percent: {type: number}
+        memory_total: {type: integer, format: int64}
+        memory_used: {type: integer, format: int64}
+        disk_total: {type: integer, format: int64}
+        disk_used: {type: integer, format: int64}
+        rx_mbps: {type: number}
+        tx_mbps: {type: number}
+        tcp_connections: {type: integer, format: int64}
+        udp_sockets: {type: integer, format: int64}
+        load1: {type: number}
+        load5: {type: number}
+        load15: {type: number}
+        cpu_ready: {type: boolean}
+        memory_ready: {type: boolean}
+        disk_ready: {type: boolean}
+        network_ready: {type: boolean}
+        connections_ready: {type: boolean}
+        load_ready: {type: boolean}

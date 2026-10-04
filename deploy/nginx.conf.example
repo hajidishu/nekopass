@@ -1,0 +1,17 @@
+# Include inside your own TLS server block. Certificates are managed by Nginx.
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+
+# On a separate Agent TLS virtual host/port, use this location instead.
+# Agent server must be configured with that public host:port.
+# The gRPC backend is plaintext when no legacy gRPC certificates are configured.
+# location / {
+#     grpc_pass grpc://127.0.0.1:9443;
+#     grpc_read_timeout 3600s;
+#     grpc_send_timeout 3600s;
+# }

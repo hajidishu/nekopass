@@ -1,0 +1,23 @@
+[Unit]
+Description=Nekopass control panel
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nekopass
+Group=nekopass
+EnvironmentFile=/etc/nekopass/control.env
+ExecStart=/opt/nekopass/bin/nekopass -web /opt/nekopass/web -grpc 127.0.0.1:9443
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

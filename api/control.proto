@@ -1,0 +1,187 @@
+syntax = "proto3";
+package nekopass.v1;
+option go_package = "github.com/nekopass/nekopass/internal/protocol";
+
+service Control { rpc Connect(stream AgentMessage) returns (stream ControlMessage); }
+
+message Usage {
+  int64 user_id = 1;
+  int64 spent = 2;
+  int64 released = 3;
+  int64 traffic = 4;
+  int64 unlimited_spent = 5;
+  bool quota_unlimited = 6;
+  int64 quota_epoch = 7;
+}
+message RuleUsage { int64 rule_id = 1; int64 traffic = 2; }
+message AgentMessage {
+  repeated Usage usage = 1;
+  repeated RuleUsage rule_usage = 2;
+  repeated int64 request_users = 3;
+  int64 applied_revision = 4;
+  string error = 5;
+  int64 active_connections = 6;
+  string instance_id = 7;
+  Probe probe = 8;
+  int32 protocol_version = 9;
+  int64 acme_ack = 10;
+  DDNSStatus ddns_status = 11;
+  string agent_version = 12;
+  UpdateStatus update_status = 13;
+  bool update_supported = 14;
+}
+message UserPolicy {
+  int64 id = 1;
+  bool enabled = 2;
+  int64 expires_unix = 3;
+  int64 speed_bps = 4;
+  int64 issued = 5;
+  int64 max_connections = 6;
+  int32 ip_limit = 7;
+  bool quota_unlimited = 8;
+  int64 quota_epoch = 9;
+}
+message Rule {
+  int64 id = 1;
+  int64 user_id = 2;
+  string listen_host = 3;
+  int32 listen_port = 4;
+  string target_host = 5;
+  int32 target_port = 6;
+  bool enabled = 7;
+  repeated string targets = 8;
+  string balance = 9;
+  int64 speed_bps = 10;
+  int32 ip_limit = 11;
+  int32 connection_limit = 12;
+  string proxy_accept = 13;
+  string proxy_send = 14;
+  repeated string proxy_trusted_cidrs = 15;
+  int64 egress_node_id = 16;
+  string tunnel_host = 17;
+  int32 tunnel_port = 18;
+  string tunnel_token = 19;
+  int64 ingress_node_id = 20;
+  string tunnel_protocol = 21;
+  TLSClientConfig tls = 22;
+  int64 quota_epoch = 23;
+}
+message TunnelLink {
+  int64 ingress_node_id = 1;
+  string token = 2;
+}
+message EgressRule {
+  int64 rule_id = 1;
+  int64 ingress_node_id = 2;
+  repeated string targets = 3;
+  int64 user_id = 4;
+  int64 quota_epoch = 5;
+  int64 expires_unix = 6;
+}
+message ControlMessage {
+  int64 revision = 1;
+  repeated UserPolicy users = 2;
+  repeated Rule rules = 3;
+  NodeConfig node = 4;
+  repeated Usage acknowledged_usage = 5;
+  repeated TunnelLink tunnel_links = 6;
+  repeated EgressRule egress_rules = 7;
+  UpdateRequest update = 8;
+}
+
+message UpdateRequest { int64 generation = 1; string version = 2; }
+message UpdateStatus { int64 generation = 1; string version = 2; string state = 3; string error = 4; }
+
+message NodeConfig {
+ bool enabled = 1;
+ string listen_host = 2;
+ int32 port_min = 3;
+ int32 port_max = 4;
+ int64 max_connections = 5;
+ int32 dial_timeout_seconds = 6;
+ int32 idle_timeout_seconds = 7;
+ int32 probe_interval_seconds = 8;
+ string disk_path = 9;
+ repeated string network_interfaces = 10;
+ bool tunnel_exit_enabled = 11;
+ string tunnel_listen_host = 12;
+ int32 tunnel_listen_port = 13;
+ int64 node_id = 14;
+ string tunnel_protocol = 15;
+ TLSServerConfig tls = 16;
+ DDNSConfig ddns = 17;
+}
+
+message DDNSConfig {
+ bool enabled = 1;
+ int64 generation = 2;
+ string provider = 3;
+ string record_name = 4;
+ string zone_id = 5;
+ string token = 6;
+ bool ipv4 = 7;
+ bool ipv6 = 8;
+ int32 interval_seconds = 9;
+ int32 ttl = 10;
+ string ipv4_url = 11;
+ string ipv6_url = 12;
+}
+message DDNSStatus {
+ int64 generation = 1;
+ string state = 2;
+ string ipv4 = 3;
+ string ipv6 = 4;
+ int64 checked_unix = 5;
+ int64 updated_unix = 6;
+ string error = 7;
+}
+
+message TLSClientConfig {
+ string server_name = 1;
+ string fingerprint = 2;
+ string root_ca = 3;
+ string path = 4;
+ int32 pool_size = 5;
+ int32 stream_window_mib = 6;
+ int32 connection_window_mib = 7;
+}
+message TLSServerConfig {
+ string server_name = 1;
+ string certificate = 2;
+ string private_key = 3;
+ string path = 4;
+ int32 stream_window_mib = 5;
+ int32 connection_window_mib = 6;
+ int32 max_streams = 7;
+ int32 challenge_port = 8;
+ repeated ACMEChallenge challenges = 9;
+ string site_title = 10;
+}
+message ACMEChallenge {
+ string domain = 1;
+ string token = 2;
+ string key_authorization = 3;
+ int64 revision = 4;
+ int64 expires_unix = 5;
+}
+message Probe {
+ int64 sampled_at = 1;
+ double cpu_percent = 2;
+ int64 memory_total = 3;
+ int64 memory_used = 4;
+ int64 disk_total = 5;
+ int64 disk_used = 6;
+ double rx_mbps = 7;
+ double tx_mbps = 8;
+ int64 tcp_connections = 9;
+ int64 udp_sockets = 10;
+ double load1 = 11;
+ double load5 = 12;
+ double load15 = 13;
+ bool cpu_ready = 14;
+ bool memory_ready = 15;
+ bool disk_ready = 16;
+ bool network_ready = 17;
+ bool connections_ready = 18;
+ bool load_ready = 19;
+}

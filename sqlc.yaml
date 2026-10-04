@@ -1,0 +1,25 @@
+version: "2"
+sql:
+  - engine: postgresql
+    queries: internal/store/queries.sql
+    schema:
+      - internal/store/schema.sql
+      - internal/store/migration002.sql
+      - internal/store/migration003.sql
+      - internal/store/migration004.sql
+      - internal/store/migration005.sql
+      - internal/store/migration006.sql
+      - internal/store/migration007.sql
+      - internal/store/migration008.sql
+      - internal/store/migration009.sql
+      - internal/store/migration010.sql
+      - internal/store/migration011.sql
+      - internal/store/migration012.sql
+      - internal/store/migration013.sql
+    gen:
+      go:
+        package: store
+        out: internal/store
+        sql_package: pgx/v5
+        json_tags_case_style: snake
+        emit_json_tags: true

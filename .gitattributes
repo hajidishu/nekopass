@@ -1,0 +1,26 @@
+* text=auto
+*.sh text eol=lf
+.githooks/* text eol=lf
+.local/ export-ignore
+.tools/ export-ignore
+dist/ export-ignore
+web/dist/ export-ignore
+web/node_modules/ export-ignore
+docs/node_modules/ export-ignore
+docs/.vitepress/dist/ export-ignore
+docs/.vitepress/cache/ export-ignore
+docs/.vitepress/temp/ export-ignore
+docs/.vitepress/.temp/ export-ignore
+.vscode/ export-ignore
+.idea/ export-ignore
+**/__pycache__/ export-ignore
+*.env export-ignore
+*.env.* export-ignore
+*.env.example -export-ignore
+*.env.*.example -export-ignore
+*.key export-ignore
+*.pem export-ignore
+*.crt export-ignore
+*.db export-ignore
+*.bak* export-ignore
+*.log export-ignore

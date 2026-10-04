@@ -1,0 +1,73 @@
+name: Publish release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Stable version tag (vX.Y.Z)'
+        required: true
+        default: v0.10.0
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.event.inputs.version || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.version || github.ref_name }}
+      NEKOPASS_TEST_DATABASE_URL: postgres://runner@/nekopass_release_test?host=/var/run/postgresql&sslmode=disable
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate version and public source
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]{1,8}\.[0-9]{1,8}\.[0-9]{1,8}$ ]]
+          python3 scripts/check-public.py --staged
+          python3 scripts/check-public.py --history
+          mkdir -p .local
+          python3 -m unittest discover -s tests -p public_guard_test.py
+          python3 -m unittest discover -s tests -p updater_test.py
+          bash -n scripts/install-panel.sh scripts/install-agent.sh scripts/nekopassctl.sh
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Database, tests and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          sudo systemctl start postgresql
+          sudo -u postgres createuser runner || sudo -u postgres psql -XAt -c "SELECT 1 FROM pg_roles WHERE rolname='runner'" | grep -qx 1
+          sudo -u postgres createdb -O runner nekopass_release_test
+          go test -race -p 1 ./...
+          go vet ./...
+          npm --prefix web ci
+          npm --prefix web audit --audit-level=low
+      - name: Build native Linux amd64 and arm64 packages
+        shell: pwsh
+        run: ./scripts/package-panel.ps1 -Version $env:RELEASE_TAG
+      - name: Create draft, upload assets and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "Nekopass $RELEASE_TAG" --generate-notes
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            dist/oss/nekopass/releases/"$RELEASE_TAG"/nekopass-panel-linux-amd64.tar.gz \
+            dist/oss/nekopass/releases/"$RELEASE_TAG"/nekopass-panel-linux-arm64.tar.gz \
+            dist/oss/nekopass/releases/"$RELEASE_TAG"/nekopass-agent-linux-amd64 \
+            dist/oss/nekopass/releases/"$RELEASE_TAG"/nekopass-agent-linux-arm64 \
+            dist/oss/nekopass/install-panel.sh dist/oss/nekopass/install-agent.sh \
+            dist/oss/nekopass/nekopassctl.sh dist/oss/nekopass/nekopass-update.py
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

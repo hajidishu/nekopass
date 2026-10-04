@@ -1,0 +1,28 @@
+[Unit]
+Description=Nekopass TCP forwarding agent
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/nekopass/agent.env
+
+[Service]
+Type=simple
+User=nekopass-agent
+Group=nekopass-agent
+EnvironmentFile=/etc/nekopass/agent.env
+ExecStart=/opt/nekopass/bin/nekopass-agent -state /var/lib/nekopass-agent/state.db
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+StateDirectory=nekopass-agent
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
