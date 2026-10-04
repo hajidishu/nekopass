@@ -7,7 +7,7 @@ write_manager_payload() { return 1; }
 write_updater_payload() { return 1; }
 # PACKAGED_UPDATER
 DEFAULT_DOWNLOAD_BASE='https://github.com/hajidishu/nekopass/releases/download'
-RELEASE_VERSION='v0.10.2'; DOWNLOAD_BASE=$DEFAULT_DOWNLOAD_BASE; PACKAGE_URL=''; PACKAGE=''; SOURCE_DIR=''
+RELEASE_VERSION='v0.10.3'; DOWNLOAD_BASE=$DEFAULT_DOWNLOAD_BASE; PACKAGE_URL=''; PACKAGE=''; SOURCE_DIR=''
 SERVICE='nekopass'; HOST=''; AGENT_HOST=''; AGENT_PORT=''; HTTP_PORT=8080; GRPC_PORT=9443; DB_PORT=''; PG_VERSION=''
 PG_SOURCE=system; ADMIN=admin; SITE=Nekopass; TLS_MODE=auto; TLS_CERT=''; TLS_KEY=''
 AGENT_INSTALLER='https://github.com/hajidishu/nekopass/releases/latest/download/install-agent.sh'; AGENT_RELEASES='https://github.com/hajidishu/nekopass/releases/download'; FIREWALL=auto; YES=0; SKIP_DEPS=0; DRY_RUN=0; WORK=''
@@ -25,7 +25,7 @@ Nekopass 面板一键安装（Debian/Ubuntu，原生 systemd，以 root 执行�
   --package-url URL        直接下载 HTTPS 发布包
   --download-base URL      HTTPS 版本下载根地址
   --source-dir PATH        已编译的源码目录（dist/bin + web/dist）
-  --version VERSION        默认 v0.10.2
+  --version VERSION        默认 v0.10.3
   --host HOST              用户/节点能访问的域名或 IP，不含协议
   --http-port PORT         网页 HTTP 端口，默认 8080
   --grpc-port PORT         节点连接端口，默认 9443
@@ -111,11 +111,16 @@ done
 prompt() {
  local key=$1 label=$2 default=$3 answer
  if ((YES)); then printf -v "$key" '%s' "$default"; return; fi
- printf '%s [%s]：' "$label" "$default" >&2
- if [[ -t 0 ]]; then read -r answer; else read -r answer </dev/tty || die '无法交互，请使用 --yes 并提供参数'; fi
+ # Readline handles cursor keys, Home/End, Delete and Backspace. Keep the
+ # default in the editable buffer, including when the script uses piped stdin.
+ if [[ -t 0 ]]; then
+  read -r -e -i "$default" -p "$label [$default]：" answer || die '交互输入已结束'
+ else
+  read -r -e -i "$default" -p "$label [$default]：" answer </dev/tty || die '无法交互，请使用 --yes 并提供参数'
+ fi
  printf -v "$key" '%s' "${answer:-$default}"
 }
-log '请选择安装配置；直接回车使用括号内默认值。'
+log '请选择安装配置；回车使用默认值，可用方向键和删除键编辑。'
 detected=$(hostname -I 2>/dev/null | awk '{print $1}')
 prompt HOST '面板/节点可访问的域名或 IP' "${HOST:-${detected:-127.0.0.1}}"
 prompt HTTP_PORT '面板 HTTP 端口' "$HTTP_PORT"

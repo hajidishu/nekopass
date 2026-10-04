@@ -22,6 +22,7 @@ jobs:
           python3 scripts/check-public.py --history
           mkdir -p .local
           python3 -m unittest discover -s tests -p public_guard_test.py
+          python3 -m unittest discover -s tests -p installer_prompt_test.py
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
