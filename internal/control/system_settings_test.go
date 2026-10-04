@@ -26,15 +26,23 @@ func TestInstallSettingsValidation(t *testing.T) {
 	if e := validateSettings(v); e != nil {
 		t.Fatal(e)
 	}
-	command := installCommand(v, "ticket", true)
+	command := installCommand(v, "fixture-node-key", "", true)
 	if e := installReady(v); e != nil {
 		t.Fatal("download addresses should be sufficient", e)
 	}
 	if strings.Contains(command, "sha256") {
 		t.Fatal("installation still requires checksum")
 	}
-	if !strings.Contains(command, shellQuote(v.InstallerURL)) || !strings.Contains(command, "'--upgrade'") {
+	if !strings.Contains(command, shellQuote(v.InstallerURL)) || !strings.Contains(command, "--upgrade") {
 		t.Fatal("unsafe command quoting or missing upgrade flag")
+	}
+	for _, value := range []string{"wget ", " && bash ", "--server 'panel.example.test:9443'", "--token 'fixture-node-key'", "--panel-url", shellQuote(v.ReleaseBaseURL), "--version"} {
+		if !strings.Contains(command, value) {
+			t.Fatal("missing direct installation parameter")
+		}
+	}
+	if strings.Contains(command, "--install-token") || strings.Contains(command, "\n") {
+		t.Fatal("old installation wrapper retained")
 	}
 	v.PanelURL = "http://panel.example.test:8080"
 	if e := validateSettings(v); e != nil {
@@ -120,6 +128,13 @@ func TestSettingsKeyAndInstallTicket(t *testing.T) {
 	check(issued, 200)
 	if strings.Contains(issued.Body.String(), key.Key) {
 		t.Fatal("admin key included in installation command")
+	}
+	var issuedCommand struct {
+		Command string `json:"command"`
+		Expires any    `json:"expires_at"`
+	}
+	if json.Unmarshal(issued.Body.Bytes(), &issuedCommand) != nil || !strings.Contains(issuedCommand.Command, nodeToken) || issuedCommand.Expires != nil {
+		t.Fatal("direct command missing persistent node key")
 	}
 	// Insert a known one-time ticket to test redemption without exposing plaintext storage.
 	token := Secret()

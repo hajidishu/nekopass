@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,7 +14,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/nekopass/nekopass/internal/release"
@@ -236,21 +236,33 @@ func (s *Server) apiKeyUser(r *http.Request) (store.User, error) {
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
-func installCommand(v SystemSettings, ticket string, bound bool) string {
-	args := []string{"--panel-url", v.PanelURL, "--install-token", ticket}
+func installCommand(v SystemSettings, token, ca string, bound bool) string {
+	args := []string{"--panel-url", v.PanelURL, "--server", net.JoinHostPort(v.AgentHost, strconv.Itoa(v.AgentPort)), "--token", token, "--download-base", v.ReleaseBaseURL, "--version", v.AgentVersion}
+	if ca != "" {
+		args = append(args, "--ca-base64", base64.StdEncoding.EncodeToString([]byte(ca)))
+	}
 	if bound {
 		args = append(args, "--upgrade")
 	}
 	quoted := []string{}
-	for _, a := range args {
-		quoted = append(quoted, shellQuote(a))
+	for i, a := range args {
+		if i%2 == 0 {
+			quoted = append(quoted, a)
+		} else {
+			quoted = append(quoted, shellQuote(a))
+		}
 	}
-	return "(set -eu\n" +
-		"[ \"$(id -u)\" -eq 0 ] || { echo '请以 root 运行'; exit 1; }\n" +
-		"if ! command -v curl >/dev/null 2>&1; then\n  if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y curl ca-certificates;\n  elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates;\n  elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates;\n  else echo '请先安装 curl 和 ca-certificates'; exit 1; fi\nfi\n" +
-		"installer=$(mktemp)\ntrap 'rm -f \"$installer\"' EXIT\n" +
-		"curl --fail --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 " + shellQuote(v.InstallerURL) + " -o \"$installer\"\n" +
-		"bash \"$installer\" " + strings.Join(quoted, " ") + "\n)"
+	return "wget " + shellQuote(v.InstallerURL) + " -O nekopass-install-agent.sh && bash nekopass-install-agent.sh " + strings.Join(quoted, " ")
+}
+func controlInstallCA() (string, error) {
+	if path := os.Getenv("NEKOPASS_AGENT_CA"); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil || len(data) > 65536 || publicCertificatePEM(string(data)) != nil {
+			return "", errors.New("节点连接公开 CA 配置无效")
+		}
+		return string(data), nil
+	}
+	return "", nil
 }
 func (s *Server) nodeInstallCommand(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
@@ -271,19 +283,21 @@ func (s *Server) nodeInstallCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var bound bool
-	if e = s.Pool.QueryRow(r.Context(), "SELECT instance_id<>'' FROM nodes WHERE id=$1", id).Scan(&bound); e != nil {
+	var token string
+	if e = s.Pool.QueryRow(r.Context(), "SELECT instance_id<>'',token FROM nodes WHERE id=$1", id).Scan(&bound, &token); e != nil {
 		fail(w, 404, "节点不存在")
 		return
 	}
-	ticket := Secret()
-	expires := time.Now().Add(time.Duration(v.InstallTokenMinutes) * time.Minute)
-	data, _ := json.Marshal(v)
-	if _, e = s.Pool.Exec(r.Context(), "INSERT INTO node_install_tickets(token_hash,node_id,expires_at,config) VALUES($1,$2,$3,$4)", Hash(ticket), id, expires, data); e != nil {
-		s.dbError(w, e)
+	if !validNodeToken(token) {
+		fail(w, 409, "请先在节点编辑中保存节点密钥；留空保存会自动生成")
 		return
 	}
-	_, _ = s.Pool.Exec(r.Context(), "DELETE FROM node_install_tickets WHERE expires_at<now()-interval '1 day'")
-	writeJSON(w, 200, map[string]any{"command": installCommand(v, ticket, bound), "expires_at": expires, "existing_node": bound})
+	ca, e := controlInstallCA()
+	if e != nil {
+		fail(w, 503, e.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"command": installCommand(v, token, ca, bound), "expires_at": nil, "existing_node": bound})
 }
 func (s *Server) redeemInstall(w http.ResponseWriter, r *http.Request) {
 	auth := r.Header.Get("Authorization")
@@ -303,14 +317,10 @@ func (s *Server) redeemInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	var controlCA string
-	if path := os.Getenv("NEKOPASS_AGENT_CA"); path != "" {
-		data, err := os.ReadFile(path)
-		if err != nil || len(data) > 65536 || publicCertificatePEM(string(data)) != nil {
-			fail(w, 503, "节点连接公开 CA 配置无效")
-			return
-		}
-		controlCA = string(data)
+	controlCA, caErr := controlInstallCA()
+	if caErr != nil {
+		fail(w, 503, caErr.Error())
+		return
 	}
 	tx, e := s.Pool.Begin(ctx)
 	if e != nil {

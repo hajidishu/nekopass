@@ -62,6 +62,10 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
 def cleanup():
     for service in [AGENT,SERVICE]:
         subprocess.run(['systemctl','disable','--now',service],capture_output=True)
+        if service==AGENT:
+            subprocess.run(['systemctl','disable','--now',service+'-update.path'],capture_output=True)
+            subprocess.run(['systemctl','stop',service+'-update.service'],capture_output=True)
+            for suffix in ['-update.path','-update.service']:(pathlib.Path('/etc/systemd/system')/(service+suffix)).unlink(missing_ok=True)
         subprocess.run(['systemctl','reset-failed',service],capture_output=True)
         (pathlib.Path('/etc/systemd/system')/(service+'.service')).unlink(missing_ok=True)
     run(['runuser','-u','postgres','--','dropdb','-p',DB_PORT,'--if-exists',SERVICE])
@@ -139,7 +143,8 @@ def main():
         client=opener();api(client,'login',{'username':'admin','password':new_password})
         node=api(client,'admin/nodes',{'name':'panel-install-node'})
         command=api(client,'admin/nodes/'+str(node['id'])+'/install-command',{})
-        ticket=re.search(r"'--install-token' '([a-f0-9]{64})'",command['command']).group(1)
+        import shlex
+        connection_args=shlex.split(command['command'].split(' && bash nekopass-install-agent.sh ',1)[1])
         # Use a private, verified HTTPS fixture for downloads, not a public OSS.
         handler=functools.partial(Quiet,directory=str(ROOT/'downloads'))
         server=http.server.ThreadingHTTPServer(('127.0.0.1',28443),handler)
@@ -148,7 +153,7 @@ def main():
         server.socket=tls.wrap_socket(server.socket,server_side=True)
         threading.Thread(target=server.serve_forever,daemon=True).start()
         run(['bash',str(ROOT/'downloads/install-agent.sh'),'--service-name',AGENT,
-             '--panel-url',BASE,'--install-token',ticket,'--ca-file',str(CONFIG/'tls/ca.crt')])
+             *connection_args,'--ca-file',str(CONFIG/'tls/ca.crt')])
         agent_env=(pathlib.Path('/etc')/AGENT/'agent.env').read_text()
         assert 'NEKOPASS_CA=' in agent_env
         ca=(pathlib.Path('/etc')/AGENT/'tls/ca.crt').read_text()

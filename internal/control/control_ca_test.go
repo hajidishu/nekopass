@@ -1,6 +1,7 @@
 package control
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -12,6 +13,13 @@ func TestPublicControlTrustRejectsMixedMaterials(t *testing.T) {
 	}
 	if err = publicCertificatePEM(cert); err != nil {
 		t.Fatal(err)
+	}
+	v := defaultSettings()
+	v.PanelURL = "http://panel.example.test:8080"
+	v.AgentHost = "2001:db8::1"
+	command := installCommand(v, "fixture-node-key", cert, false)
+	if !strings.Contains(command, "--server '[2001:db8::1]:9443'") || !strings.Contains(command, shellQuote(base64.StdEncoding.EncodeToString([]byte(cert)))) || strings.Contains(command, key) || strings.Contains(command, "\n") {
+		t.Fatal("embedded public control CA or IPv6 endpoint invalid")
 	}
 	for _, value := range []string{"unrelated text\n" + cert, cert + "unrelated text", key + cert, cert + key} {
 		if publicCertificatePEM(value) == nil {

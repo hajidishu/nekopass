@@ -7,7 +7,7 @@ TCP 端口转发面板，支持明文 / TLS 隧道，原生 systemd 部署。
 Debian / Ubuntu，amd64 / arm64：
 
 ```bash
-curl -fL https://github.com/hajidishu/nekopass/releases/latest/download/install-panel.sh -o install-panel.sh && sudo bash install-panel.sh
+wget https://github.com/hajidishu/nekopass/releases/latest/download/install-panel.sh -O install-panel.sh && sudo bash install-panel.sh
 ```
 
 安装完成显示管理员账号和随机密码。网页默认 `8080`，节点控制端口 `9443`；网页 HTTPS 自行配置 Nginx。

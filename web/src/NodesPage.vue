@@ -12,8 +12,8 @@ async function checkUpdates(){checkingUpdate.value=true;try{const data=await api
 async function updateNode(n:Node){if(!n.update_supported){ElMessage.warning('请先重新运行新版节点安装命令，以安装更新服务');return}if(!latestVersion.value)await checkUpdates();if(!latestVersion.value)return;try{await ElMessageBox.confirm(`更新到 ${latestVersion.value} 将重启节点并中断现有转发连接。`,'更新节点',{confirmButtonText:'更新',cancelButtonText:'取消'});updatingNode.value=n.id;await api(`admin/nodes/${n.id}/update`,'POST',{version:latestVersion.value});ElMessage.success('更新任务已下发');emit('refresh')}catch(e){if(e instanceof Error)ElMessage.error(e.message)}finally{updatingNode.value=0}}
 const updateStates:Record<string,string>={queued:'等待更新',running:'更新中',completed:'已更新',failed:'更新失败'}
 const nodeDialog = ref(false), groupDialog = ref(false), editID = ref(0), groupID = ref(0), busy = ref(false), interfaces = ref('')
-const installDialog = ref(false), installCommand = ref(''), installExpiry = ref(''), installExisting = ref(false)
-async function installation(id: number) { await act(async () => { const data = await api<{command: string; expires_at: string; existing_node: boolean}>(`admin/nodes/${id}/install-command`, 'POST', {}); installCommand.value = data.command; installExpiry.value = data.expires_at; installExisting.value = data.existing_node; installDialog.value = true }) }
+const installDialog = ref(false), installCommand = ref(''), installExisting = ref(false)
+async function installation(id: number) { await act(async () => { const data = await api<{command: string; existing_node: boolean}>(`admin/nodes/${id}/install-command`, 'POST', {}); installCommand.value = data.command; installExisting.value = data.existing_node; installDialog.value = true }) }
 async function copyInstall() { try { await copyText(installCommand.value); ElMessage.success('安装命令已复制') } catch { ElMessage.warning('复制失败，请手动选择复制') } }
 async function copyToken(value:string) { try { await copyText(value);ElMessage.success('节点密钥已复制') } catch { ElMessage.warning('复制失败，请手动选择复制') } }
 const tlsDefaults = () => ({server_name:'',client_sni:'',fingerprint:'chrome',certificate_mode:'self_signed',certificate:'',private_key:'',root_ca:'',path:'/api/stream',public_port:0,pool_size:2,stream_window_mib:16,connection_window_mib:64,max_streams:256,site_title:'Welcome',acme_email:'',acme_directory:'https://acme-v02.api.letsencrypt.org/directory',acme_root_ca:'',http_challenge_port:80,dns_provider:'cloudflare',dns_credentials:{} as Record<string,string>})
@@ -39,10 +39,10 @@ async function remove(kind: 'nodes' | 'node-groups', id: number) { try { await E
  <el-dialog v-model="groupDialog" :title="groupID ? '编辑节点组' : '创建节点组'" width="550px"><el-form label-position="top"><el-form-item label="节点组名称"><el-input v-model="groupForm.name" /></el-form-item><el-form-item label="说明"><el-input v-model="groupForm.description" type="textarea" :rows="2" /></el-form-item><el-form-item label="组内节点"><el-select v-model="groupForm.node_ids" multiple filterable><el-option v-for="n in nodes" :key="n.id" :label="n.name" :value="n.id" /></el-select></el-form-item><el-form-item label="显示顺序"><el-input-number v-model="groupForm.sort_order" /></el-form-item><el-form-item label="启用节点组"><el-switch v-model="groupForm.enabled" /></el-form-item></el-form><template #footer><el-button @click="groupDialog = false">取消</el-button><el-button type="primary" :loading="busy" @click="saveGroup">保存节点组</el-button></template></el-dialog>
  
 <el-dialog v-model="installDialog" title="节点一键安装命令" width="780px" @closed="installCommand=''">
- <p>在节点服务器上以 root 运行。此命令中的节点专属凭证只能使用一次，有效期至 {{new Date(installExpiry).toLocaleString()}}。</p>
+ <p>在节点服务器上以 root 运行。命令已包含面板地址、主控端口、此节点密钥和所需公开 CA。</p>
  <p v-if="installExisting" class="field-tip">此节点已绑定服务器，命令仅用于原机器升级，会验证并保留原密钥与状态文件。新服务器请新建节点。</p>
- <p v-else class="field-tip">首次安装将自动兑换并保存节点密钥。下载失败后可重新生成命令再试。</p>
- <el-input :model-value="installCommand" type="textarea" :rows="14" readonly class="install-command" />
+ <p v-else class="field-tip">wget 下载脚本后由 bash 执行；命令可重复使用，更换节点密钥后重新复制。</p>
+ <el-input :model-value="installCommand" type="textarea" :rows="6" readonly class="install-command" />
  <p class="field-tip">下载源、版本、主控地址和证书配置来自 <a class="text-link" href="/admin/settings">系统设置</a>。管理 API 密钥不会下发到节点。</p>
  <template #footer><el-button @click="installDialog=false">关闭</el-button><el-button type="primary" @click="copyInstall">复制安装命令</el-button></template>
  </el-dialog>

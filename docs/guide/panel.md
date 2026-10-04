@@ -17,7 +17,7 @@ ARM64 使用 `nekopass-panel-linux-arm64.tar.gz`。
 从 GitHub Releases 下载：
 
 ```bash
-curl -fL https://github.com/hajidishu/nekopass/releases/latest/download/install-panel.sh -o install-panel.sh && sudo bash install-panel.sh
+wget https://github.com/hajidishu/nekopass/releases/latest/download/install-panel.sh -O install-panel.sh && sudo bash install-panel.sh
 ```
 
 安装完成后显示管理员账号与随机密码，并开启数据库、面板的开机自启。

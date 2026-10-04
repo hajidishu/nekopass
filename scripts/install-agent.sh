@@ -11,8 +11,8 @@ write_updater_payload() { return 1; }
 
 SERVER=''; TOKEN=''; TOKEN_FILE=''; PANEL_URL=''; INSTALL_TOKEN=''
 DOWNLOAD_BASE='https://github.com/hajidishu/nekopass/releases/download'
-VERSION='v0.10.0'; ARCH='auto'; BINARY_URL=''
-CA_URL=''; CA_FILE=''; SERVICE='nekopass-agent'
+VERSION='v0.10.1'; ARCH='auto'; BINARY_URL=''
+CA_URL=''; CA_FILE=''; CA_BASE64=''; SERVICE='nekopass-agent'
 UPGRADE=0; NO_START=0; DRY_RUN=0; WORK=''; CHANGED=0; WAS_ACTIVE=0; WAS_ENABLED=0
 usage() {
  cat <<'HELP'
@@ -20,7 +20,7 @@ Nekopass Agent installer (Linux + systemd, run as root)
 
 Direct mode:
   bash install-agent.sh -s panel.example.com:9443 -t NODE_TOKEN \
-    -d https://github.com/hajidishu/nekopass/releases/download -v v0.10.0
+    -d https://github.com/hajidishu/nekopass/releases/download -v v0.10.1
 
 Panel-issued install command:
   bash install-agent.sh -p https://panel.example.com -i INSTALL_TOKEN
@@ -31,11 +31,12 @@ Panel-issued install command:
   -p, --panel-url URL          HTTP(S) control-panel API root
   -i, --install-token TOKEN    One-time node-specific installation credential
   -d, --download-base URL      HTTPS release directory
-  -v, --version VERSION        Release directory name; default v0.10.0
+  -v, --version VERSION        Release directory name; default v0.10.1
   -a, --arch ARCH              auto, amd64 or arm64
       --binary-url URL        Override architecture binary download URL
   -c, --ca-file PATH          Additional trusted PEM CA (also used by Agent)
       --ca-url URL            Download additional trusted PEM CA over HTTPS
+      --ca-base64 BASE64      Embedded public control CA; no extra file download
       --service-name NAME     Default nekopass-agent; isolated suffix allowed
       --upgrade               Require an existing installation, preserve identity
       --no-start              Install files only; do not enable/start the service
@@ -65,6 +66,7 @@ while (($#)); do
   --binary-url) need_value "$@"; BINARY_URL=$2; shift 2;;
   -c|--ca-file) need_value "$@"; CA_FILE=$2; shift 2;;
   --ca-url) need_value "$@"; CA_URL=$2; shift 2;;
+  --ca-base64) need_value "$@"; CA_BASE64=$2; shift 2;;
   --service-name) need_value "$@"; SERVICE=$2; shift 2;;
   --upgrade) UPGRADE=1; shift;;
   --no-start) NO_START=1; shift;;
@@ -182,6 +184,22 @@ trust_ca() {
 fetch() { check_url "$1"; curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 15 --max-time 300 --retry 3 "${CURL_TLS[@]}" "$1" -o "$2"; }
 if [[ -n "$CA_FILE" ]]; then trust_ca "$CA_FILE"; cp "$CA_FILE" "$WORK/ca.crt"; fi
 if [[ -n "$CA_URL" ]]; then fetch "$CA_URL" "$WORK/ca.crt"; trust_ca "$WORK/ca.crt"; fi
+if [[ -n "$CA_BASE64" ]]; then
+ printf '%s' "$CA_BASE64" > "$WORK/control-ca.base64"
+ python3 - "$WORK/control-ca.base64" "$WORK/ca.crt" <<'PY'
+import base64,pathlib,re,ssl,sys
+raw=pathlib.Path(sys.argv[1]).read_bytes()
+if len(raw)>90000:sys.exit('Control CA is too large')
+try:
+ text=base64.b64decode(raw,validate=True).decode('ascii')
+ pattern=r'-----BEGIN CERTIFICATE-----\s*[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----'
+ if len(text)>65536 or not re.findall(pattern,text) or re.sub(pattern,'',text).strip():raise ValueError()
+ ssl.create_default_context().load_verify_locations(cadata=text)
+except Exception:sys.exit('Invalid public control CA')
+pathlib.Path(sys.argv[2]).write_text(text)
+PY
+fi
+if [[ -n "$PANEL_URL" ]]; then check_url "${PANEL_URL/#http:\/\//https:\/\/}"; fi
 if [[ -n "$INSTALL_TOKEN" ]]; then
  [[ -n "$PANEL_URL" ]] || die '--panel-url is required with --install-token'
  check_url "${PANEL_URL/#http:\/\//https:\/\/}"; [[ "$INSTALL_TOKEN" =~ ^[a-fA-F0-9]{64}$ ]] || die 'Invalid install token'
@@ -264,6 +282,7 @@ CHANGED=1
 systemctl stop "$SERVICE" 2>/dev/null || true
 install -m 755 "$WORK/agent" "$BIN"
 printf 'NEKOPASS_SERVER=%s\nNEKOPASS_NODE_TOKEN=%s\n' "$SERVER" "$TOKEN" > "$WORK/agent.env"
+if [[ -n "$PANEL_URL" ]]; then printf 'NEKOPASS_PANEL_URL=%s\n' "$PANEL_URL" >> "$WORK/agent.env"; fi
 if [[ -f "$WORK/ca.crt" ]]; then install -m 644 "$WORK/ca.crt" "$CA_DEST";printf 'NEKOPASS_CA=%s\n' "$CA_DEST" >> "$WORK/agent.env";fi
 install -m 600 "$WORK/agent.env" "$ENV_FILE"
 cat > "$WORK/agent.service" <<UNIT
