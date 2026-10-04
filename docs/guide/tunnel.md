@@ -13,8 +13,8 @@
 
 | 协议 | 配置 |
 | --- | --- |
-| 明文 TCP | 出口地址与监听端口 |
-| TLS 1.3 / HTTP2 | 另需证书域名 / SNI 和证书模式 |
+| [明文 TCP](../protocols/plain-tcp.md) | 出口地址与监听端口 |
+| [TLS 1.3 / HTTP2](../protocols/tls-h2.md) | 另需证书域名 / SNI 和证书模式 |
 
 TLS / HTTP2 的入口与出口均需 Agent `v0.8.0` 或以上。出口监听端口必须对入口可达。
 

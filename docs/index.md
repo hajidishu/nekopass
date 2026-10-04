@@ -17,7 +17,7 @@ features:
     link: /guide/panel
   - title: TCP 转发
     details: 直转、明文中转和 TLS / HTTP2 加密中转。
-    link: /guide/tunnel
+    link: /protocols/
   - title: 日常管理
     details: 启停、自启、日志、配置和密码恢复。
     link: /guide/manage

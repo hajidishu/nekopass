@@ -19,6 +19,7 @@ export default defineConfig({
     logo: '/logo.svg',
     nav: [
       { text: '使用文档', link: '/guide/panel' },
+      { text: '传输协议', link: '/protocols/' },
       ...(repository ? [{ text: '源码', link: `https://github.com/${repository}` }] : [])
     ],
     sidebar: [
@@ -27,6 +28,15 @@ export default defineConfig({
         items: [
           { text: '安装面板', link: '/guide/panel' },
           { text: '安装节点', link: '/guide/node' }
+        ]
+      },
+      {
+        text: '传输协议',
+        items: [
+          { text: '协议选择', link: '/protocols/' },
+          { text: 'TCP 直转', link: '/protocols/tcp' },
+          { text: '明文 TCP 中转', link: '/protocols/plain-tcp' },
+          { text: 'TLS 1.3 / HTTP2', link: '/protocols/tls-h2' }
         ]
       },
       {

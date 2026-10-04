@@ -46,7 +46,7 @@ sudo nekopassctl agent update
 
 ## 动态 IP / DDNS
 
-主控和 Agent 升级至 v0.9.0 后，在节点编辑中打开「DDNS 设置」，进入该节点的独立配置页。
+主控和 Agent 升级至 v0.9.0 后，在「节点管理」列表的操作栏点击「DDNS」，进入该节点的独立配置页。
 
 首版支持 Cloudflare：填写记录域名、API Token，选择 IPv4 / IPv6 并保存。Token 需要对应区域的 **DNS 编辑**权限；Zone ID 留空时还需要 **Zone 读取**权限。
 
