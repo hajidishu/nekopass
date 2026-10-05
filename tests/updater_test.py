@@ -9,6 +9,18 @@ if sys.platform=='win32':
 spec=importlib.util.spec_from_file_location('updater',ROOT/'scripts/nekopass-update.py')
 updater=importlib.util.module_from_spec(spec);spec.loader.exec_module(updater)
 class UpdaterTests(unittest.TestCase):
+ def test_curl_download_retries_without_disabling_certificate_checks(self):
+  with tempfile.TemporaryDirectory() as temp:
+   target=pathlib.Path(temp)/'package'
+   def complete(args,**kwargs):target.write_bytes(b'fixture-package')
+   with patch.object(updater.shutil,'which',return_value='/usr/bin/curl'),patch.object(updater,'run',side_effect=complete) as run:
+    updater.download('https://github.com/example/fixture',target)
+    args=run.call_args.args[0]
+    self.assertIn('--retry-all-errors',args)
+    self.assertIn('--max-filesize',args)
+    self.assertIn('--proto-redir',args)
+    self.assertNotIn('--insecure',args)
+    self.assertNotIn('-k',args)
  def test_bundled_panel_service_invokes_the_existing_cli(self):
   original_path=pathlib.Path
   with tempfile.TemporaryDirectory() as temp:

@@ -32,6 +32,17 @@ class HTTPSRedirect(urllib.request.HTTPRedirectHandler):
 
 def download(url, target, limit=120 * 1024 * 1024):
     assert url.startswith('https://')
+    if shutil.which('curl'):
+        # Match the installer download path: retry transient GitHub/CDN stalls,
+        # bound each attempt, and keep redirects restricted to HTTPS.
+        run(['curl', '--fail', '--silent', '--show-error', '--location',
+             '--proto', '=https', '--proto-redir', '=https', '--http1.1',
+             '--connect-timeout', '15', '--max-time', '120', '--retry', '2',
+             '--retry-all-errors', '--max-filesize', str(limit),
+             '--output', str(target), '--url', url], stderr=subprocess.DEVNULL)
+        if not target.is_file() or target.stat().st_size > limit:
+            raise ValueError('Download exceeds size limit')
+        return
     opener = urllib.request.build_opener(HTTPSRedirect())
     req = urllib.request.Request(url, headers={'User-Agent': 'Nekopass-Updater'})
     started = time.monotonic()
