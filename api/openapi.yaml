@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.13.2
+  version: 0.13.3
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Admin-created accounts. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1

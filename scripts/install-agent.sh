@@ -11,7 +11,7 @@ write_updater_payload() { return 1; }
 
 SERVER=''; TOKEN=''; TOKEN_FILE=''; PANEL_URL=''; INSTALL_TOKEN=''
 DOWNLOAD_BASE='https://github.com/hajidishu/nekopass/releases/download'
-VERSION='v0.13.2'; ARCH='auto'; BINARY_URL=''
+VERSION='v0.13.3'; ARCH='auto'; BINARY_URL=''
 SERVICE='nekopass-agent'
 UPGRADE=0; NO_START=0; DRY_RUN=0; WORK=''; CHANGED=0; WAS_ACTIVE=0; WAS_ENABLED=0
 usage() {
@@ -20,7 +20,7 @@ Nekopass Agent installer (Linux + systemd, run as root)
 
 Direct mode:
   bash install-agent.sh -s https://panel.example.com:9443 -t NODE_TOKEN \
-    -d https://github.com/hajidishu/nekopass/releases/download -v v0.13.2
+    -d https://github.com/hajidishu/nekopass/releases/download -v v0.13.3
 
 Panel-issued install command:
   bash install-agent.sh -p https://panel.example.com -i INSTALL_TOKEN
@@ -31,7 +31,7 @@ Panel-issued install command:
   -p, --panel-url URL          HTTP(S) control-panel API root
   -i, --install-token TOKEN    One-time node-specific installation credential
   -d, --download-base URL      HTTPS release directory
-  -v, --version VERSION        Release directory name; default v0.13.2
+  -v, --version VERSION        Release directory name; default v0.13.3
   -a, --arch ARCH              auto, amd64 or arm64
       --binary-url URL        Override architecture binary download URL
       --service-name NAME     Default nekopass-agent; isolated suffix allowed

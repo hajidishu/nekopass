@@ -152,7 +152,7 @@ Description=Nekopass panel release updater
 After=network-online.target
 [Service]
 Type=oneshot
-ExecStart={base}/bin/nekopass-update --service {service} --request
+ExecStart=/usr/local/bin/nekopassctl {'panel' if service == 'nekopass' else service} update
 TimeoutStartSec=600
 UMask=0077
 NoNewPrivileges=true
@@ -256,13 +256,17 @@ def main():
     p.add_argument('--version', default='latest')
     p.add_argument('--check', action='store_true')
     p.add_argument('--request', action='store_true')
-    p.add_argument('--setup-panel', action='store_true')
+    p.add_argument('--setup-panel', action='store_true', help=argparse.SUPPRESS)
     args = p.parse_args()
     if not SERVICE.fullmatch(args.service) or os.geteuid() != 0:
         p.error('Run as root with a valid Nekopass service')
     if args.setup_panel:
         setup_panel_update(args.service)
         return 0
+    # Ordinary CLI updates also prepare/repair the bundled panel integration,
+    # including when the installed binary already is the latest version.
+    if not args.service.startswith('nekopass-agent') and not args.check and not args.request:
+        setup_panel_update(args.service)
     lock = pathlib.Path('/run/lock') / (args.service + '-update.lock')
     with lock.open('w') as locked:
         fcntl.flock(locked, fcntl.LOCK_EX)

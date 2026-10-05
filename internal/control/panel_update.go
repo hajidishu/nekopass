@@ -107,7 +107,7 @@ func (s *Server) updatePanel(w http.ResponseWriter, r *http.Request) {
 	s.panelUpdateMu.Lock()
 	defer s.panelUpdateMu.Unlock()
 	if !s.panelUpdateSupported() {
-		fail(w, 409, "尚未安装面板更新服务，请先安装新版更新服务")
+		fail(w, 409, "面板更新暂不可用，请检查服务状态；更新组件随安装和升级自动部署")
 		return
 	}
 	if task := s.currentPanelUpdate(); task != nil && (task.State == "queued" || task.State == "running") {

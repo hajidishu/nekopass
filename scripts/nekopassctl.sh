@@ -143,7 +143,15 @@ run_action() {
    case "$SERVICE" in nekopass|nekopass-agent) base=/opt/nekopass;; *) base="/opt/$SERVICE";; esac
    updater="$base/bin/nekopass-update"
    [[ -x "$updater" ]] || { fail '请先使用新版安装脚本安装更新服务。'; return 1; }
-   if [[ "$1" == check-update ]]; then "$updater" --service "$SERVICE" --check; else "$updater" --service "$SERVICE"; fi;;
+   if [[ "$1" == check-update ]]; then
+    "$updater" --service "$SERVICE" --check
+   elif [[ "$SERVICE" != nekopass-agent* && -e "/var/lib/$SERVICE/update-request.json" ]]; then
+    # Panel and command-line updates share the same command. A queued panel
+    # request supplies the pinned version and receives durable progress/result.
+    "$updater" --service "$SERVICE" --request
+   else
+    "$updater" --service "$SERVICE"
+   fi;;
   *) fail "未知操作：$1"; usage; return 1;;
  esac
 }

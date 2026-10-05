@@ -9,6 +9,29 @@ if sys.platform=='win32':
 spec=importlib.util.spec_from_file_location('updater',ROOT/'scripts/nekopass-update.py')
 updater=importlib.util.module_from_spec(spec);spec.loader.exec_module(updater)
 class UpdaterTests(unittest.TestCase):
+ def test_bundled_panel_service_invokes_the_existing_cli(self):
+  original_path=pathlib.Path
+  with tempfile.TemporaryDirectory() as temp:
+   root=original_path(temp).resolve()
+   (root/'var/lib').mkdir(parents=True)
+   (root/'etc/systemd/system').mkdir(parents=True)
+   def isolated_path(value):return root / value.lstrip('/')
+   user=types.SimpleNamespace(pw_uid=123,pw_gid=123)
+   with patch.object(updater.pathlib,'Path',isolated_path),patch.object(updater,'run') as run,patch.object(updater.subprocess,'check_output',return_value='fixture-panel\n'),patch.object(updater.pwd,'getpwnam',return_value=user,create=True),patch.object(updater.os,'chown',create=True):
+    updater.setup_panel_update('nekopass')
+    unit=(root/'etc/systemd/system/nekopass-update.service').read_text()
+    self.assertIn('ExecStart=/usr/local/bin/nekopassctl panel update\n',unit)
+    self.assertNotIn('--request',unit)
+    self.assertTrue((root/'var/lib/nekopass/panel-update-ready').exists())
+    run.assert_any_call(['systemctl','enable','--now','nekopass-update.path'])
+ def test_normal_panel_update_prepares_integration_automatically(self):
+  with tempfile.TemporaryDirectory() as temp:
+   lock=pathlib.Path(temp)/'lock';real_open=pathlib.Path.open
+   def open_path(path,*args,**kwargs):return real_open(lock,*args,**kwargs)
+   with patch.object(sys,'argv',['updater','--service','nekopass','--version','v0.13.3']),patch.object(updater.os,'geteuid',return_value=0,create=True),patch.object(updater.pathlib.Path,'open',open_path),patch.object(updater.fcntl,'flock',create=True),patch.object(updater.fcntl,'LOCK_EX',1,create=True),patch.object(updater,'setup_panel_update') as setup,patch.object(updater,'update') as update:
+    self.assertEqual(updater.main(),0)
+    setup.assert_called_once_with('nekopass')
+    update.assert_called_once_with('nekopass','v0.13.3')
  @unittest.skipIf(sys.platform=='win32','Linux directory modes')
  def test_staged_panel_can_be_executed_under_private_umask(self):
   with tempfile.TemporaryDirectory() as temp:
