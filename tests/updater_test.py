@@ -9,6 +9,17 @@ if sys.platform=='win32':
 spec=importlib.util.spec_from_file_location('updater',ROOT/'scripts/nekopass-update.py')
 updater=importlib.util.module_from_spec(spec);spec.loader.exec_module(updater)
 class UpdaterTests(unittest.TestCase):
+ @unittest.skipIf(sys.platform=='win32','Linux directory modes')
+ def test_staged_panel_can_be_executed_under_private_umask(self):
+  with tempfile.TemporaryDirectory() as temp:
+   root=pathlib.Path(temp);archive=root/'panel.tar.gz';stage=root/'stage';stage.mkdir()
+   with tarfile.open(archive,'w:gz') as f:
+    member=tarfile.TarInfo('bin/nekopass');member.size=1;f.addfile(member,io.BytesIO(b'x'))
+   mask=updater.os.umask(0o077)
+   try:updater.extract_panel(archive,stage)
+   finally:updater.os.umask(mask)
+   self.assertEqual((stage/'bin').stat().st_mode&0o777,0o755)
+   self.assertEqual((stage/'bin/nekopass').stat().st_mode&0o777,0o755)
  def test_panel_request_can_use_existing_helper(self):
   # No system changes: exercise main() request handling with the updater mocked.
   request={'generation':1,'version':'v0.13.1'}

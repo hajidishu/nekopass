@@ -118,6 +118,12 @@ def extract_panel(package, stage):
                 raise ValueError('Panel archive too large')
             target = stage.joinpath(*path.parts)
             target.parent.mkdir(parents=True, exist_ok=True)
+            # The root update unit uses UMask=0077, but migration runs as the
+            # panel user and needs to traverse the staged executable directory.
+            for directory in [target.parent, *target.parent.parents]:
+                if directory == stage.parent:
+                    break
+                directory.chmod(0o755)
             with archive.extractfile(member) as source, target.open('wb') as dest:
                 shutil.copyfileobj(source, dest)
             target.chmod(0o755 if path.parts[0] == 'bin' else 0o644)
@@ -153,7 +159,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths={base} {directory} /run/lock /etc/systemd/system
+ReadWritePaths={base} {directory} /run/lock /etc/systemd/system /usr/local/bin/nekopassctl
 ''')
     path_unit = pathlib.Path('/etc/systemd/system') / (service + '-update.path')
     path_unit.write_text(f'''[Unit]
