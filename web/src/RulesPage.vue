@@ -133,7 +133,7 @@ async function showStats(r?: Rule) { await action(async () => { stats.value = aw
       <el-form-item label="入口"><el-select :model-value="importNodeID || undefined" @update:model-value="selectImportIngress($event)" placeholder="请选择入口节点"><el-option v-for="n in importIngressNodes" :key="n.id" :label="n.name" :value="n.id" /></el-select></el-form-item>
       <el-form-item label="出口"><el-select v-model="importEgressID" :disabled="!importNodeID"><el-option v-if="importIngress?.allow_direct" label="#0 不使用隧道，直接转发" :value="0" /><el-option v-for="n in importExitNodes" :key="n.id" :label="n.name + ' · ' + protocolText(n.tunnel_protocol)" :value="n.id" /></el-select></el-form-item>
       <el-form-item label="分组"><el-select v-model="importGroupID"><el-option label="未分组" :value="0" /><el-option v-for="g in ownGroups" :key="g.id" :label="g.name" :value="g.id" /></el-select></el-form-item>
-      <el-form-item v-if="importNeedsProxyTrust" label="信任代理网段"><el-input v-model="importCIDRs" type="textarea" :rows="2" placeholder="一行一个，例如 192.0.2.0/24" /><span class="field-tip">应用到开启接收 Proxy Protocol 的导入规则；入口节点需升级到 v0.12.0 或更新版本。</span></el-form-item>
+      <el-form-item v-if="importNeedsProxyTrust" label="信任代理网段"><el-input v-model="importCIDRs" type="textarea" :rows="2" placeholder="一行一个，例如 192.0.2.0/24" /><span class="field-tip">应用到开启接收 Proxy Protocol 的导入规则；入口节点需升级到 v0.12.1 或更新版本。</span></el-form-item>
       <el-checkbox v-model="importRandomPorts">重新随机分配监听端口</el-checkbox>
     </el-form>
     <template #footer><el-button @click="importDialog = false">取消</el-button><el-button type="primary" :loading="busy" :disabled="!importPreview.data" @click="doImport">导入</el-button></template>

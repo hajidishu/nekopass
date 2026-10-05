@@ -1,4 +1,4 @@
-param([string]$Version = 'v0.12.0')
+param([string]$Version = 'v0.12.1')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or $Version.Contains('..')) { throw 'Invalid version' }
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -14,7 +14,7 @@ $managerText = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/nekopassctl.
 $managerPayload = "write_manager_payload() {`ncat <<'NEKOPASS_MANAGER_PAYLOAD'`n" + $managerText.TrimEnd() + "`nNEKOPASS_MANAGER_PAYLOAD`n}`n"
 $updaterText = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/nekopass-update.py')).Replace("`r`n", "`n")
 $updaterPayload = "write_updater_payload() {`ncat <<'NEKOPASS_UPDATER_PAYLOAD'`n" + $updaterText.TrimEnd() + "`nNEKOPASS_UPDATER_PAYLOAD`n}`n"
-$installerText = $installerText.Replace('# PACKAGED_MANAGER', $managerPayload).Replace('# PACKAGED_UPDATER', $updaterPayload).Replace('v0.12.0', $Version)
+$installerText = $installerText.Replace('# PACKAGED_MANAGER', $managerPayload).Replace('# PACKAGED_UPDATER', $updaterPayload).Replace('v0.12.1', $Version)
 [IO.File]::WriteAllText($installerPath, $installerText, $utf8)
 [IO.File]::WriteAllText((Join-Path $assetRoot 'nekopassctl.sh'), $managerText, $utf8)
 [IO.File]::WriteAllText((Join-Path $assetRoot 'nekopass-update.py'), $updaterText, $utf8)

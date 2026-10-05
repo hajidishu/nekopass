@@ -1,4 +1,4 @@
-param([string]$Version = 'v0.12.0', [string]$DownloadBase = 'https://github.com/hajidishu/nekopass/releases/download')
+param([string]$Version = 'v0.12.1', [string]$DownloadBase = 'https://github.com/hajidishu/nekopass/releases/download')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or $Version.Contains('..')) { throw 'Invalid version' }
 if ($DownloadBase) {
@@ -33,7 +33,7 @@ try {
     $updater = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/nekopass-update.py')).Replace("`r`n", "`n")
     $updaterPayload = "write_updater_payload() {`ncat <<'NEKOPASS_UPDATER_PAYLOAD'`n" + $updater.TrimEnd() + "`nNEKOPASS_UPDATER_PAYLOAD`n}`n"
     $installer = $installer.Replace('# PACKAGED_MANAGER', $payload).Replace('# PACKAGED_UPDATER', $updaterPayload).Replace("DEFAULT_DOWNLOAD_BASE='https://github.com/hajidishu/nekopass/releases/download'", "DEFAULT_DOWNLOAD_BASE='$($DownloadBase.TrimEnd('/'))'")
-    $installer = $installer.Replace('v0.12.0', $Version)
+    $installer = $installer.Replace('v0.12.1', $Version)
     [IO.File]::WriteAllText((Join-Path $assets 'install-panel.sh'), $installer, $utf8)
     $env:GOOS = 'linux'; $env:CGO_ENABLED = '0'
     foreach ($architecture in @('amd64','arm64')) {
@@ -41,6 +41,10 @@ try {
         $binary = Join-Path $releases "nekopass-panel-$architecture.bin"
         go build -trimpath -ldflags "-X github.com/nekopass/nekopass/internal/release.Version=$Version" -o $binary ./cmd/nekopass
         if ($LASTEXITCODE -ne 0) { throw "Panel build failed: $architecture" }
+        if ($IsLinux -and $architecture -eq 'amd64' -and $env:NEKOPASS_TEST_DATABASE_URL) {
+            python tests/panel_startup_test.py --binary $binary
+            if ($LASTEXITCODE -ne 0) { throw 'Panel startup smoke test failed' }
+        }
         # Explicit file list; archives never inherit deployment configs/certificates.
         python scripts/package-panel.py --binary $binary --web web/dist --manager scripts/nekopassctl.sh --output (Join-Path $releases "nekopass-panel-linux-$architecture.tar.gz")
         if ($LASTEXITCODE -ne 0) { throw "Panel archive failed: $architecture" }

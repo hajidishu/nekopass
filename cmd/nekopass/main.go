@@ -98,9 +98,8 @@ func run() error {
 	if *mode != "serve" {
 		return errors.New("invalid mode")
 	}
-	var version int
-	if err = p.QueryRow(ctx, "SELECT max(version) FROM schema_version").Scan(&version); err != nil || version != 13 {
-		return errors.New("database schema missing or unsupported; run -mode migrate")
+	if err = store.CheckSchema(ctx, p); err != nil {
+		return err
 	}
 	server := control.New(p)
 	go server.RunSubscriptionClock(ctx)

@@ -49,6 +49,16 @@ var migration013 string
 //go:embed migration014.sql
 var migration014 string
 
+const CurrentSchemaVersion = 14
+
+func CheckSchema(ctx context.Context, p *pgxpool.Pool) error {
+	var version int
+	if err := p.QueryRow(ctx, "SELECT max(version) FROM schema_version").Scan(&version); err != nil || version != CurrentSchemaVersion {
+		return errors.New("database schema missing or unsupported; run -mode migrate")
+	}
+	return nil
+}
+
 func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	p, err := pgxpool.New(ctx, url)
 	if err != nil {
