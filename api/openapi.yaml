@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.12.1
+  version: 0.13.0
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Admin-created accounts. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -806,6 +806,18 @@ components:
         password: {type: string, description: '12–72 bytes on creation; empty on edit preserves password'}
         enabled: {type: boolean}
         plan_id: {type: integer, format: int64, description: '0 unassigns plan; switching plan preserves consumption'}
+        speed_mbps: {type: integer, minimum: 0, maximum: 100000, description: 'Personal per-node bandwidth; 0 means unlimited; omitted preserves current value'}
+        quota_bytes: {type: integer, minimum: -1, maximum: 1152921504606846976, description: 'Personal quota; -1 means unlimited; 0 is zero allowance'}
+        traffic_bytes: {type: integer, minimum: 0, maximum: 1152921504606846976, description: 'Set current-period combined usage; omission preserves it; old reports cannot replace this adjustment'}
+        max_rules: {type: integer, minimum: 0, maximum: 10000}
+        max_connections: {type: integer, minimum: 0, maximum: 1000000}
+        ip_limit: {type: integer, minimum: 0, maximum: 1000000}
+        rule_speed_mbps: {type: integer, minimum: 0, maximum: 100000}
+        rule_ip_limit: {type: integer, minimum: 0, maximum: 1000000}
+        rule_connection_limit: {type: integer, minimum: 0, maximum: 1000000}
+        node_group_ids: {type: array, maxItems: 1000, uniqueItems: true, items: {type: integer, format: int64, minimum: 1}, description: 'Personal allowed groups; empty grants no nodes; omission preserves groups'}
+        expires_at: {type: string, description: 'RFC3339 date; empty means permanent; omission preserves expiry'}
+        expected_resources_revision: {type: integer, minimum: 0, description: 'Stale admin edits return HTTP 409'}
     RuleInput:
       type: object
       required: [node_id, enabled]

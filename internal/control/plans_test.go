@@ -73,6 +73,8 @@ func TestPlansScopesAndProbePrivacy(t *testing.T) {
 	}
 	plan := PlanInput{Name: Secret(), Enabled: true, SpeedMbps: 100, QuotaBytes: 1 << 30, MaxRules: 10, MaxConnections: 50, IPLimit: 2, RuleSpeedMbps: 8, RuleIPLimit: 1, RuleConnectionLimit: 4, NodeGroupIDs: []int64{gid}}
 	mustOK(request(adminID, "admin/plans/"+strconv.FormatInt(pid, 10), "PUT", plan))
+	// Plan edits change defaults only; explicitly edit this user's resources.
+	mustOK(request(adminID, "admin/users/"+strconv.FormatInt(uid, 10), "PUT", map[string]any{"username": Secret(), "enabled": true, "plan_id": pid, "speed_mbps": 100, "quota_bytes": 1 << 30, "max_rules": 10, "max_connections": 50, "ip_limit": 2, "rule_speed_mbps": 8, "rule_ip_limit": 1, "rule_connection_limit": 4}))
 	c, e := p.Acquire(ctx)
 	if e != nil {
 		t.Fatal(e)
@@ -119,8 +121,8 @@ func TestPlansScopesAndProbePrivacy(t *testing.T) {
 	var issued int64
 	p.QueryRow(ctx, "SELECT issued FROM grants WHERE user_id=$1 AND node_id=$2", uid, node).Scan(&issued)
 	plan.QuotaBytes = issued - 1
-	if w = request(adminID, "admin/plans/"+strconv.FormatInt(pid, 10), "PUT", plan); w.Code != 409 {
-		t.Fatal("quota downgrade could replay/overspend")
+	if w = request(adminID, "admin/plans/"+strconv.FormatInt(pid, 10), "PUT", plan); w.Code != 200 {
+		t.Fatal("plan default change blocked by an existing user")
 	}
 	plan.QuotaBytes = 1 << 30
 	plan.Enabled = false
@@ -134,8 +136,8 @@ func TestPlansScopesAndProbePrivacy(t *testing.T) {
 			t.Fatal("disabled plan still authorized")
 		}
 	}
-	if w = request(adminID, "users/"+strconv.FormatInt(uid, 10), "PUT", map[string]any{"username": "x", "enabled": true, "plan_id": pid, "speed_mbps": 999}); w.Code != 400 {
-		t.Fatal("user-specific limit override accepted")
+	if w = request(uid, "users/"+strconv.FormatInt(uid, 10), "PUT", map[string]any{"username": "x", "enabled": true, "plan_id": pid, "speed_mbps": 999}); w.Code != 403 {
+		t.Fatal("non-admin user-specific limit override accepted")
 	}
 	// Cleanup node-associated rows before helper cleanup removes identities.
 	for _, q := range []string{"DELETE FROM grants WHERE node_id=$1", "DELETE FROM rule_usage WHERE node_id=$1", "DELETE FROM rules WHERE node_id=$1"} {

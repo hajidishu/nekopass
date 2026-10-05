@@ -287,11 +287,18 @@ func (s *Server) checkout(w http.ResponseWriter, r *http.Request, pay bool) {
 		s.dbError(w, e)
 		return
 	}
-	if p.MaxRules > 0 && ruleCount > p.MaxRules {
+	same := sub.PlanID == p.ID
+	maxRules := p.MaxRules
+	if same {
+		if e = tx.QueryRow(ctx, "SELECT max_rules FROM users WHERE id=$1", uid).Scan(&maxRules); e != nil {
+			s.dbError(w, e)
+			return
+		}
+	}
+	if maxRules > 0 && ruleCount > maxRules {
 		fail(w, 409, "现有规则数量超过此套餐上限，请先减少规则")
 		return
 	}
-	same := sub.PlanID == p.ID
 	expires, next, e := purchasedDates(now, sub, same, in.Cycle)
 	if e != nil {
 		fail(w, 400, e.Error())
@@ -343,7 +350,7 @@ func (s *Server) checkout(w http.ResponseWriter, r *http.Request, pay bool) {
 	if next != nil {
 		index = 1
 	}
-	if _, e = tx.Exec(ctx, `UPDATE users SET plan_id=$2,plan_started_at=$3,subscription_managed=true,subscription_expires_at=$4,next_reset_at=$5,reset_anchor_at=$3,reset_index=$6,quota_epoch=quota_epoch+1 WHERE id=$1`, uid, p.ID, now, expires, next, index); e != nil {
+	if _, e = tx.Exec(ctx, `UPDATE users SET plan_id=$2,plan_started_at=$3,subscription_managed=true,subscription_expires_at=$4,next_reset_at=$5,reset_anchor_at=$3,reset_index=$6,quota_epoch=quota_epoch+1,traffic_base_bytes=0,resources_revision=resources_revision+1 WHERE id=$1`, uid, p.ID, now, expires, next, index); e != nil {
 		s.dbError(w, e)
 		return
 	}

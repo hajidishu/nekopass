@@ -49,7 +49,10 @@ var migration013 string
 //go:embed migration014.sql
 var migration014 string
 
-const CurrentSchemaVersion = 14
+//go:embed migration015.sql
+var migration015 string
+
+const CurrentSchemaVersion = 15
 
 func CheckSchema(ctx context.Context, p *pgxpool.Pool) error {
 	var version int
@@ -150,6 +153,11 @@ func Migrate(ctx context.Context, p *pgxpool.Pool) error {
 	}
 	if version < 14 {
 		if _, err = tx.Exec(ctx, migration014); err != nil {
+			return err
+		}
+	}
+	if version < 15 {
+		if _, err = tx.Exec(ctx, migration015); err != nil {
 			return err
 		}
 	}

@@ -180,12 +180,12 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 			continue
 		}
 		seen[id] = true
-		var quota, speed, epoch int64
+		var quota, speed, epoch, baseline int64
 		if _, e = tx.Exec(ctx, "SELECT id FROM users WHERE id=$1 FOR UPDATE", id); e != nil {
 			return nil, e
 		}
-		e = tx.QueryRow(ctx, `SELECT quota_bytes,speed_bps,quota_epoch FROM user_entitlements WHERE id=$1 AND enabled AND (expires_at IS NULL OR expires_at>now())
-   AND EXISTS(SELECT 1 FROM user_nodes WHERE user_id=$1 AND node_id=$2)`, id, nodeID).Scan(&quota, &speed, &epoch)
+		e = tx.QueryRow(ctx, `SELECT quota_bytes,speed_bps,quota_epoch,traffic_base_bytes FROM user_entitlements WHERE id=$1 AND enabled AND (expires_at IS NULL OR expires_at>now())
+   AND EXISTS(SELECT 1 FROM user_nodes WHERE user_id=$1 AND node_id=$2)`, id, nodeID).Scan(&quota, &speed, &epoch, &baseline)
 		if errors.Is(e, pgx.ErrNoRows) {
 			continue
 		}
@@ -213,7 +213,7 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 		if speed == 0 {
 			window = 16 << 30
 		}
-		more := min(window-available, quota-allocated)
+		more := min(window-available, quota-baseline-allocated)
 		if more > 0 {
 			_, e = tx.Exec(ctx, "UPDATE grants SET issued=issued+$3 WHERE node_id=$1 AND user_id=$2 AND quota_epoch=$4", nodeID, id, more, epoch)
 			if e != nil {
@@ -251,7 +251,7 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 	if e != nil {
 		return nil, e
 	}
-	rows, e := tx.Query(ctx, `SELECT u.id,(u.enabled AND (u.quota_bytes<0 OR COALESCE((SELECT sum(issued-released+unlimited_spent) FROM current_grants WHERE user_id=u.id),0)<=u.quota_bytes)),COALESCE(extract(epoch FROM LEAST(u.expires_at,u.next_reset_at))::bigint,0),u.speed_bps,COALESCE(g.issued,0),u.max_connections,u.ip_limit,(u.quota_bytes=-1),u.quota_epoch
+	rows, e := tx.Query(ctx, `SELECT u.id,(u.enabled AND (u.quota_bytes<0 OR (u.traffic_base_bytes<u.quota_bytes AND u.traffic_base_bytes+COALESCE((SELECT sum(issued-released+unlimited_spent) FROM current_grants WHERE user_id=u.id),0)<=u.quota_bytes))),COALESCE(extract(epoch FROM LEAST(u.expires_at,u.next_reset_at))::bigint,0),u.speed_bps,COALESCE(g.issued,0),u.max_connections,u.ip_limit,(u.quota_bytes=-1),u.quota_epoch
   FROM user_entitlements u JOIN user_nodes n ON n.user_id=u.id LEFT JOIN current_grants g ON g.user_id=u.id AND g.node_id=n.node_id WHERE n.node_id=$1 ORDER BY u.id`, nodeID)
 	if e != nil {
 		return nil, e

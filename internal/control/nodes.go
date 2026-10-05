@@ -393,13 +393,13 @@ func (s *Server) deleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	tag, e := tx.Exec(ctx, "DELETE FROM node_groups WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM plan_node_groups WHERE group_id=$1)", id)
+	tag, e := tx.Exec(ctx, "DELETE FROM node_groups WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM plan_node_groups WHERE group_id=$1) AND NOT EXISTS(SELECT 1 FROM user_node_groups WHERE group_id=$1)", id)
 	if e != nil {
 		s.dbError(w, e)
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		fail(w, 409, "节点组不存在或正在被套餐使用")
+		fail(w, 409, "节点组不存在或正在被套餐或用户使用")
 		return
 	}
 	if e = finishRules(ctx, tx); e != nil {
@@ -415,7 +415,7 @@ func (s *Server) nodeStatus(w http.ResponseWriter, r *http.Request) {
 	rows, e := s.Pool.Query(r.Context(), `SELECT g.id AS group_id,g.name AS group_name,n.id,n.name,n.enabled,COALESCE(n.last_seen>now()-interval '12 seconds',false) AS online,
  CASE WHEN n.probe_received_at>now()-make_interval(secs=>GREATEST(n.probe_interval_seconds*3,15)) THEN n.probe ELSE NULL END AS metrics,n.probe_received_at AS updated_at
  FROM user_entitlements u JOIN plans p ON p.id=u.plan_id AND p.enabled
- JOIN plan_node_groups pg ON pg.plan_id=p.id JOIN node_groups g ON g.id=pg.group_id AND g.enabled
+  JOIN user_node_groups pg ON pg.user_id=u.id JOIN node_groups g ON g.id=pg.group_id AND g.enabled
  JOIN node_group_members m ON m.group_id=g.id JOIN nodes n ON n.id=m.node_id
  WHERE u.id=$1 AND u.enabled AND (u.expires_at IS NULL OR u.expires_at>now()) ORDER BY g.sort_order,g.id,n.id`, u.ID)
 	s.sendRows(w, rows, e)

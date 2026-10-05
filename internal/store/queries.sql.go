@@ -83,7 +83,7 @@ func (q *Queries) FindNodeByToken(ctx context.Context, tokenHash string) (Node, 
 }
 
 const findSession = `-- name: FindSession :one
-SELECT u.id, u.username, u.password_hash, u.is_admin, u.enabled, u.created_at, u.plan_id, u.plan_started_at, u.subscription_managed, u.subscription_expires_at, u.next_reset_at, u.reset_anchor_at, u.reset_index, u.quota_epoch FROM users u JOIN sessions s ON s.user_id=u.id
+SELECT u.id, u.username, u.password_hash, u.is_admin, u.enabled, u.created_at, u.plan_id, u.plan_started_at, u.subscription_managed, u.subscription_expires_at, u.next_reset_at, u.reset_anchor_at, u.reset_index, u.quota_epoch, u.speed_bps, u.quota_bytes, u.max_rules, u.max_connections, u.ip_limit, u.rule_speed_bps, u.rule_ip_limit, u.rule_connection_limit, u.resource_expires_at, u.traffic_base_bytes, u.resources_revision FROM users u JOIN sessions s ON s.user_id=u.id
 WHERE s.token_hash=$1 AND s.expires_at>now()
 `
 
@@ -105,12 +105,23 @@ func (q *Queries) FindSession(ctx context.Context, tokenHash string) (User, erro
 		&i.ResetAnchorAt,
 		&i.ResetIndex,
 		&i.QuotaEpoch,
+		&i.SpeedBps,
+		&i.QuotaBytes,
+		&i.MaxRules,
+		&i.MaxConnections,
+		&i.IpLimit,
+		&i.RuleSpeedBps,
+		&i.RuleIpLimit,
+		&i.RuleConnectionLimit,
+		&i.ResourceExpiresAt,
+		&i.TrafficBaseBytes,
+		&i.ResourcesRevision,
 	)
 	return i, err
 }
 
 const findUser = `-- name: FindUser :one
-SELECT id, username, password_hash, is_admin, enabled, created_at, plan_id, plan_started_at, subscription_managed, subscription_expires_at, next_reset_at, reset_anchor_at, reset_index, quota_epoch FROM users WHERE id = $1
+SELECT id, username, password_hash, is_admin, enabled, created_at, plan_id, plan_started_at, subscription_managed, subscription_expires_at, next_reset_at, reset_anchor_at, reset_index, quota_epoch, speed_bps, quota_bytes, max_rules, max_connections, ip_limit, rule_speed_bps, rule_ip_limit, rule_connection_limit, resource_expires_at, traffic_base_bytes, resources_revision FROM users WHERE id = $1
 `
 
 func (q *Queries) FindUser(ctx context.Context, id int64) (User, error) {
@@ -131,12 +142,23 @@ func (q *Queries) FindUser(ctx context.Context, id int64) (User, error) {
 		&i.ResetAnchorAt,
 		&i.ResetIndex,
 		&i.QuotaEpoch,
+		&i.SpeedBps,
+		&i.QuotaBytes,
+		&i.MaxRules,
+		&i.MaxConnections,
+		&i.IpLimit,
+		&i.RuleSpeedBps,
+		&i.RuleIpLimit,
+		&i.RuleConnectionLimit,
+		&i.ResourceExpiresAt,
+		&i.TrafficBaseBytes,
+		&i.ResourcesRevision,
 	)
 	return i, err
 }
 
 const findUserByName = `-- name: FindUserByName :one
-SELECT id, username, password_hash, is_admin, enabled, created_at, plan_id, plan_started_at, subscription_managed, subscription_expires_at, next_reset_at, reset_anchor_at, reset_index, quota_epoch FROM users WHERE username = $1
+SELECT id, username, password_hash, is_admin, enabled, created_at, plan_id, plan_started_at, subscription_managed, subscription_expires_at, next_reset_at, reset_anchor_at, reset_index, quota_epoch, speed_bps, quota_bytes, max_rules, max_connections, ip_limit, rule_speed_bps, rule_ip_limit, rule_connection_limit, resource_expires_at, traffic_base_bytes, resources_revision FROM users WHERE username = $1
 `
 
 func (q *Queries) FindUserByName(ctx context.Context, username string) (User, error) {
@@ -157,6 +179,17 @@ func (q *Queries) FindUserByName(ctx context.Context, username string) (User, er
 		&i.ResetAnchorAt,
 		&i.ResetIndex,
 		&i.QuotaEpoch,
+		&i.SpeedBps,
+		&i.QuotaBytes,
+		&i.MaxRules,
+		&i.MaxConnections,
+		&i.IpLimit,
+		&i.RuleSpeedBps,
+		&i.RuleIpLimit,
+		&i.RuleConnectionLimit,
+		&i.ResourceExpiresAt,
+		&i.TrafficBaseBytes,
+		&i.ResourcesRevision,
 	)
 	return i, err
 }

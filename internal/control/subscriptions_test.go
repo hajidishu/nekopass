@@ -28,6 +28,15 @@ func TestRenewalConsumesCurrentRemainder(t *testing.T) {
 		t.Fatal(expires, next, e)
 	}
 }
+
+func TestRenewalPreservesAdminPermanentRecurringExpiry(t *testing.T) {
+	now := billingDate("2026-09-20 12:00")
+	next := billingDate("2026-10-01 12:00")
+	expires, reset, e := purchasedDates(now, subscriptionState{Managed: true, NextReset: &next}, true, "annual")
+	if e != nil || expires != nil || reset == nil || !reset.Equal(billingDate("2026-10-20 12:00")) {
+		t.Fatal("renewal changed permanent personal expiry", expires, reset, e)
+	}
+}
 func TestBillingMonthEndsAndPermanentQuota(t *testing.T) {
 	anchor := billingDate("2028-01-31 23:00")
 	if got := addBillingMonths(anchor, 1); !got.Equal(billingDate("2028-02-29 23:00")) {

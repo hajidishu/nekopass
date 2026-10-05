@@ -43,6 +43,9 @@ func testAuthorize(t *testing.T, p *pgxpool.Pool, user, node int64) int64 {
 	if _, e := p.Exec(ctx, "INSERT INTO plan_node_groups(plan_id,group_id) VALUES($1,$2)", plan, group); e != nil {
 		t.Fatal(e)
 	}
+	if _, e := p.Exec(ctx, "INSERT INTO user_node_groups(user_id,group_id) VALUES($1,$2)", user, group); e != nil {
+		t.Fatal(e)
+	}
 	t.Cleanup(func() {
 		_, _ = p.Exec(ctx, "DELETE FROM plan_node_groups WHERE group_id=$1", group)
 		_, _ = p.Exec(ctx, "DELETE FROM node_groups WHERE id=$1", group)

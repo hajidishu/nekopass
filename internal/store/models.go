@@ -299,6 +299,17 @@ type User struct {
 	ResetAnchorAt         pgtype.Timestamptz `json:"reset_anchor_at"`
 	ResetIndex            int32              `json:"reset_index"`
 	QuotaEpoch            int64              `json:"quota_epoch"`
+	SpeedBps              int64              `json:"speed_bps"`
+	QuotaBytes            int64              `json:"quota_bytes"`
+	MaxRules              int32              `json:"max_rules"`
+	MaxConnections        int64              `json:"max_connections"`
+	IpLimit               int32              `json:"ip_limit"`
+	RuleSpeedBps          int64              `json:"rule_speed_bps"`
+	RuleIpLimit           int32              `json:"rule_ip_limit"`
+	RuleConnectionLimit   int32              `json:"rule_connection_limit"`
+	ResourceExpiresAt     pgtype.Timestamptz `json:"resource_expires_at"`
+	TrafficBaseBytes      int64              `json:"traffic_base_bytes"`
+	ResourcesRevision     int64              `json:"resources_revision"`
 }
 
 type UserEntitlement struct {
@@ -324,11 +335,27 @@ type UserEntitlement struct {
 	QuotaEpoch          int64              `json:"quota_epoch"`
 	NextResetAt         pgtype.Timestamptz `json:"next_reset_at"`
 	SubscriptionManaged bool               `json:"subscription_managed"`
+	TrafficBaseBytes    int64              `json:"traffic_base_bytes"`
+	ResourcesRevision   int64              `json:"resources_revision"`
 }
 
 type UserNode struct {
 	UserID int64 `json:"user_id"`
 	NodeID int64 `json:"node_id"`
+}
+
+type UserNodeGroup struct {
+	UserID  int64 `json:"user_id"`
+	GroupID int64 `json:"group_id"`
+}
+
+type UserResourceChange struct {
+	ID          int64              `json:"id"`
+	UserID      int64              `json:"user_id"`
+	ActorID     pgtype.Int8        `json:"actor_id"`
+	BeforeState []byte             `json:"before_state"`
+	AfterState  []byte             `json:"after_state"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type WalletAccount struct {

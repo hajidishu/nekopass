@@ -81,22 +81,7 @@ func (s *Server) savePlan(w http.ResponseWriter, r *http.Request) {
 	if !validID {
 		return
 	}
-	if id != 0 {
-		if _, e = tx.Exec(ctx, "SELECT id FROM users WHERE plan_id=$1 ORDER BY id FOR UPDATE", id); e != nil {
-			s.dbError(w, e)
-			return
-		}
-		var blocked bool
-		e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users u WHERE plan_id=$1 AND (($2::bigint>=0 AND (SELECT COALESCE(sum(issued-released+unlimited_spent),0) FROM current_grants WHERE user_id=u.id)>$2) OR ($3::integer>0 AND (SELECT count(*) FROM rules WHERE user_id=u.id)>$3)))`, id, v.QuotaBytes, v.MaxRules).Scan(&blocked)
-		if e != nil {
-			s.dbError(w, e)
-			return
-		}
-		if blocked {
-			fail(w, 409, "套餐额度不能低于绑定用户已消费及已分配额度，规则上限不能低于已有规则数")
-			return
-		}
-	}
+
 	if id == 0 {
 		e = tx.QueryRow(ctx, "INSERT INTO plans(name,speed_bps,quota_bytes,max_rules,max_connections) VALUES($1,$2,$3,$4,$5) RETURNING id", v.Name, v.SpeedMbps*125000, v.QuotaBytes, v.MaxRules, v.MaxConnections).Scan(&id)
 	}

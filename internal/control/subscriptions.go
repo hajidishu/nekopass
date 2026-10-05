@@ -41,6 +41,12 @@ func purchasedDates(now time.Time, sub subscriptionState, samePlan bool, cycle s
 	if months == 0 {
 		return nil, nil, nil
 	} // One-time quota: permanent, no automatic resets.
+	if samePlan && sub.Managed && sub.Expires == nil && sub.NextReset != nil {
+		// An administrator can make a recurring subscription permanent. Renewal
+		// must not turn that personal expiry setting back into a finite date.
+		next := addBillingMonths(now, 1)
+		return nil, &next, nil
+	}
 	base := now
 	if samePlan && sub.Managed && sub.Expires != nil && sub.Expires.After(now) && sub.NextReset != nil && sub.NextReset.After(now) {
 		// Discard only the unconsumed part of the current quota period. Future
@@ -62,7 +68,7 @@ func resetDueSubscription(ctx context.Context, tx pgx.Tx, uid int64, sub *subscr
 	if !sub.Managed || sub.NextReset == nil || sub.NextReset.After(now) {
 		return false, nil
 	}
-	if sub.Expires == nil || !sub.Expires.After(now) {
+	if sub.Expires != nil && !sub.Expires.After(now) {
 		_, e := tx.Exec(ctx, "UPDATE users SET next_reset_at=NULL WHERE id=$1", uid)
 		sub.NextReset = nil
 		return false, e
@@ -82,10 +88,10 @@ func resetDueSubscription(ctx context.Context, tx pgx.Tx, uid int64, sub *subscr
 			return false, errors.New("invalid reset index")
 		}
 	}
-	if next.After(*sub.Expires) {
+	if sub.Expires != nil && next.After(*sub.Expires) {
 		next = *sub.Expires
 	}
-	_, e := tx.Exec(ctx, "UPDATE users SET quota_epoch=quota_epoch+1,next_reset_at=$2,reset_index=$3 WHERE id=$1", uid, next, index)
+	_, e := tx.Exec(ctx, "UPDATE users SET quota_epoch=quota_epoch+1,traffic_base_bytes=0,resources_revision=resources_revision+1,next_reset_at=$2,reset_index=$3 WHERE id=$1", uid, next, index)
 	if e == nil {
 		sub.Epoch++
 		sub.NextReset = &next

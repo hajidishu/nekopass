@@ -1,136 +1,100 @@
 package control
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	pb "github.com/nekopass/nekopass/internal/protocol"
-	"net/http"
-	"net/http/httptest"
-	"strconv"
 	"testing"
 )
 
-func TestUnlimitedPlanLedgerTransitions(t *testing.T) {
-	p := testDB(t)
+func TestUnlimitedPersonalResourcesAndLateReports(t *testing.T) {
+	f := newSecurityFixture(t)
 	ctx := context.Background()
-	adminID, _ := testUser(t, p, 1<<30, 10, true)
-	uid, pid := testUser(t, p, 0, 1, false)
 	var node int64
-	if err := p.QueryRow(ctx, "INSERT INTO nodes(name,token_hash) VALUES($1,$2) RETURNING id", Secret(), Secret()).Scan(&node); err != nil {
+	if err := f.p.QueryRow(ctx, "INSERT INTO nodes(name,token_hash) VALUES($1,$2) RETURNING id", Secret(), Secret()).Scan(&node); err != nil {
 		t.Fatal(err)
 	}
-	gid := testAuthorize(t, p, uid, node)
-	token := Secret()
-	p.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour')", Hash(token), adminID)
-	s := New(p)
-	handler := s.Handler(http.NotFoundHandler())
-	request := func(path, method string, data any) *httptest.ResponseRecorder {
-		b, _ := json.Marshal(data)
-		r := httptest.NewRequest(method, "/api/v1/"+path, bytes.NewReader(b))
-		r.Header.Set("Content-Type", "application/json")
-		r.AddCookie(&http.Cookie{Name: "nekopass_session_http", Value: token})
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, r)
-		return w
-	}
-	check := func(w *httptest.ResponseRecorder, code int) {
+	group := testAuthorize(t, f.p, f.user, node)
+	t.Cleanup(func() {
+		f.p.Exec(ctx, "DELETE FROM rules WHERE node_id=$1", node)
+		f.p.Exec(ctx, "DELETE FROM grants WHERE node_id=$1", node)
+		f.p.Exec(ctx, "DELETE FROM nodes WHERE id=$1", node)
+	})
+	path := fmt.Sprintf("admin/users/%d", f.user)
+	edit := func(changes map[string]any, code int) {
 		t.Helper()
-		if w.Code != code {
-			t.Fatalf("%d %s", w.Code, w.Body.String())
+		body := map[string]any{"username": Secret(), "enabled": true, "plan_id": f.plan}
+		for k, v := range changes {
+			body[k] = v
 		}
+		securityStatus(t, f.request(f.admin, path, "PUT", body), code)
 	}
-	plan := PlanInput{Name: Secret(), Enabled: true, SpeedMbps: 0, QuotaBytes: -1, MaxRules: 0, MaxConnections: 0, DurationDays: 0, NodeGroupIDs: []int64{gid}}
-	path := "admin/plans/" + strconv.FormatInt(pid, 10)
-	check(request(path, "PUT", plan), 200)
-	prefix := "admin/users/" + strconv.FormatInt(uid, 10) + "/"
-	for i := 0; i < 3; i++ {
-		check(request(prefix+"rules", "POST", RuleInput{NodeID: node, Enabled: true, Targets: []string{"127.0.0.1:80"}}), 200)
+	edit(map[string]any{"quota_bytes": -1, "speed_mbps": 0, "max_connections": 0, "max_rules": 0, "expires_at": ""}, 200)
+	for range 3 {
+		securityStatus(t, f.request(f.admin, path+"/rules", "POST", RuleInput{NodeID: node, Targets: []string{"127.0.0.1:80"}, Enabled: true}), 200)
 	}
-	var expires bool
-	p.Exec(ctx, "UPDATE users SET plan_started_at=now()-interval '10 years' WHERE id=$1", uid)
-	p.QueryRow(ctx, "SELECT expires_at IS NULL FROM user_entitlements WHERE id=$1", uid).Scan(&expires)
-	if !expires {
-		t.Fatal("forever plan expired")
+	stream := &StreamServer{Server: f.s}
+	report := &pb.AgentMessage{ProtocolVersion: 10, InstanceId: Secret(), RequestUsers: []int64{f.user}}
+	out, err := stream.exchange(ctx, f.p, node, report)
+	if err != nil || len(out.Users) != 1 || !out.Users[0].QuotaUnlimited || out.Users[0].Issued != 0 || out.Users[0].SpeedBps != 0 || out.Users[0].MaxConnections != 0 || out.Users[0].ExpiresUnix != 0 {
+		t.Fatal("bad unlimited policy", err)
 	}
-	c, err := p.Acquire(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Release()
-	stream := &StreamServer{Server: s}
-	r := &pb.AgentMessage{InstanceId: Secret(), RequestUsers: []int64{uid}}
-	out, err := stream.exchange(ctx, c, node, r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(out.Users) != 1 || !out.Users[0].QuotaUnlimited || out.Users[0].Issued != 0 || out.Users[0].SpeedBps != 0 || out.Users[0].MaxConnections != 0 || out.Users[0].ExpiresUnix != 0 {
-		t.Fatalf("bad unlimited policy: %v", out.Users)
-	}
-	usage := &pb.Usage{UserId: uid, UnlimitedSpent: 16 << 20, Traffic: 1234, QuotaUnlimited: true}
-	r.Usage = []*pb.Usage{usage}
-	r.RequestUsers = nil
-	for i := 0; i < 3; i++ {
-		if _, err = stream.exchange(ctx, c, node, r); err != nil {
+	epoch := out.Users[0].QuotaEpoch
+	usage := &pb.Usage{UserId: f.user, QuotaEpoch: epoch, UnlimitedSpent: 16 << 20, Traffic: 1234, QuotaUnlimited: true}
+	report.Usage = []*pb.Usage{usage}
+	report.RequestUsers = nil
+	for range 3 {
+		if _, err = stream.exchange(ctx, f.p, node, report); err != nil {
 			t.Fatal(err)
 		}
 	}
-	var traffic, issued int64
-	p.QueryRow(ctx, "SELECT traffic,issued FROM grants WHERE user_id=$1 AND node_id=$2", uid, node).Scan(&traffic, &issued)
-	if traffic != 1234 || issued != 0 {
-		t.Fatal("unlimited counted twice or created fake allowance", traffic, issued)
-	}
 	var events int64
-	p.QueryRow(ctx, "SELECT sum(traffic_bytes)::bigint FROM usage_events WHERE user_id=$1", uid).Scan(&events)
+	f.p.QueryRow(ctx, "SELECT sum(traffic_bytes)::bigint FROM usage_events WHERE user_id=$1", f.user).Scan(&events)
 	if events != 1234 {
-		t.Fatal("unlimited reports not idempotent")
+		t.Fatal("unlimited usage replay double-counted")
 	}
-	plan.QuotaBytes = (16 << 20) - 1
-	check(request(path, "PUT", plan), 409)
-	plan.QuotaBytes = 17 << 20
-	plan.SpeedMbps = 1
-	plan.MaxConnections = 2
-	check(request(path, "PUT", plan), 200)
-	// Late traffic was authorized before the finite policy reached the node.
+	// Editing plan defaults must leave the user's unlimited entitlement intact.
+	securityStatus(t, f.request(f.admin, fmt.Sprintf("admin/plans/%d", f.plan), "PUT", PlanInput{Name: Secret(), Enabled: true, SpeedMbps: 1, QuotaBytes: 17 << 20, MaxRules: 1, MaxConnections: 2, NodeGroupIDs: []int64{group}}), 200)
+	out, err = stream.exchange(ctx, f.p, node, report)
+	if err != nil || !out.Users[0].QuotaUnlimited {
+		t.Fatal("plan edit changed personal limits", err)
+	}
+	edit(map[string]any{"quota_bytes": 17 << 20, "speed_mbps": 1, "max_connections": 2}, 200)
 	usage.UnlimitedSpent = 32 << 20
 	usage.Traffic++
-	out, err = stream.exchange(ctx, c, node, r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.Users[0].QuotaUnlimited || out.Users[0].Enabled {
-		t.Fatal("late unlimited consumption did not stop over-budget finite policy")
+	out, err = stream.exchange(ctx, f.p, node, report)
+	if err != nil || out.Users[0].QuotaUnlimited || !out.Users[0].Enabled || out.Users[0].QuotaEpoch == epoch {
+		t.Fatal("finite transition failed", err)
 	}
 	usage.QuotaUnlimited = false
-	if _, err = stream.exchange(ctx, c, node, r); err != nil {
+	if _, err = stream.exchange(ctx, f.p, node, report); err != nil {
 		t.Fatal(err)
 	}
 	usage.UnlimitedSpent++
-	if _, err = stream.exchange(ctx, c, node, r); err == nil {
-		t.Fatal("unlimited debit accepted after finite acknowledgement")
+	if _, err = stream.exchange(ctx, f.p, node, report); err == nil {
+		t.Fatal("debit accepted after old unlimited authorization closed")
 	}
 	usage.UnlimitedSpent--
-	plan.QuotaBytes = 34 << 20
-	check(request(path, "PUT", plan), 200)
-	r.RequestUsers = []int64{uid}
-	out, err = stream.exchange(ctx, c, node, r)
-	if err != nil {
-		t.Fatal(err)
+	report.RequestUsers = []int64{f.user}
+	out, err = stream.exchange(ctx, f.p, node, report)
+	if err != nil || out.Users[0].Issued != (17<<20)-1234 {
+		t.Fatal("finite budget ignored edited baseline", err)
 	}
-	if !out.Users[0].Enabled || out.Users[0].Issued != 2<<20 || out.Users[0].QuotaUnlimited {
-		t.Fatalf("finite budget did not subtract unlimited history: %v", out.Users)
+	var users []struct {
+		Traffic int64 `json:"traffic_bytes"`
 	}
-	plan.MaxRules = 1
-	check(request(path, "PUT", plan), 409)
-	plan.MaxRules = 0
-	plan.SpeedMbps = -1
-	check(request(path, "PUT", plan), 400)
-	plan.SpeedMbps = 0
-	plan.QuotaBytes = -2
-	check(request(path, "PUT", plan), 400)
-	// A zero-byte quota must remain distinct from unlimited.
-	var zeroPlan int64
-	p.QueryRow(ctx, "INSERT INTO plans(name,speed_bps,quota_bytes,max_rules,max_connections) VALUES($1,0,0,0,0) RETURNING id", Secret()).Scan(&zeroPlan)
-	defer p.Exec(ctx, "DELETE FROM plans WHERE id=$1", zeroPlan)
-	check(request("users/"+strconv.FormatInt(uid, 10), "PUT", UserInput{Username: Secret(), Enabled: true, PlanID: zeroPlan}), 409)
+	response := f.request(f.user, "profile", "GET", nil)
+	securityStatus(t, response, 200)
+	if json.Unmarshal(response.Body.Bytes(), &users) != nil || len(users) != 1 || users[0].Traffic != 1234 {
+		t.Fatal("late old-epoch usage replaced current edited usage")
+	}
+	edit(map[string]any{"max_rules": 1}, 409)
+	edit(map[string]any{"speed_mbps": -1}, 400)
+	edit(map[string]any{"quota_bytes": -2}, 400)
+	edit(map[string]any{"quota_bytes": 0}, 200)
+	out, err = stream.exchange(ctx, f.p, node, report)
+	if err != nil || out.Users[0].Enabled || out.Users[0].QuotaUnlimited || out.Users[0].Issued != 0 {
+		t.Fatal("zero quota was treated as unlimited", err)
+	}
 }

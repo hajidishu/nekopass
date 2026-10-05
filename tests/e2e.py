@@ -65,6 +65,9 @@ class PlanFixture:
     def update_plan(self,**values):
         revision=next(n for n in api('admin/nodes') if n['id']==self.node)['applied_revision']
         self.plan.update(values);api('admin/plans/'+str(self.plan_id),self.plan,'PUT')
+        # Test fixtures explicitly update personal resources; plan edits only change defaults.
+        personal={key:self.plan[key] for key in ['speed_mbps','quota_bytes','max_rules','max_connections','ip_limit','rule_speed_mbps','rule_ip_limit','rule_connection_limit','node_group_ids']}
+        api('admin/users/'+str(self.uid),{**self.user,'password':'',**personal},'PUT')
         wait(lambda:next(n for n in api('admin/nodes') if n['id']==self.node)['applied_revision']>revision)
     def close(self):
         rows=self.request('rules')
