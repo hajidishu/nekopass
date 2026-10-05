@@ -47,7 +47,7 @@ func h2Fixture(t testing.TB, target string) (*Engine, *h2Transport, *pb.ControlM
 	transport := newH2Transport()
 	t.Cleanup(transport.Close)
 	rule := &pb.Rule{Id: 11, UserId: 5, IngressNodeId: 2, EgressNodeId: 3, QuotaEpoch: 3, TunnelProtocol: "tls_h2", TunnelHost: "127.0.0.1", TunnelPort: int32(port), TunnelToken: secret,
-		Tls: &pb.TLSClientConfig{ServerName: "tunnel.example.test", Fingerprint: "chrome", RootCa: cert, Path: "/api/stream", PoolSize: 2, StreamWindowMib: 16, ConnectionWindowMib: 64}}
+		Tls: &pb.TLSClientConfig{ServerName: "tunnel.example.test", Fingerprint: "chrome", RootCa: cert, Path: "/api/stream", RequireResponseProof: true, PoolSize: 2, StreamWindowMib: 16, ConnectionWindowMib: 64}}
 	return engine, transport, config, rule
 }
 
@@ -69,7 +69,7 @@ func TestH2TLS13ForwardingAndPermissionIsolation(t *testing.T) {
 	engine, transport, config, rule := h2Fixture(t, target.Addr().String())
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	for _, fingerprint := range []string{"chrome", "firefox"} {
+	for _, fingerprint := range []string{"off", "chrome", "firefox"} {
 		rule.Tls.Fingerprint = fingerprint
 		conn, err := transport.Dial(ctx, ctx, rule, target.Addr().String())
 		if err != nil {

@@ -19,7 +19,6 @@ import (
 	"time"
 
 	pb "github.com/nekopass/nekopass/internal/protocol"
-	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/http2"
 )
 
@@ -41,9 +40,13 @@ func h2Proof(key string, exporter, metadata []byte) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
+func h2ResponseProof(key string, exporter, metadata []byte) string {
+	return h2Proof(key, exporter, append([]byte("reply\x00"), metadata...))
+}
+
 type h2Peer struct {
 	cc       *http2.ClientConn
-	conn     *utls.UConn
+	conn     net.Conn
 	exporter []byte
 	opened   int
 }
@@ -124,7 +127,11 @@ func (t *h2Transport) Dial(dialCtx, lifetime context.Context, rule *pb.Rule, tar
 	metadata, _ := json.Marshal(h2Open{Ingress: rule.IngressNodeId, Rule: rule.Id, User: rule.UserId, Epoch: rule.QuotaEpoch, Target: target, Nonce: hex.EncodeToString(nonce[:])})
 	ctx, cancel := context.WithCancel(lifetime)
 	r, w := io.Pipe()
-	request, err := http.NewRequestWithContext(ctx, "POST", "https://"+net.JoinHostPort(cfg.ServerName, strconv.Itoa(int(rule.TunnelPort)))+cfg.Path, r)
+	host := cfg.Host
+	if host == "" {
+		host = net.JoinHostPort(cfg.ServerName, strconv.Itoa(int(rule.TunnelPort)))
+	}
+	request, err := http.NewRequestWithContext(ctx, "POST", "https://"+host+cfg.Path, r)
 	if err != nil {
 		cancel()
 		r.Close()
@@ -161,7 +168,7 @@ func (t *h2Transport) Dial(dialCtx, lifetime context.Context, rule *pb.Rule, tar
 			w.Close()
 			return nil, result.err
 		}
-		if result.r.StatusCode != http.StatusOK {
+		if result.r.StatusCode != http.StatusOK || (cfg.RequireResponseProof && !hmac.Equal([]byte(result.r.Header.Get("X-Stream-Reply")), []byte(h2ResponseProof(rule.TunnelToken, peer.exporter, metadata)))) {
 			result.r.Body.Close()
 			cancel()
 			r.Close()
@@ -245,41 +252,13 @@ func dialH2Peer(ctx context.Context, rule *pb.Rule) (*h2Peer, error) {
 	if cfg.RootCa != "" && !roots.AppendCertsFromPEM([]byte(cfg.RootCa)) {
 		return nil, errors.New("invalid TLS tunnel trust certificate")
 	}
-	profile := utls.HelloChrome_Auto
-	if cfg.Fingerprint == "firefox" {
-		profile = utls.HelloFirefox_Auto
-	} else if cfg.Fingerprint != "chrome" {
-		return nil, errors.New("unsupported uTLS fingerprint")
-	}
 	d := net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	raw, err := d.DialContext(ctx, "tcp", net.JoinHostPort(rule.TunnelHost, strconv.Itoa(int(rule.TunnelPort))))
 	if err != nil {
 		return nil, err
 	}
-	conn := utls.UClient(raw, &utls.Config{RootCAs: roots, ServerName: cfg.ServerName, MinVersion: utls.VersionTLS13, MaxVersion: utls.VersionTLS13}, profile)
-	if err = conn.BuildHandshakeState(); err != nil {
-		raw.Close()
-		return nil, err
-	}
-	// Browser presets include renegotiation_info on the wire. Keep that extension
-	// unchanged, while disabling the legacy internal mode (TLS 1.3 can't renegotiate).
-	for _, extension := range conn.Extensions {
-		if info, ok := extension.(*utls.RenegotiationInfoExtension); ok {
-			info.Renegotiation = utls.RenegotiateNever
-		}
-	}
-	if err = conn.HandshakeContext(ctx); err != nil {
-		raw.Close()
-		return nil, err
-	}
-	state := conn.ConnectionState()
-	if state.Version != utls.VersionTLS13 || state.NegotiatedProtocol != "h2" {
-		conn.Close()
-		return nil, errors.New("TLS 1.3 and h2 must be negotiated")
-	}
-	exporter, err := state.ExportKeyingMaterial(exporterLabel, nil, 32)
+	conn, exporter, err := dialTunnelTLS(ctx, raw, cfg, roots)
 	if err != nil {
-		conn.Close()
 		return nil, err
 	}
 	stream, connection := cfg.StreamWindowMib, cfg.ConnectionWindowMib

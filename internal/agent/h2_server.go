@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"html"
 	"io"
 	"net"
 	"net/http"
@@ -42,7 +41,7 @@ func (e *Engine) startH2Server(ctx context.Context, ln net.Listener, cfg *pb.TLS
 		return err
 	}
 	e.h2Certificate.Store(&pair)
-	settings := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, NextProtos: []string{"h2", "http/1.1"}, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return e.h2Certificate.Load(), nil }}
+	settings := &tls.Config{MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS13, NextProtos: []string{"h2", "http/1.1"}, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return e.h2Certificate.Load(), nil }}
 	server := &http.Server{Handler: http.HandlerFunc(e.handleH2), TLSConfig: settings, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 8192,
 		BaseContext: func(net.Listener) context.Context { return ctx }, ConnContext: func(parent context.Context, _ net.Conn) context.Context {
 			return context.WithValue(parent, h2SessionKey{}, &h2ServerSession{nonces: map[string]bool{}})
@@ -57,7 +56,7 @@ func (e *Engine) startH2Server(ctx context.Context, ln net.Listener, cfg *pb.TLS
 	physical = max(16, min(physical, 512))
 	ln = &limitedTLSListener{Listener: ln, slots: make(chan struct{}, physical)}
 	e.wg.Add(1)
-	go func() { defer e.wg.Done(); server.Serve(tls.NewListener(ln, settings)) }()
+	go func() { defer e.wg.Done(); server.Serve(newCamouflageTLSListener(ctx, ln, settings, e)) }()
 	e.wg.Add(1)
 	go func() { defer e.wg.Done(); <-ctx.Done(); server.Close() }()
 	return nil
@@ -66,65 +65,62 @@ func (e *Engine) startH2Server(ctx context.Context, ln net.Listener, cfg *pb.TLS
 func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 	node := e.node.Load()
 	if node == nil || node.Tls == nil {
-		http.NotFound(w, r)
+		e.camouflage(w, r)
 		return
 	}
 	cfg := node.Tls
-	if r.URL.Path != cfg.Path || r.Method != "POST" || r.ProtoMajor != 2 {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		io.WriteString(w, "<!doctype html><html><head><meta charset=\"utf-8\"><title>"+html.EscapeString(cfg.SiteTitle)+"</title></head><body><h1>"+html.EscapeString(cfg.SiteTitle)+"</h1></body></html>")
+	expectedHost := cfg.Host
+	if expectedHost == "" {
+		expectedHost = cfg.ServerName
+	}
+	if r.URL.Path != cfg.Path || r.URL.RawQuery != "" || r.Method != "POST" || r.ProtoMajor != 2 || !camouflageHostMatches(r.Host, expectedHost) {
+		e.camouflage(w, r)
 		return
 	}
 	if !node.Enabled || !node.TunnelExitEnabled || r.TLS == nil || r.TLS.Version != tls.VersionTLS13 || r.TLS.NegotiatedProtocol != "h2" {
-		http.NotFound(w, r)
+		e.camouflage(w, r)
 		return
 	}
 	encoded := r.Header.Get("X-Stream")
 	if len(encoded) > 2048 {
-		http.NotFound(w, r)
+		e.camouflage(w, r)
 		return
 	}
 	metadata, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
-		http.NotFound(w, r)
+		e.camouflage(w, r)
 		return
 	}
 	var open h2Open
 	decoder := json.NewDecoder(strings.NewReader(string(metadata)))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&open) != nil || decoder.Decode(new(any)) != io.EOF || len(open.Nonce) != 32 || len(open.Target) > 512 || open.Rule <= 0 || open.User <= 0 || open.Ingress <= 0 || open.Epoch < 0 {
-		http.NotFound(w, r)
+		e.camouflage(w, r)
 		return
 	}
 	if _, err = hex.DecodeString(open.Nonce); err != nil {
-		http.NotFound(w, r)
+		e.camouflage(w, r)
 		return
 	}
 	policy := e.tunnelPolicy.Load()
 	if policy == nil {
-		http.NotFound(w, r)
+		e.camouflage(w, r)
 		return
 	}
 	key := policy.links[open.Ingress]
 	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
-		http.NotFound(w, r)
+		e.camouflage(w, r)
 		return
 	}
 	proof := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	exporter, err := r.TLS.ExportKeyingMaterial(exporterLabel, nil, 32)
 	if err != nil || len(key) != 64 || len(proof) != 64 || !hmac.Equal([]byte(proof), []byte(h2Proof(key, exporter, metadata))) || !h2RuleAllowed(policy, open) {
-		http.NotFound(w, r)
+		e.camouflage(w, r)
 		return
 	}
 	session, ok := r.Context().Value(h2SessionKey{}).(*h2ServerSession)
 	if !ok || !session.take(open.Nonce) {
-		http.NotFound(w, r)
+		e.camouflage(w, r)
 		return
 	}
 	active := e.connections.Add(1)
@@ -143,6 +139,7 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 	}
 	defer target.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Stream-Reply", h2ResponseProof(key, exporter, metadata))
 	w.WriteHeader(200)
 	controller := http.NewResponseController(w)
 	if controller.Flush() != nil {

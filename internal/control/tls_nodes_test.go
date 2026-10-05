@@ -58,6 +58,9 @@ func TestTLSNodeConfigurationScopeAndProtocolGate(t *testing.T) {
 	settings := DefaultTunnelTLS()
 	settings.ServerName = "tunnel.example.test"
 	settings.PublicPort = 443
+	settings.Host = "cdn.example.test"
+	settings.Path = "/images/upload"
+	settings.FallbackURL = "https://www.example.test"
 	settings.DNSCredentials = map[string]string{"api_token": "fixture-dns-credential-not-forwarded"}
 	exitInput := node("tls_h2")
 	exitInput.TLS = &settings
@@ -109,6 +112,27 @@ func TestTLSNodeConfigurationScopeAndProtocolGate(t *testing.T) {
 	}
 	if out.Node.Tls.PrivateKey != private || len(out.EgressRules) != 1 || out.EgressRules[0].UserId != uid {
 		t.Fatal("exit certificate or rule scope missing")
+	}
+	if out.Node.Tls.Host != settings.Host || out.Node.Tls.FallbackUrl != settings.FallbackURL {
+		t.Fatal("exit camouflage settings not delivered")
+	}
+	entryReport.ProtocolVersion = 11
+	out, err = stream.exchange(ctx, p, entry, entryReport)
+	if err != nil || len(out.Rules) != 1 || out.Rules[0].Enabled {
+		t.Fatal("new ingress enabled with old TLS exit", err)
+	}
+	exitReport.ProtocolVersion = 11
+	if _, err = stream.exchange(ctx, p, exit, exitReport); err != nil {
+		t.Fatal(err)
+	}
+	out, err = stream.exchange(ctx, p, entry, entryReport)
+	if err != nil || len(out.Rules) != 1 || !out.Rules[0].Enabled || out.Rules[0].Tls.Fingerprint != "off" || out.Rules[0].Tls.Host != settings.Host || out.Rules[0].Tls.Path != settings.Path || !out.Rules[0].Tls.RequireResponseProof {
+		t.Fatal("new TLS client settings or version gate incorrect", err)
+	}
+	exitReport.ProtocolVersion = 7
+	out, err = stream.exchange(ctx, p, exit, exitReport)
+	if err != nil {
+		t.Fatal(err)
 	}
 	encoded, _ = protojson.Marshal(out)
 	if strings.Contains(string(encoded), "fixture-dns-credential-not-forwarded") {

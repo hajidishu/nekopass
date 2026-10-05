@@ -256,6 +256,7 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
  WHEN u.quota_bytes>=0 AND (u.quota_bytes<=u.traffic_base_bytes+COALESCE((SELECT sum(traffic) FROM current_grants WHERE user_id=u.id),0) OR u.quota_bytes<u.traffic_base_bytes+COALESCE((SELECT sum(issued-released+unlimited_spent) FROM current_grants WHERE user_id=u.id),0)) THEN 'quota_exhausted'
 	 WHEN n.last_seen IS NULL OR n.last_seen<now()-interval '12 seconds' OR (en.id IS NOT NULL AND (en.last_seen IS NULL OR en.last_seen<now()-interval '12 seconds')) THEN 'offline'
 	 WHEN r.proxy_accept='auto' AND n.protocol_version<10 THEN 'upgrade_required'
+	 WHEN en.tunnel_protocol='tls_h2' AND (n.protocol_version<11 OR en.protocol_version<11) THEN 'upgrade_required'
 	 WHEN n.sync_error<>'' OR COALESCE(en.sync_error,'')<>'' THEN 'failed' WHEN n.applied_revision<r.config_revision OR (en.id IS NOT NULL AND en.applied_revision<r.config_revision) THEN 'pending' ELSE 'active' END AS status
 	 FROM rules r JOIN user_entitlements u ON u.id=r.user_id JOIN nodes n ON n.id=r.node_id LEFT JOIN nodes en ON en.id=r.egress_node_id LEFT JOIN rule_groups g ON g.id=r.group_id WHERE $1 OR r.user_id=$2 ORDER BY r.id DESC`, u.IsAdmin, u.ID)
 	if e != nil {

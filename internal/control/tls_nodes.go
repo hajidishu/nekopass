@@ -110,7 +110,7 @@ func appendTLSControl(ctx context.Context, tx pgx.Tx, nodeID int64, out *pb.Cont
 		return err
 	}
 	out.Node.Tls = &pb.TLSServerConfig{ServerName: client.ServerName, Certificate: cert, PrivateKey: key, Path: client.Path,
-		StreamWindowMib: int32(client.StreamWindowMiB), ConnectionWindowMib: int32(client.ConnectionWindowMiB), MaxStreams: int32(client.MaxStreams), ChallengePort: int32(client.HTTPChallengePort), SiteTitle: client.SiteTitle}
+		StreamWindowMib: int32(client.StreamWindowMiB), ConnectionWindowMib: int32(client.ConnectionWindowMiB), MaxStreams: int32(client.MaxStreams), ChallengePort: int32(client.HTTPChallengePort), SiteTitle: client.SiteTitle, Host: client.Host, FallbackUrl: client.FallbackURL}
 	rows, err := tx.Query(ctx, "SELECT domain,token,key_authorization,revision,extract(epoch FROM expires_at)::bigint FROM node_acme_challenges WHERE node_id=$1 AND expires_at>now()", nodeID)
 	if err != nil {
 		return err
@@ -151,7 +151,11 @@ func appendTLSControl(ctx context.Context, tx pgx.Tx, nodeID int64, out *pb.Cont
 			if client.ClientSNI != "" {
 				sni = client.ClientSNI
 			}
-			settings = &pb.TLSClientConfig{ServerName: sni, Fingerprint: client.Fingerprint, RootCa: root, Path: exit.Path, PoolSize: int32(client.PoolSize), StreamWindowMib: int32(client.StreamWindowMiB), ConnectionWindowMib: int32(client.ConnectionWindowMiB)}
+			host := exit.Host
+			if host == "" {
+				host = exit.ServerName
+			}
+			settings = &pb.TLSClientConfig{ServerName: sni, Fingerprint: client.Fingerprint, RootCa: root, Path: exit.Path, Host: host, RequireResponseProof: true, PoolSize: int32(client.PoolSize), StreamWindowMib: int32(client.StreamWindowMiB), ConnectionWindowMib: int32(client.ConnectionWindowMiB)}
 			cache[rule.EgressNodeId] = settings
 			if exit.PublicPort != 0 {
 				for _, candidate := range out.Rules {

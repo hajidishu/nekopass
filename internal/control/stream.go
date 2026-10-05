@@ -351,6 +351,21 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 	if e = appendTLSControl(ctx, tx, nodeID, out); e != nil {
 		return nil, e
 	}
+	tlsVersions := map[int64]int{}
+	for _, rule := range out.Rules {
+		if rule.TunnelProtocol == "tls_h2" {
+			version, known := tlsVersions[rule.EgressNodeId]
+			if !known {
+				if e = tx.QueryRow(ctx, "SELECT protocol_version FROM nodes WHERE id=$1", rule.EgressNodeId).Scan(&version); e != nil {
+					return nil, e
+				}
+				tlsVersions[rule.EgressNodeId] = version
+			}
+			if r.ProtocolVersion < 11 || version < 11 {
+				rule.Enabled = false
+			}
+		}
+	}
 	if e = appendDDNSControl(ctx, tx, nodeID, out); e != nil {
 		return nil, e
 	}

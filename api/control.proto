@@ -144,6 +144,8 @@ message TLSClientConfig {
  int32 pool_size = 5;
  int32 stream_window_mib = 6;
  int32 connection_window_mib = 7;
+ string host = 8;
+ bool require_response_proof = 9;
 }
 message TLSServerConfig {
  string server_name = 1;
@@ -156,6 +158,8 @@ message TLSServerConfig {
  int32 challenge_port = 8;
  repeated ACMEChallenge challenges = 9;
  string site_title = 10;
+ string host = 11;
+ string fallback_url = 12;
 }
 message ACMEChallenge {
  string domain = 1;

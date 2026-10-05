@@ -36,7 +36,7 @@ export default defineConfig({
           { text: '协议选择', link: '/protocols/' },
           { text: 'TCP 直转', link: '/protocols/tcp' },
           { text: '明文 TCP 中转', link: '/protocols/plain-tcp' },
-          { text: 'TLS 1.3 / HTTP2', link: '/protocols/tls-h2' }
+          { text: 'tls+h2', link: '/protocols/tls-h2' }
         ]
       },
       {

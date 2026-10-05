@@ -7,7 +7,7 @@ import { encodeNyanpassRules, nyanpassNeedsProxyTrust, parseRuleImport, prepareR
 import { api as callAPI, bytes, address, quotaText, limitText, type Me, type User, type RuleNode, type Rule, type RuleInput, type Group } from './api'
 const props = defineProps<{ me: Me; users: User[]; nodes: RuleNode[]; rules: Rule[]; managedUser?: User }>()
 const emit = defineEmits<{ refresh: [] }>()
-const protocolText = (value?: string) => value === 'tls_h2' ? 'TLS / HTTP2' : value === 'plain_tcp' ? '明文 TCP' : '节点中转'
+const protocolText = (value?: string) => value === 'tls_h2' ? 'tls+h2' : value === 'plain_tcp' ? '明文 TCP' : '节点中转'
 const actorID = computed(() => props.managedUser?.id || props.me.id)
 async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> { return callAPI<T>(props.managedUser ? `admin/users/${props.managedUser.id}/${path}` : path, method, body) }
 

@@ -1394,16 +1394,18 @@ func (x *DDNSStatus) GetError() string {
 }
 
 type TLSClientConfig struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	ServerName          string                 `protobuf:"bytes,1,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
-	Fingerprint         string                 `protobuf:"bytes,2,opt,name=fingerprint,proto3" json:"fingerprint,omitempty"`
-	RootCa              string                 `protobuf:"bytes,3,opt,name=root_ca,json=rootCa,proto3" json:"root_ca,omitempty"`
-	Path                string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
-	PoolSize            int32                  `protobuf:"varint,5,opt,name=pool_size,json=poolSize,proto3" json:"pool_size,omitempty"`
-	StreamWindowMib     int32                  `protobuf:"varint,6,opt,name=stream_window_mib,json=streamWindowMib,proto3" json:"stream_window_mib,omitempty"`
-	ConnectionWindowMib int32                  `protobuf:"varint,7,opt,name=connection_window_mib,json=connectionWindowMib,proto3" json:"connection_window_mib,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	ServerName           string                 `protobuf:"bytes,1,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
+	Fingerprint          string                 `protobuf:"bytes,2,opt,name=fingerprint,proto3" json:"fingerprint,omitempty"`
+	RootCa               string                 `protobuf:"bytes,3,opt,name=root_ca,json=rootCa,proto3" json:"root_ca,omitempty"`
+	Path                 string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
+	PoolSize             int32                  `protobuf:"varint,5,opt,name=pool_size,json=poolSize,proto3" json:"pool_size,omitempty"`
+	StreamWindowMib      int32                  `protobuf:"varint,6,opt,name=stream_window_mib,json=streamWindowMib,proto3" json:"stream_window_mib,omitempty"`
+	ConnectionWindowMib  int32                  `protobuf:"varint,7,opt,name=connection_window_mib,json=connectionWindowMib,proto3" json:"connection_window_mib,omitempty"`
+	Host                 string                 `protobuf:"bytes,8,opt,name=host,proto3" json:"host,omitempty"`
+	RequireResponseProof bool                   `protobuf:"varint,9,opt,name=require_response_proof,json=requireResponseProof,proto3" json:"require_response_proof,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *TLSClientConfig) Reset() {
@@ -1485,6 +1487,20 @@ func (x *TLSClientConfig) GetConnectionWindowMib() int32 {
 	return 0
 }
 
+func (x *TLSClientConfig) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *TLSClientConfig) GetRequireResponseProof() bool {
+	if x != nil {
+		return x.RequireResponseProof
+	}
+	return false
+}
+
 type TLSServerConfig struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	ServerName          string                 `protobuf:"bytes,1,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
@@ -1497,6 +1513,8 @@ type TLSServerConfig struct {
 	ChallengePort       int32                  `protobuf:"varint,8,opt,name=challenge_port,json=challengePort,proto3" json:"challenge_port,omitempty"`
 	Challenges          []*ACMEChallenge       `protobuf:"bytes,9,rep,name=challenges,proto3" json:"challenges,omitempty"`
 	SiteTitle           string                 `protobuf:"bytes,10,opt,name=site_title,json=siteTitle,proto3" json:"site_title,omitempty"`
+	Host                string                 `protobuf:"bytes,11,opt,name=host,proto3" json:"host,omitempty"`
+	FallbackUrl         string                 `protobuf:"bytes,12,opt,name=fallback_url,json=fallbackUrl,proto3" json:"fallback_url,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -1597,6 +1615,20 @@ func (x *TLSServerConfig) GetChallenges() []*ACMEChallenge {
 func (x *TLSServerConfig) GetSiteTitle() string {
 	if x != nil {
 		return x.SiteTitle
+	}
+	return ""
+}
+
+func (x *TLSServerConfig) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *TLSServerConfig) GetFallbackUrl() string {
+	if x != nil {
+		return x.FallbackUrl
 	}
 	return ""
 }
@@ -2029,7 +2061,7 @@ const file_api_control_proto_rawDesc = "" +
 	"\x04ipv6\x18\x04 \x01(\tR\x04ipv6\x12!\n" +
 	"\fchecked_unix\x18\x05 \x01(\x03R\vcheckedUnix\x12!\n" +
 	"\fupdated_unix\x18\x06 \x01(\x03R\vupdatedUnix\x12\x14\n" +
-	"\x05error\x18\a \x01(\tR\x05error\"\xfe\x01\n" +
+	"\x05error\x18\a \x01(\tR\x05error\"\xc8\x02\n" +
 	"\x0fTLSClientConfig\x12\x1f\n" +
 	"\vserver_name\x18\x01 \x01(\tR\n" +
 	"serverName\x12 \n" +
@@ -2038,7 +2070,9 @@ const file_api_control_proto_rawDesc = "" +
 	"\x04path\x18\x04 \x01(\tR\x04path\x12\x1b\n" +
 	"\tpool_size\x18\x05 \x01(\x05R\bpoolSize\x12*\n" +
 	"\x11stream_window_mib\x18\x06 \x01(\x05R\x0fstreamWindowMib\x122\n" +
-	"\x15connection_window_mib\x18\a \x01(\x05R\x13connectionWindowMib\"\x8c\x03\n" +
+	"\x15connection_window_mib\x18\a \x01(\x05R\x13connectionWindowMib\x12\x12\n" +
+	"\x04host\x18\b \x01(\tR\x04host\x124\n" +
+	"\x16require_response_proof\x18\t \x01(\bR\x14requireResponseProof\"\xc3\x03\n" +
 	"\x0fTLSServerConfig\x12\x1f\n" +
 	"\vserver_name\x18\x01 \x01(\tR\n" +
 	"serverName\x12 \n" +
@@ -2056,7 +2090,9 @@ const file_api_control_proto_rawDesc = "" +
 	"challenges\x12\x1d\n" +
 	"\n" +
 	"site_title\x18\n" +
-	" \x01(\tR\tsiteTitle\"\xa9\x01\n" +
+	" \x01(\tR\tsiteTitle\x12\x12\n" +
+	"\x04host\x18\v \x01(\tR\x04host\x12!\n" +
+	"\ffallback_url\x18\f \x01(\tR\vfallbackUrl\"\xa9\x01\n" +
 	"\rACMEChallenge\x12\x16\n" +
 	"\x06domain\x18\x01 \x01(\tR\x06domain\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12+\n" +

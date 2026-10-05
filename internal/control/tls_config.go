@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -25,6 +26,8 @@ type TunnelTLSConfig struct {
 	PrivateKey          string            `json:"private_key"`
 	RootCA              string            `json:"root_ca"`
 	Path                string            `json:"path"`
+	Host                string            `json:"host"`
+	FallbackURL         string            `json:"fallback_url"`
 	PublicPort          int               `json:"public_port"`
 	PoolSize            int               `json:"pool_size"`
 	StreamWindowMiB     int               `json:"stream_window_mib"`
@@ -40,7 +43,7 @@ type TunnelTLSConfig struct {
 }
 
 func DefaultTunnelTLS() TunnelTLSConfig {
-	return TunnelTLSConfig{Fingerprint: "chrome", CertificateMode: "self_signed", Path: "/api/stream", PoolSize: 2,
+	return TunnelTLSConfig{Fingerprint: "off", CertificateMode: "self_signed", Path: "/api/stream", PoolSize: 2,
 		StreamWindowMiB: 16, ConnectionWindowMiB: 64, MaxStreams: 256, SiteTitle: "Welcome", HTTPChallengePort: 80,
 		ACMEDirectory: "https://acme-v02.api.letsencrypt.org/directory", DNSCredentials: map[string]string{}}
 }
@@ -82,8 +85,34 @@ func (v *TunnelTLSConfig) normalize() error {
 	}
 	v.ServerName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(v.ServerName), "."))
 	v.ClientSNI = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(v.ClientSNI), "."))
-	if v.Fingerprint != "chrome" && v.Fingerprint != "firefox" {
-		return errors.New("请选择 Chrome 或 Firefox 指纹")
+	if v.Fingerprint != "off" && v.Fingerprint != "chrome" && v.Fingerprint != "firefox" {
+		return errors.New("uTLS 请选择关闭、Chrome 或 Firefox")
+	}
+	v.Host = strings.ToLower(strings.TrimSpace(v.Host))
+	v.FallbackURL = strings.TrimSpace(v.FallbackURL)
+	if v.Host != "" {
+		h, err := url.Parse("https://" + v.Host)
+		if err != nil || h.Host != v.Host || h.User != nil || h.Path != "" || h.RawQuery != "" || h.Fragment != "" || !ValidTarget(h.Hostname()) || strings.HasSuffix(v.Host, ":") || strings.ContainsAny(v.Host, "\\\r\n\x00") || len(v.Host) > 254 {
+			return errors.New("Host 须为域名或 IP，可带端口，不含协议和路径")
+		}
+		if h.Port() != "" {
+			p, err := strconv.Atoi(h.Port())
+			if err != nil || p < 1 || p > 65535 {
+				return errors.New("Host 端口无效")
+			}
+		}
+	}
+	if v.FallbackURL != "" {
+		u, err := url.Parse(v.FallbackURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || !ValidTarget(u.Hostname()) || u.User != nil || u.Fragment != "" || u.RawQuery != "" || strings.HasSuffix(u.Host, ":") || strings.ContainsAny(v.FallbackURL, "\\\r\n\x00") || len(v.FallbackURL) > 2048 {
+			return errors.New("伪装网站须为 HTTP 或 HTTPS 地址，不含登录凭据、查询参数或片段")
+		}
+		if u.Port() != "" {
+			p, err := strconv.Atoi(u.Port())
+			if err != nil || p < 1 || p > 65535 {
+				return errors.New("伪装网站端口无效")
+			}
+		}
 	}
 	if v.CertificateMode != "self_signed" && v.CertificateMode != "import" && v.CertificateMode != "acme_dns" && v.CertificateMode != "acme_http" {
 		return errors.New("证书模式无效")
