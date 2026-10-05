@@ -39,3 +39,5 @@ sudo nekopassctl panel update
 ```
 
 更新前备份数据库和 `/etc/nekopass/`。节点升级见 [安装节点](./node.md#升级)。保留 `state.db`，不要复制给其他节点。
+
+面板可在「管理后台 → 系统设置 → 立即更新」升级，页面会显示进度。新安装默认已配置更新服务；旧安装升级到 v0.13.1 后，可运行一次 `sudo /opt/nekopass/bin/nekopass-update --service nekopass --setup-panel` 启用。

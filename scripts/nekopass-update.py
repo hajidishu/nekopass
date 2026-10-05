@@ -91,7 +91,8 @@ def read_request(path):
 
 
 def write_result(directory, service, request, state, error=''):
-    owner = pwd.getpwnam(service)
+    account = service if service.startswith('nekopass-agent') else subprocess.check_output(['systemctl', 'show', service, '-p', 'User', '--value'], text=True).strip()
+    owner = pwd.getpwnam(account)
     fd, name = tempfile.mkstemp(prefix='.update-result-', dir=directory)
     try:
         with os.fdopen(fd, 'w') as file:
@@ -120,6 +121,54 @@ def extract_panel(package, stage):
             with archive.extractfile(member) as source, target.open('wb') as dest:
                 shutil.copyfileobj(source, dest)
             target.chmod(0o755 if path.parts[0] == 'bin' else 0o644)
+
+
+def setup_panel_update(service):
+    if service.startswith('nekopass-agent'):
+        raise ValueError('Panel service required')
+    base = pathlib.Path('/opt/nekopass' if service == 'nekopass' else '/opt/' + service)
+    directory = pathlib.Path('/var/lib') / service
+    if base.resolve() != base or directory.resolve() != directory:
+        raise ValueError('Invalid installation directory')
+    run(['systemctl', 'daemon-reload'])
+    account = subprocess.check_output(['systemctl', 'show', service, '-p', 'User', '--value'], text=True).strip()
+    if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', account):
+        raise ValueError('Invalid service user')
+    owner = pwd.getpwnam(account)
+    directory.mkdir(mode=0o700, exist_ok=True)
+    os.chown(directory, owner.pw_uid, owner.pw_gid)
+    dropin = pathlib.Path('/etc/systemd/system') / (service + '.service.d')
+    dropin.mkdir(mode=0o755, exist_ok=True)
+    (dropin / 'update.conf').write_text('[Service]\nStateDirectory=' + service + '\nEnvironment=NEKOPASS_PANEL_UPDATE_DIR=' + str(directory) + '\n')
+    updater_unit = pathlib.Path('/etc/systemd/system') / (service + '-update.service')
+    updater_unit.write_text(f'''[Unit]
+Description=Nekopass panel release updater
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart={base}/bin/nekopass-update --service {service} --request
+TimeoutStartSec=600
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={base} {directory} /run/lock /etc/systemd/system
+''')
+    path_unit = pathlib.Path('/etc/systemd/system') / (service + '-update.path')
+    path_unit.write_text(f'''[Unit]
+Description=Watch Nekopass panel update requests
+[Path]
+PathExists={directory}/update-request.json
+Unit={service}-update.service
+[Install]
+WantedBy=multi-user.target
+''')
+    run(['systemctl', 'daemon-reload'])
+    run(['systemctl', 'enable', '--now', service + '-update.path'])
+    marker = directory / 'panel-update-ready'
+    marker.write_text('systemd\n')
+    marker.chmod(0o644)
 
 
 def update(service, version):
@@ -171,6 +220,14 @@ def update(service, version):
                 shutil.copytree(stage / 'web', base / 'web', dirs_exist_ok=True)
             os.replace(replacement, binary)
             installed = True
+            if not agent:
+                for name in ['nekopassctl', 'nekopass-update']:
+                    source = stage / 'bin' / name
+                    if source.is_file():
+                        target = pathlib.Path('/usr/local/bin/nekopassctl') if name == 'nekopassctl' else base / 'bin' / name
+                        shutil.copy2(source, target)
+                        target.chmod(0o755)
+                run([str(base / 'bin/nekopass-update'), '--service', service, '--setup-panel'])
             if active:
                 run(['systemctl', 'start', service])
                 time.sleep(3)
@@ -184,13 +241,6 @@ def update(service, version):
             elif not installed and active:
                 run(['systemctl', 'start', service])
             raise
-        if not agent:
-            for name in ['nekopassctl', 'nekopass-update']:
-                source = stage / 'bin' / name
-                if source.is_file():
-                    target = pathlib.Path('/usr/local/bin/nekopassctl') if name == 'nekopassctl' else base / 'bin' / name
-                    shutil.copy2(source, target)
-                    target.chmod(0o755)
         print('Update complete:', version, flush=True)
 
 
@@ -200,9 +250,13 @@ def main():
     p.add_argument('--version', default='latest')
     p.add_argument('--check', action='store_true')
     p.add_argument('--request', action='store_true')
+    p.add_argument('--setup-panel', action='store_true')
     args = p.parse_args()
     if not SERVICE.fullmatch(args.service) or os.geteuid() != 0:
         p.error('Run as root with a valid Nekopass service')
+    if args.setup_panel:
+        setup_panel_update(args.service)
+        return 0
     lock = pathlib.Path('/run/lock') / (args.service + '-update.lock')
     with lock.open('w') as locked:
         fcntl.flock(locked, fcntl.LOCK_EX)
@@ -210,8 +264,8 @@ def main():
         request = None
         try:
             if args.request:
-                if not args.service.startswith('nekopass-agent') or directory.resolve() != directory:
-                    raise ValueError('Invalid Agent state directory')
+                if directory.resolve() != directory:
+                    raise ValueError('Invalid update state directory')
                 name = directory / 'update-request.json'
                 if not name.exists():
                     return
@@ -236,7 +290,7 @@ def main():
             # Never echo response bodies, EnvironmentFile or credentials.
             print('Update failed:', type(error).__name__, '; inspect the service log and network connection.', file=sys.stderr)
             if request:
-                write_result(directory, args.service, request, 'failed', '更新失败，请查看节点更新服务日志和网络连接')
+                write_result(directory, args.service, request, 'failed', '更新失败，请查看更新服务日志和网络连接')
             return 1
     return 0
 

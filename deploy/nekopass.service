@@ -7,6 +7,8 @@ Wants=network-online.target
 Type=simple
 User=nekopass
 Group=nekopass
+StateDirectory=nekopass
+Environment=NEKOPASS_PANEL_UPDATE_DIR=/var/lib/nekopass
 EnvironmentFile=/etc/nekopass/control.env
 ExecStart=/opt/nekopass/bin/nekopass -web /opt/nekopass/web -grpc 127.0.0.1:9443
 Restart=on-failure

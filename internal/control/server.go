@@ -38,6 +38,8 @@ type Server struct {
 	releaseChecked time.Time
 	releaseInfo    release.Info
 	releaseError   error
+	panelUpdateMu  sync.Mutex
+	panelUpdateDir string
 }
 type loginBucket struct {
 	limiter *rate.Limiter
@@ -109,6 +111,8 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	api.HandleFunc("POST /api/v1/logout", s.logout)
 	api.HandleFunc("GET /api/v1/admin/settings", s.getSettings)
 	api.HandleFunc("GET /api/v1/admin/updates", s.checkUpdates)
+	api.HandleFunc("GET /api/v1/admin/updates/panel", s.panelUpdateStatus)
+	api.HandleFunc("POST /api/v1/admin/updates/panel", s.updatePanel)
 	api.HandleFunc("POST /api/v1/admin/nodes/{id}/update", s.updateNode)
 	api.HandleFunc("PUT /api/v1/admin/settings", s.saveSettings)
 	api.HandleFunc("POST /api/v1/admin/settings/api-key", s.rotateAPIKey)

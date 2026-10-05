@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.13.0
+  version: 0.13.1
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Admin-created accounts. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -9,6 +9,26 @@ security:
   - session: []
   - httpSession: []
 paths:
+  /admin/updates/panel:
+    get:
+      summary: Read panel update support and task status (admin only)
+      responses:
+        '200': {description: Current version, helper availability and latest task}
+    post:
+      summary: Queue upgrade to the latest official release (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version]
+              properties:
+                version: {type: string, pattern: '^v[0-9]+\.[0-9]+\.[0-9]+$'}
+      responses:
+        '202': {description: Durable update task queued for native systemd updater}
+        '409': {description: No newer stable release, helper unavailable or another update is pending}
   /admin/updates:
     get:
       summary: Administrator only; check latest stable GitHub release
