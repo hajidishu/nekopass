@@ -1,6 +1,9 @@
 ---
 layout: home
 hero:
+  image:
+    src: /logo.svg
+    alt: Nekopass
   name: Nekopass
   text: 用户文档
   tagline: 安装、转发、中转与日常管理。

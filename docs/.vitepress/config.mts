@@ -13,10 +13,10 @@ export default defineConfig({
   base,
   cleanUrls: false,
   appearance: 'dark',
-  head: [['link', { rel: 'icon', type: 'image/svg+xml', href: `${base}logo.svg` }]],
+  head: [['link', { rel: 'icon', type: 'image/svg+xml', href: `${base}logo-mark.svg` }]],
   markdown: { lineNumbers: false },
   themeConfig: {
-    logo: '/logo.svg',
+    logo: '/logo-mark.svg',
     nav: [
       { text: '使用文档', link: '/guide/panel' },
       { text: '传输协议', link: '/protocols/' },

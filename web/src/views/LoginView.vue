@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { api, type Me } from '../api'
 import { safeReturnPath } from '../page'
 import {site} from '../site'
+import BrandLogo from '../BrandLogo.vue'
 const form = reactive({username:'',password:''}), busy = ref(false)
 async function login() {
  if (busy.value) return
@@ -17,4 +18,4 @@ async function login() {
  } catch(e) { ElMessage.error((e as Error).message) } finally { busy.value=false }
 }
 </script>
-<template><main class="login-page"><section class="login-card surface"><h1>{{site.name}}</h1><p class="subtle">登录控制台</p><el-form label-position="top" @submit.prevent="login"><el-form-item label="用户名"><el-input v-model="form.username" autocomplete="username" /></el-form-item><el-form-item label="密码"><el-input v-model="form.password" type="password" show-password autocomplete="current-password" /></el-form-item><el-button type="primary" native-type="submit" :loading="busy" class="full">登录</el-button></el-form></section></main></template>
+<template><main class="login-page"><section class="login-card surface"><BrandLogo size="large" /><h1>{{site.name}}</h1><p class="subtle">登录控制台</p><el-form label-position="top" @submit.prevent="login"><el-form-item label="用户名"><el-input v-model="form.username" autocomplete="username" /></el-form-item><el-form-item label="密码"><el-input v-model="form.password" type="password" show-password autocomplete="current-password" /></el-form-item><el-button type="primary" native-type="submit" :loading="busy" class="full">登录</el-button></el-form></section></main></template>

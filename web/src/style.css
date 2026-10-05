@@ -70,6 +70,15 @@ a { color: inherit; text-decoration: none; }
 .full { width: 100%; }
 .topbar { height: 58px; position: fixed; inset: 0 0 auto; z-index: 30; background: var(--header-bg); display: flex; align-items: center; justify-content: space-between; padding: 0 27px; }
 .topbar-brand { font-size: 21px; font-weight: 700; display: flex; align-items: center; gap: 12px; }
+.topbar-brand > a { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
+.brand-logo { display: block; object-fit: contain; flex-shrink: 0; border-radius: 9px; background: #fff; }
+.brand-logo--small { width: 40px; height: 40px; }
+.brand-logo--large { width: 176px; height: 176px; margin: 0 auto 20px; border-radius: 20px; }
+.topbar-actions .area-link { white-space: nowrap; }
+@media(max-width:450px) {
+ .topbar-brand > a > .brand-site-name { display: none; }
+ .brand-logo--small { width: 36px; height: 36px; }
+}
 .topbar-actions { display: flex; align-items: center; gap: 10px; }
 .account-button { padding: 0 10px 0 14px; background: transparent; border-color: #b4c1cf; }
 .account-button .ui-icon { margin: 0; }
