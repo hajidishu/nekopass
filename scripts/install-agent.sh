@@ -11,32 +11,29 @@ write_updater_payload() { return 1; }
 
 SERVER=''; TOKEN=''; TOKEN_FILE=''; PANEL_URL=''; INSTALL_TOKEN=''
 DOWNLOAD_BASE='https://github.com/hajidishu/nekopass/releases/download'
-VERSION='v0.10.5'; ARCH='auto'; BINARY_URL=''
-CA_URL=''; CA_FILE=''; CA_BASE64=''; SERVICE='nekopass-agent'
+VERSION='v0.11.0'; ARCH='auto'; BINARY_URL=''
+SERVICE='nekopass-agent'
 UPGRADE=0; NO_START=0; DRY_RUN=0; WORK=''; CHANGED=0; WAS_ACTIVE=0; WAS_ENABLED=0
 usage() {
  cat <<'HELP'
 Nekopass Agent installer (Linux + systemd, run as root)
 
 Direct mode:
-  bash install-agent.sh -s panel.example.com:9443 -t NODE_TOKEN \
-    -d https://github.com/hajidishu/nekopass/releases/download -v v0.10.5
+  bash install-agent.sh -s https://panel.example.com:9443 -t NODE_TOKEN \
+    -d https://github.com/hajidishu/nekopass/releases/download -v v0.11.0
 
 Panel-issued install command:
   bash install-agent.sh -p https://panel.example.com -i INSTALL_TOKEN
 
-  -s, --server HOST:PORT       Agent control endpoint (no https:// prefix)
+  -s, --server URL             https://host:port for public TLS; http://host:port for test h2c
   -t, --token TOKEN            Node token, never a global management API key
       --token-file PATH       Read node token from a file
   -p, --panel-url URL          HTTP(S) control-panel API root
   -i, --install-token TOKEN    One-time node-specific installation credential
   -d, --download-base URL      HTTPS release directory
-  -v, --version VERSION        Release directory name; default v0.10.5
+  -v, --version VERSION        Release directory name; default v0.11.0
   -a, --arch ARCH              auto, amd64 or arm64
       --binary-url URL        Override architecture binary download URL
-  -c, --ca-file PATH          Additional trusted PEM CA (also used by Agent)
-      --ca-url URL            Download additional trusted PEM CA over HTTPS
-      --ca-base64 BASE64      Embedded public control CA; no extra file download
       --service-name NAME     Default nekopass-agent; isolated suffix allowed
       --upgrade               Require an existing installation, preserve identity
       --no-start              Install files only; do not enable/start the service
@@ -64,9 +61,6 @@ while (($#)); do
   -v|--version) need_value "$@"; VERSION=$2; shift 2;;
   -a|--arch) need_value "$@"; ARCH=$2; shift 2;;
   --binary-url) need_value "$@"; BINARY_URL=$2; shift 2;;
-  -c|--ca-file) need_value "$@"; CA_FILE=$2; shift 2;;
-  --ca-url) need_value "$@"; CA_URL=$2; shift 2;;
-  --ca-base64) need_value "$@"; CA_BASE64=$2; shift 2;;
   --service-name) need_value "$@"; SERVICE=$2; shift 2;;
   --upgrade) UPGRADE=1; shift;;
   --no-start) NO_START=1; shift;;
@@ -99,11 +93,11 @@ if [[ "$SERVICE" == nekopass-agent ]]; then
 else
  BIN="/opt/$SERVICE/bin/nekopass-agent"; CONFIG_DIR="/etc/$SERVICE"
 fi
-ENV_FILE="$CONFIG_DIR/agent.env"; STATE_DIR="/var/lib/$SERVICE"; CA_DEST="$CONFIG_DIR/tls/ca.crt"; UNIT="/etc/systemd/system/$SERVICE.service"
-for target in "$(dirname "$BIN")" "$CONFIG_DIR" "$CONFIG_DIR/tls" "$STATE_DIR" /etc/systemd/system; do
+ENV_FILE="$CONFIG_DIR/agent.env"; STATE_DIR="/var/lib/$SERVICE"; UNIT="/etc/systemd/system/$SERVICE.service"
+for target in "$(dirname "$BIN")" "$CONFIG_DIR" "$STATE_DIR" /etc/systemd/system; do
  [[ "$(realpath -m "$target")" == "$target" ]] || die "Refusing symlinked installation directory: $target"
 done
-for target in "$BIN" "$ENV_FILE" "$CA_DEST" "$UNIT"; do [[ ! -L "$target" ]] || die "Refusing symlink: $target"; done
+for target in "$BIN" "$ENV_FILE" "$UNIT"; do [[ ! -L "$target" ]] || die "Refusing symlink: $target"; done
 if ((UPGRADE)); then [[ -f "$ENV_FILE" ]] || die 'Existing configuration missing; use a new node for a new host'; fi
 if [[ ! -f "$ENV_FILE" && -d "$STATE_DIR" ]] && find "$STATE_DIR" -maxdepth 1 -name '*.db' -print -quit | grep -q .; then die 'State exists without configuration. Restore the original agent.env; state will not be reset.'; fi
 WORK=$(mktemp -d /tmp/nekopass-install.XXXXXXXX)
@@ -137,8 +131,8 @@ cleanup() {
    exit "$status"
   fi
   log 'Restoring previous installation files'
-  for key in binary env ca unit; do
-   case "$key" in binary) dest=$BIN;; env) dest=$ENV_FILE;; ca) dest=$CA_DEST;; unit) dest=$UNIT;; esac
+  for key in binary env unit; do
+   case "$key" in binary) dest=$BIN;; env) dest=$ENV_FILE;; unit) dest=$UNIT;; esac
    if [[ -f "$WORK/backup-$key" ]]; then cp -p "$WORK/backup-$key" "$dest"; else rm -f -- "$dest"; fi
   done
   systemctl daemon-reload >/dev/null 2>&1 || true
@@ -161,44 +155,18 @@ if p.exists():
    print(value,end='');break
 PY
 }
-OLD_TOKEN=$(read_env NEKOPASS_NODE_TOKEN); OLD_SERVER=$(read_env NEKOPASS_SERVER); OLD_CA=$(read_env NEKOPASS_CA)
+OLD_TOKEN=$(read_env NEKOPASS_NODE_TOKEN); OLD_SERVER=$(read_env NEKOPASS_SERVER)
 [[ ! -f "$ENV_FILE" || -n "$OLD_TOKEN" ]] || die 'Existing node token missing; refusing to overwrite identity'
 if [[ -n "$TOKEN_FILE" ]]; then [[ -f "$TOKEN_FILE" ]] || die 'Token file missing'; TOKEN=$(cat "$TOKEN_FILE"); fi
 [[ -n "$TOKEN" ]] || TOKEN=$OLD_TOKEN
 [[ -n "$SERVER" ]] || SERVER=$OLD_SERVER
-[[ -n "$CA_FILE" || -n "$CA_URL" ]] || CA_FILE=$OLD_CA
 check_url() { python3 - "$1" <<'PY'
 import sys,urllib.parse
 u=urllib.parse.urlsplit(sys.argv[1])
 if u.scheme!='https' or not u.hostname or u.username or u.password or u.fragment or any(c in sys.argv[1] for c in '\r\n\0'):sys.exit('HTTPS URL required')
 PY
 }
-CURL_TLS=()
-trust_ca() {
- [[ -f "$1" ]] || die 'CA file missing'
- : > "$WORK/trust.pem"
- for roots in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt; do if [[ -f "$roots" ]]; then cat "$roots" >> "$WORK/trust.pem"; break; fi; done
- cat "$1" >> "$WORK/trust.pem"
- CURL_TLS=(--cacert "$WORK/trust.pem")
-}
-fetch() { check_url "$1"; curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 15 --max-time 300 --retry 3 "${CURL_TLS[@]}" "$1" -o "$2"; }
-if [[ -n "$CA_FILE" ]]; then trust_ca "$CA_FILE"; cp "$CA_FILE" "$WORK/ca.crt"; fi
-if [[ -n "$CA_URL" ]]; then fetch "$CA_URL" "$WORK/ca.crt"; trust_ca "$WORK/ca.crt"; fi
-if [[ -n "$CA_BASE64" ]]; then
- printf '%s' "$CA_BASE64" > "$WORK/control-ca.base64"
- python3 - "$WORK/control-ca.base64" "$WORK/ca.crt" <<'PY'
-import base64,pathlib,re,ssl,sys
-raw=pathlib.Path(sys.argv[1]).read_bytes()
-if len(raw)>90000:sys.exit('Control CA is too large')
-try:
- text=base64.b64decode(raw,validate=True).decode('ascii')
- pattern=r'-----BEGIN CERTIFICATE-----\s*[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----'
- if len(text)>65536 or not re.findall(pattern,text) or re.sub(pattern,'',text).strip():raise ValueError()
- ssl.create_default_context().load_verify_locations(cadata=text)
-except Exception:sys.exit('Invalid public control CA')
-pathlib.Path(sys.argv[2]).write_text(text)
-PY
-fi
+fetch() { check_url "$1"; curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 15 --max-time 300 --retry 3 "$1" -o "$2"; }
 if [[ -n "$PANEL_URL" ]]; then check_url "${PANEL_URL/#http:\/\//https:\/\/}"; fi
 if [[ -n "$INSTALL_TOKEN" ]]; then
  [[ -n "$PANEL_URL" ]] || die '--panel-url is required with --install-token'
@@ -211,7 +179,7 @@ import json,pathlib,sys
 pathlib.Path(sys.argv[2]).write_text(json.dumps({'current_token':pathlib.Path(sys.argv[1]).read_text()}))
 PY
  log 'Redeeming node-specific installation credential'
- code=$(curl --silent --show-error --proto '=http,https' --tlsv1.2 --connect-timeout 15 --max-time 30 "${CURL_TLS[@]}" --config "$WORK/auth.conf" -H 'Content-Type: application/json' --data-binary "@$WORK/request.json" "$PANEL_URL/api/v1/node-install/redeem" -o "$WORK/bootstrap.json" -w '%{http_code}')
+ code=$(curl --silent --show-error --proto '=http,https' --tlsv1.2 --connect-timeout 15 --max-time 30 --config "$WORK/auth.conf" -H 'Content-Type: application/json' --data-binary "@$WORK/request.json" "$PANEL_URL/api/v1/node-install/redeem" -o "$WORK/bootstrap.json" -w '%{http_code}')
  if [[ "$code" != 200 ]]; then python3 - "$WORK/bootstrap.json" <<'PY'
 import json,sys
 try:print('[nekopass] '+str(json.load(open(sys.argv[1])).get('error','Installation credential rejected')),file=sys.stderr)
@@ -226,28 +194,21 @@ for key in ['server','token','version','download_base']:
  value=v.get(key,'')
  if not isinstance(value,str) or any(c in value for c in '\r\n\0'):raise ValueError('Invalid bootstrap field')
  (root/key).write_text(value)
-ca=v.get('control_ca','')
-if not isinstance(ca,str) or len(ca)>65536:raise ValueError('Invalid control CA')
-if ca:
- import re,ssl
- blocks=re.findall(r'-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----',ca)
- if not blocks or re.sub(r'-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----','',ca).strip():raise ValueError('Control CA must contain public certificates only')
- ssl.create_default_context().load_verify_locations(cadata=ca)
- (root/'control-ca.crt').write_text(ca)
+
 PY
  SERVER=$(cat "$WORK/server"); TOKEN=$(cat "$WORK/token"); VERSION=$(cat "$WORK/version"); DOWNLOAD_BASE=$(cat "$WORK/download_base")
- if [[ -f "$WORK/control-ca.crt" ]]; then
-  # Redeemed trust applies to Agent control, not to unrelated release downloads.
-  cp "$WORK/control-ca.crt" "$WORK/ca.crt"
- fi
+
 fi
 [[ "$TOKEN" =~ ^[A-Za-z0-9_-]{8,128}$ ]] || die 'A valid node token is required'
 [[ -z "$OLD_TOKEN" || "$TOKEN" == "$OLD_TOKEN" ]] || die 'Refusing to replace an existing node identity; use its original token or a new host'
 python3 - "$SERVER" <<'PY'
 import re,sys,urllib.parse
-if not re.fullmatch(r'(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:]+\]):[0-9]+',sys.argv[1]):sys.exit('Server must be host:port (IPv6 uses brackets)')
-v=urllib.parse.urlsplit('//'+sys.argv[1]);port=v.port
-if not v.hostname or not port or not 1<=port<=65535 or v.path or v.username or v.password:sys.exit('Invalid server endpoint')
+raw=sys.argv[1]
+if any(c in raw for c in '\r\n\0'):sys.exit('Invalid server endpoint')
+v=urllib.parse.urlsplit(raw if '://' in raw else '//'+raw)
+try:port=v.port
+except ValueError:sys.exit('Invalid server port')
+if v.scheme not in ('','http','https') or not v.hostname or not port or not 1<=port<=65535 or v.path not in ('','/') or v.query or v.fragment or v.username or v.password:sys.exit('Use https://host:port or http://host:port')
 PY
 [[ "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ && "$VERSION" != *..* ]] || die 'Invalid release version'
 if [[ -z "$BINARY_URL" ]]; then
@@ -271,9 +232,9 @@ REPORTED_VERSION=$(awk '{print $2}' "$WORK/version-check")
 [[ "$VERSION" == latest || "$VERSION" == "$REPORTED_VERSION" ]] || die 'Downloaded binary version mismatch'
 VERSION=$REPORTED_VERSION
 id -u "$SERVICE" >/dev/null 2>&1 || useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin "$SERVICE"
-install -d -m 755 "$(dirname "$BIN")" "$CONFIG_DIR" "$CONFIG_DIR/tls"
-for key in binary env ca unit; do
- case "$key" in binary) src=$BIN;; env) src=$ENV_FILE;; ca) src=$CA_DEST;; unit) src=$UNIT;; esac
+install -d -m 755 "$(dirname "$BIN")" "$CONFIG_DIR"
+for key in binary env unit; do
+ case "$key" in binary) src=$BIN;; env) src=$ENV_FILE;; unit) src=$UNIT;; esac
  [[ ! -f "$src" ]] || cp -p "$src" "$WORK/backup-$key"
 done
 if systemctl is-active --quiet "$SERVICE"; then WAS_ACTIVE=1; fi
@@ -283,7 +244,6 @@ systemctl stop "$SERVICE" 2>/dev/null || true
 install -m 755 "$WORK/agent" "$BIN"
 printf 'NEKOPASS_SERVER=%s\nNEKOPASS_NODE_TOKEN=%s\n' "$SERVER" "$TOKEN" > "$WORK/agent.env"
 if [[ -n "$PANEL_URL" ]]; then printf 'NEKOPASS_PANEL_URL=%s\n' "$PANEL_URL" >> "$WORK/agent.env"; fi
-if [[ -f "$WORK/ca.crt" ]]; then install -m 644 "$WORK/ca.crt" "$CA_DEST";printf 'NEKOPASS_CA=%s\n' "$CA_DEST" >> "$WORK/agent.env";fi
 install -m 600 "$WORK/agent.env" "$ENV_FILE"
 cat > "$WORK/agent.service" <<UNIT
 [Unit]

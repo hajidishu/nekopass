@@ -120,9 +120,8 @@ def main():
         assert '安装完成' in installed.stdout
         assert run(['systemctl','is-enabled',SERVICE]).stdout.strip()=='enabled'
         assert CONFIG.joinpath('control.env').stat().st_mode&0o777==0o600
-        assert CONFIG.joinpath('tls/server.key').stat().st_mode&0o777==0o640
-        cert_text=CONFIG.joinpath('tls/ca.crt').read_text()
-        assert 'PRIVATE' not in cert_text
+        assert not CONFIG.joinpath('tls/ca.crt').exists()
+        assert 'NEKOPASS_AGENT_CA' not in CONFIG.joinpath('control.env').read_text()
         client=opener()
         api(client,'login',{'username':'admin','password':password})
         settings=api(client,'admin/settings')['settings']
@@ -149,24 +148,23 @@ def main():
         handler=functools.partial(Quiet,directory=str(ROOT/'downloads'))
         server=http.server.ThreadingHTTPServer(('127.0.0.1',28443),handler)
         tls=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        tls.load_cert_chain(CONFIG/'tls/server.crt',CONFIG/'tls/server.key')
+        tls.load_cert_chain('/etc/nekopass/tls/server.crt','/etc/nekopass/tls/server.key')
         server.socket=tls.wrap_socket(server.socket,server_side=True)
         threading.Thread(target=server.serve_forever,daemon=True).start()
         run(['bash',str(ROOT/'downloads/install-agent.sh'),'--service-name',AGENT,
-             *connection_args,'--ca-file',str(CONFIG/'tls/ca.crt')])
+             *connection_args],env={**os.environ,'CURL_CA_BUNDLE':'/etc/nekopass/tls/server.crt'})
         agent_env=(pathlib.Path('/etc')/AGENT/'agent.env').read_text()
-        assert 'NEKOPASS_CA=' in agent_env
-        ca=(pathlib.Path('/etc')/AGENT/'tls/ca.crt').read_text()
-        assert ca==cert_text
+        assert 'NEKOPASS_CA=' not in agent_env
+        assert 'NEKOPASS_SERVER=http://' in agent_env
         import time
         online=False
         for _ in range(20):
             nodes=api(client,'admin/nodes')
             if any(n['id']==node['id'] and n['online'] for n in nodes):online=True;break
             time.sleep(1)
-        assert online, 'Installed Agent did not connect with generated control certificate'
+        assert online, 'Installed Agent did not connect over HTTP/2'
         assert sql("SELECT json_build_object('users',(SELECT count(*) FROM users),'plans',(SELECT count(*) FROM plans),'nodes',(SELECT json_agg(json_build_array(id,token_hash,token)) FROM nodes),'settings',(SELECT config FROM site_settings WHERE id=1),'balance',(SELECT sum(balance_cents) FROM wallet_accounts))",'nekopass')==production
-        print('PASS interactive install, PostgreSQL selection, systemd/autostart, HTTP UI, random admin, password recovery/session revocation, existing-install protection and real Agent CA bootstrap; production unchanged')
+        print('PASS interactive install, PostgreSQL selection, systemd/autostart, HTTP UI, random admin, password recovery/session revocation, existing-install protection and real plaintext Agent connection; production unchanged')
     finally:
         if server:server.shutdown();server.server_close()
         cleanup()

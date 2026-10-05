@@ -43,10 +43,10 @@ def main():
         server.socket = tls.wrap_socket(server.socket, server_side=True)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         url = f'https://127.0.0.1:{server.server_port}/agent'
-        args = ['bash', str(installer), '--service-name', SERVICE, '--server', '127.0.0.1:1',
-                '--token', 'cli-fixture-not-real-key', '--binary-url', url, '--ca-file', CA]
+        args = ['bash', str(installer), '--service-name', SERVICE, '--server', 'http://127.0.0.1:1',
+                '--token', 'cli-fixture-not-real-key', '--binary-url', url]
         try:
-            result = subprocess.run([*args, '--no-start'], capture_output=True, text=True, timeout=180)
+            result = subprocess.run([*args, '--no-start'], capture_output=True, text=True, timeout=180, env={**os.environ,'CURL_CA_BUNDLE':CA})
             assert result.returncode == 0, result.stdout + result.stderr
             cli = pathlib.Path('/usr/local/bin/nekopassctl')
             payload = installer.read_text().split("cat <<'NEKOPASS_MANAGER_PAYLOAD'\n", 1)[1].split('\nNEKOPASS_MANAGER_PAYLOAD\n', 1)[0] + '\n'
@@ -56,10 +56,11 @@ def main():
             enabled = subprocess.run(['systemctl', 'is-enabled', SERVICE], capture_output=True, text=True)
             assert enabled.stdout.strip() == 'disabled'
             original_env = (CONFIG_DIR / 'agent.env').read_bytes()
-            result = subprocess.run([*args, '--upgrade'], capture_output=True, text=True, timeout=180)
+            result = subprocess.run([*args, '--upgrade'], capture_output=True, text=True, timeout=180, env={**os.environ,'CURL_CA_BUNDLE':CA})
             assert result.returncode == 0, result.stdout + result.stderr
             assert (CONFIG_DIR / 'agent.env').read_bytes() == original_env
             assert (STATE_DIR / 'state.db').exists()
+            assert 'NEKOPASS_CA=' not in (CONFIG_DIR/'agent.env').read_text()
             assert subprocess.check_output(['systemctl', 'is-enabled', SERVICE], text=True).strip() == 'enabled'
             assert subprocess.check_output(['systemctl', 'is-active', SERVICE], text=True).strip() == 'active'
             assert subprocess.check_output(['systemctl', 'is-active', SERVICE+'-update.path'], text=True).strip() == 'active'

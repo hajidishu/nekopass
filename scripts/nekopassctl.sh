@@ -18,7 +18,7 @@ Nekopass 服务管理（Linux / systemd）
   sudo nekopassctl panel logs              最近 100 条日志
   sudo nekopassctl agent follow            实时日志，Ctrl+C 退出
   sudo nekopassctl agent edit              编辑连接配置，保存后手动重启
-  sudo nekopassctl agent configure         填写主控地址、节点密钥及可选 CA
+  sudo nekopassctl agent configure         填写主控 HTTP/HTTPS 地址和节点密钥
   sudo nekopassctl panel edit-service      编辑 systemd 服务覆盖配置
   sudo nekopassctl panel reset-password    重新生成管理员密码，并注销旧会话
   sudo nekopassctl agent check-update      检查 GitHub 最新版本（panel 也可用）
@@ -77,7 +77,7 @@ prepare_config() {
  backup_config || return
  if [[ ! -f "$CONFIG" ]]; then
   [[ "$CONFIG" != */control.env ]] || { fail '面板配置缺失，请恢复数据库连接配置。'; return 1; }
-  (umask 077; printf 'NEKOPASS_SERVER=\nNEKOPASS_NODE_TOKEN=\n# NEKOPASS_CA=/etc/nekopass/tls/ca.crt\n' > "$CONFIG") || return
+  (umask 077; printf 'NEKOPASS_SERVER=\nNEKOPASS_NODE_TOKEN=\n' > "$CONFIG") || return
  fi
  chmod 600 "$CONFIG"
 }
@@ -96,27 +96,28 @@ edit_config() {
 }
 configure_agent() {
  [[ "$CONFIG" != */control.env ]] || { fail '此功能用于节点端，面板端请选择编辑配置。'; return 1; }
- local server token ca
- printf '主控 gRPC 地址（例如 panel.example.com:9443）：'
+ local server token
+ printf '主控地址（https://panel.example.com:9443 或测试用 http://IP:9443）：'
  read -r server || return 1
- [[ "$server" =~ ^([A-Za-z0-9._-]+|\[[0-9A-Fa-f:]+\]):[0-9]+$ ]] || { fail '地址格式为主机:端口，IPv6 地址用方括号。'; return 1; }
- local port=${server##*:}
- [[ ${#port} -le 5 ]] && ((10#$port >= 1 && 10#$port <= 65535)) || { fail '端口必须为 1–65535。'; return 1; }
+ python3 - "$server" <<'PY'
+import sys,urllib.parse
+raw=sys.argv[1];u=urllib.parse.urlsplit(raw if '://' in raw else '//'+raw)
+try:port=u.port
+except ValueError:sys.exit('主控端口无效')
+if u.scheme not in ('','http','https') or not u.hostname or not port or not 1<=port<=65535 or u.path not in ('','/') or u.query or u.fragment or u.username or u.password or any(c in raw for c in '\r\n\0'):sys.exit('主控地址格式无效')
+PY
+ [[ $? -eq 0 ]] || return 1
  printf '节点密钥（从后台节点编辑中复制，输入不回显）：'
  read -rs token || return 1
  printf '\n'
  [[ "$token" =~ ^[A-Za-z0-9_-]{8,128}$ ]] || { fail '节点密钥格式不正确。'; return 1; }
- printf '可选 CA 文件绝对路径（公开证书可留空）：'
- read -r ca || return 1
- [[ -z "$ca" || ( "$ca" == /* && -f "$ca" && ! "$ca" =~ [[:space:]\"\'\\] ) ]] || { fail 'CA 文件必须存在，路径不能包含空白、引号或反斜杠。'; return 1; }
  # Preserve other entries, including optional Agent settings. Do not touch state.db.
  prepare_config || return
  local tmp
  tmp=$(mktemp "$(dirname "$CONFIG")/.agent.env.XXXXXXXX") || return
  if ! {
   awk '!/^[[:space:]]*(NEKOPASS_SERVER|NEKOPASS_NODE_TOKEN|NEKOPASS_CA)=/' "$CONFIG" &&
-  printf '\nNEKOPASS_SERVER=%s\nNEKOPASS_NODE_TOKEN=%s\n' "$server" "$token" &&
-  { [[ -z "$ca" ]] || printf 'NEKOPASS_CA=%s\n' "$ca"; }
+  printf '\nNEKOPASS_SERVER=%s\nNEKOPASS_NODE_TOKEN=%s\n' "$server" "$token"
  } > "$tmp"; then rm -f -- "$tmp"; return 1; fi
  chmod 600 "$tmp" && mv -f -- "$tmp" "$CONFIG" || return
  printf '连接配置已保存。请确认密钥属于此机器原来的节点；状态文件和节点身份均保留。\n'

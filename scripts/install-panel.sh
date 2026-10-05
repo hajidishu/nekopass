@@ -7,9 +7,9 @@ write_manager_payload() { return 1; }
 write_updater_payload() { return 1; }
 # PACKAGED_UPDATER
 DEFAULT_DOWNLOAD_BASE='https://github.com/hajidishu/nekopass/releases/download'
-RELEASE_VERSION='v0.10.5'; DOWNLOAD_BASE=$DEFAULT_DOWNLOAD_BASE; PACKAGE_URL=''; PACKAGE=''; SOURCE_DIR=''
+RELEASE_VERSION='v0.11.0'; DOWNLOAD_BASE=$DEFAULT_DOWNLOAD_BASE; PACKAGE_URL=''; PACKAGE=''; SOURCE_DIR=''
 SERVICE='nekopass'; HOST=''; AGENT_HOST=''; AGENT_PORT=''; HTTP_PORT=8080; GRPC_PORT=9443; DB_PORT=''; PG_VERSION=''
-PG_SOURCE=system; ADMIN=admin; SITE=Nekopass; TLS_MODE=auto; TLS_CERT=''; TLS_KEY=''
+PG_SOURCE=system; ADMIN=admin; SITE=Nekopass; TLS_MODE=plain; TLS_CERT=''; TLS_KEY=''
 AGENT_INSTALLER='https://github.com/hajidishu/nekopass/releases/latest/download/install-agent.sh'; AGENT_RELEASES='https://github.com/hajidishu/nekopass/releases/download'; FIREWALL=auto; YES=0; SKIP_DEPS=0; DRY_RUN=0; WORK=''
 die() { printf '[nekopass] %s\n' "$*" >&2; exit 1; }
 log() { printf '[nekopass] %s\n' "$*"; }
@@ -25,7 +25,7 @@ Nekopass 面板一键安装（Debian/Ubuntu，原生 systemd，以 root 执行�
   --package-url URL        直接下载 HTTPS 发布包
   --download-base URL      HTTPS 版本下载根地址
   --source-dir PATH        已编译的源码目录（dist/bin + web/dist）
-  --version VERSION        默认 v0.10.5
+  --version VERSION        默认 v0.11.0
   --host HOST              用户/节点能访问的域名或 IP，不含协议
   --http-port PORT         网页 HTTP 端口，默认 8080
   --grpc-port PORT         节点连接端口，默认 9443
@@ -36,7 +36,7 @@ Nekopass 面板一键安装（Debian/Ubuntu，原生 systemd，以 root 执行�
   --db-port PORT           本机数据库端口，默认使用所选版本的现有集群
   --admin USER             初始管理员，默认 admin；密码随机生成
   --site-name NAME         站点名称
-  --agent-tls MODE         auto（自动证书）、existing（已有证书）、proxy（已有反向代理）
+  --agent-tls MODE         plain（测试明文 HTTP/2）、existing（公共 CA 证书）、proxy（已有 TLS 反向代理）
   --tls-cert PATH          existing 模式的证书链
   --tls-key PATH           existing 模式的私钥
   --agent-installer URL    可选节点安装脚本 HTTPS 地址
@@ -95,7 +95,7 @@ port_ok "$HTTP_PORT" && port_ok "$GRPC_PORT" || die '端口须为 1–65535'
 [[ -z "$AGENT_PORT" ]] || port_ok "$AGENT_PORT" || die '节点对外端口不正确'
 [[ -z "$PG_VERSION" || "$PG_VERSION" =~ ^[0-9]{2}$ ]] || die '数据库主版本不正确'
 [[ "$PG_SOURCE" == system || "$PG_SOURCE" == pgdg ]] || die '数据库来源不正确'
-[[ "$TLS_MODE" == auto || "$TLS_MODE" == existing || "$TLS_MODE" == proxy ]] || die '节点 TLS 模式不正确'
+[[ "$TLS_MODE" == plain || "$TLS_MODE" == existing || "$TLS_MODE" == proxy ]] || die '节点 TLS 模式不正确'
 [[ "$FIREWALL" == auto || "$FIREWALL" == skip ]] || die '防火墙模式不正确'
 if ((DRY_RUN)); then log "计划：linux/$ARCH，服务 $SERVICE，网页 $HTTP_PORT，节点 $GRPC_PORT，数据库 $PG_SOURCE/${PG_VERSION:-默认}，版本 $RELEASE_VERSION"; exit 0; fi
 [[ $(id -u) -eq 0 ]] || die '请以 root 执行'
@@ -128,7 +128,7 @@ prompt GRPC_PORT '节点控制端口' "$GRPC_PORT"
 prompt ADMIN '管理员账号' "$ADMIN"
 prompt SITE '站点名称' "$SITE"
 prompt PG_SOURCE '数据库来源（system 系统源 / pgdg 官方源）' "$PG_SOURCE"
-prompt TLS_MODE '节点连接（auto 自动证书 / existing 已有证书 / proxy 已有代理）' "$TLS_MODE"
+prompt TLS_MODE '节点连接（plain 测试明文 / existing 公共证书 / proxy 已有 TLS 代理）' "$TLS_MODE"
 AGENT_HOST=${AGENT_HOST:-$HOST}
 if [[ "$TLS_MODE" == proxy ]]; then
  prompt AGENT_HOST '现有代理的节点连接域名/IP' "$AGENT_HOST"
@@ -141,7 +141,7 @@ fi
 port_ok "$HTTP_PORT" && port_ok "$GRPC_PORT" && [[ "$HTTP_PORT" != "$GRPC_PORT" ]] || die '网页和节点端口须有效且不同'
 port_ok "$AGENT_PORT" || die '节点对外端口不正确'
 [[ "$PG_SOURCE" == system || "$PG_SOURCE" == pgdg ]] || die '数据库来源不正确'
-[[ "$TLS_MODE" == auto || "$TLS_MODE" == existing || "$TLS_MODE" == proxy ]] || die '节点连接方式不正确'
+[[ "$TLS_MODE" == plain || "$TLS_MODE" == existing || "$TLS_MODE" == proxy ]] || die '节点连接方式不正确'
 export DEBIAN_FRONTEND=noninteractive
 if ((!SKIP_DEPS)); then
  apt-get update
@@ -278,25 +278,11 @@ name,port,path=sys.argv[1:]
 dsn='postgres://'+urllib.parse.quote(name,safe='')+'@/'+urllib.parse.quote(name,safe='')+'?host=/var/run/postgresql&port='+port+'&sslmode=disable'
 pathlib.Path(path).write_text('NEKOPASS_DATABASE_URL='+dsn+'\nNEKOPASS_TRUSTED_PROXIES=127.0.0.0/8,::1/128\n')
 PY
-GRPC_BIND=''
-if [[ "$TLS_MODE" == auto ]]; then
- openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$WORK/ca.key" 2>/dev/null
- openssl req -new -x509 -key "$WORK/ca.key" -out "$WORK/ca.crt" -days 3650 -subj '/CN=Nekopass Agent CA' -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign' 2>/dev/null
- python3 - "$AGENT_HOST" "$WORK/server.cnf" <<'PY'
-import ipaddress,pathlib,sys
-host,path=sys.argv[1:]
-try:ipaddress.ip_address(host);san='IP:'+host
-except ValueError:san='DNS:'+host
-pathlib.Path(path).write_text('[req]\ndistinguished_name=dn\nprompt=no\n[dn]\nCN=Nekopass Agent\n[extensions]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName='+san+'\n')
-PY
- openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$WORK/server.key" 2>/dev/null
- openssl req -new -key "$WORK/server.key" -out "$WORK/server.csr" -config "$WORK/server.cnf"
- openssl x509 -req -in "$WORK/server.csr" -CA "$WORK/ca.crt" -CAkey "$WORK/ca.key" -CAcreateserial -out "$WORK/server.crt" -days 1825 -extfile "$WORK/server.cnf" -extensions extensions 2>/dev/null
- TLS_CERT="$WORK/server.crt"; TLS_KEY="$WORK/server.key"
-fi
-if [[ "$TLS_MODE" == auto || "$TLS_MODE" == existing ]]; then
+GRPC_BIND=0.0.0.0
+if [[ "$TLS_MODE" == existing ]]; then
  [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]] || die '节点连接证书或私钥不存在'
  openssl x509 -in "$TLS_CERT" -checkend 0 -noout >/dev/null || die '证书已过期或无效'
+ openssl verify -untrusted "$TLS_CERT" "$TLS_CERT" >/dev/null || die '节点连接需要系统信任的公共 CA 证书链'
  openssl x509 -in "$TLS_CERT" -pubkey -noout > "$WORK/cert-public"
  openssl pkey -in "$TLS_KEY" -pubout > "$WORK/key-public" 2>/dev/null
  cmp -s "$WORK/cert-public" "$WORK/key-public" || die '证书与私钥不匹配'
@@ -311,12 +297,8 @@ PY
  install -m 644 "$TLS_CERT" "$CONFIG/tls/server.crt"
  install -m 640 -g "$SERVICE" "$TLS_KEY" "$CONFIG/tls/server.key"
  printf 'NEKOPASS_GRPC_TLS_CERT=%s/tls/server.crt\nNEKOPASS_GRPC_TLS_KEY=%s/tls/server.key\n' "$CONFIG" "$CONFIG" >> "$WORK/control.env"
- if [[ "$TLS_MODE" == auto ]]; then
-  install -m 644 "$WORK/ca.crt" "$CONFIG/tls/ca.crt"
-  install -m 600 "$WORK/ca.key" "$CONFIG/tls/ca.key"
-  printf 'NEKOPASS_AGENT_CA=%s/tls/ca.crt\n' "$CONFIG" >> "$WORK/control.env"
- fi
-else GRPC_BIND=127.0.0.1; fi
+elif [[ "$TLS_MODE" == proxy ]]; then GRPC_BIND=127.0.0.1
+else GRPC_BIND=0.0.0.0; fi
 install -m 600 "$WORK/control.env" "$CONFIG/control.env"
 cat > "$WORK/panel.service" <<UNIT
 [Unit]
@@ -353,11 +335,11 @@ if [[ -n "$DOWNLOAD_BASE" && -z "$AGENT_RELEASES" ]]; then AGENT_RELEASES=$DOWNL
 if [[ -n "$DOWNLOAD_BASE" && -z "$AGENT_INSTALLER" ]]; then AGENT_INSTALLER="${DOWNLOAD_BASE%/releases}/install-agent.sh"; fi
 prompt AGENT_INSTALLER '可选节点安装脚本 HTTPS 地址（无下载源可留空）' "$AGENT_INSTALLER"
 prompt AGENT_RELEASES '可选节点版本下载根地址（无下载源可留空）' "$AGENT_RELEASES"
-python3 - "$HOST" "$HTTP_PORT" "$AGENT_HOST" "$AGENT_PORT" "$SITE" "$AGENT_INSTALLER" "$AGENT_RELEASES" "$RELEASE_VERSION" > "$WORK/settings.json" <<'PY'
+python3 - "$HOST" "$HTTP_PORT" "$AGENT_HOST" "$AGENT_PORT" "$SITE" "$AGENT_INSTALLER" "$AGENT_RELEASES" "$RELEASE_VERSION" "$TLS_MODE" > "$WORK/settings.json" <<'PY'
 import json,sys
-host,http,agent,grpc,site,installer,releases,version=sys.argv[1:]
+host,http,agent,grpc,site,installer,releases,version,transport=sys.argv[1:]
 authority='['+host+']' if ':' in host else host
-print(json.dumps(dict(site_name=site,panel_url='http://'+authority+':'+http,agent_host=agent,agent_port=int(grpc),installer_url=installer,release_base_url=releases,agent_version='latest',install_token_minutes=30)))
+print(json.dumps(dict(site_name=site,panel_url='http://'+authority+':'+http,agent_host=agent,agent_port=int(grpc),agent_transport='plain' if transport=='plain' else 'tls',installer_url=installer,release_base_url=releases,agent_version='latest',install_token_minutes=30)))
 PY
 run_panel -mode init-settings < "$WORK/settings.json"
 log '创建管理员并随机生成密码'

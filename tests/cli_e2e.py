@@ -51,11 +51,11 @@ WantedBy=multi-user.target
         assert systemctl('show', SERVICE, '-p', 'ActiveState', '--value') == 'inactive'
         bad = call('configure', ok=False, stdin='localhost:70000\n')
         assert '端口' in bad.stderr and not CONFIG.exists()
-        call('configure', stdin='localhost:9443\nclitest-token-1234\n\n')
+        call('configure', stdin='http://localhost:9443\nclitest-token-1234\n')
         assert CONFIG.stat().st_mode & 0o777 == 0o600
         assert 'NEKOPASS_NODE_TOKEN=clitest-token-1234' in CONFIG.read_text()
         CONFIG.write_text(CONFIG.read_text() + 'EXTRA_SETTING=keep-me\n')
-        call('configure', stdin='localhost:9444\nclitest-token-1234\n\n')
+        call('configure', stdin='http://localhost:9444\nclitest-token-1234\n')
         assert 'EXTRA_SETTING=keep-me' in CONFIG.read_text()
         assert list(CONFIG_DIR.glob('agent.env.bak.*'))
         call('start')

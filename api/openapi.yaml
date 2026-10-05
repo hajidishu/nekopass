@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.10.5
+  version: 0.11.0
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Admin-created accounts. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -225,7 +225,7 @@ paths:
       summary: Generate a reusable wget and bash command with explicit node connection parameters
       responses:
         '200':
-          description: Includes the persistent node key, panel URL, gRPC endpoint, release source/version and optional base64 public control CA. Administrator only; does not rotate the node key.
+          description: Includes the persistent node key, panel URL, HTTP/HTTPS gRPC endpoint and release source/version. HTTPS verifies system-trusted certificates; HTTP uses test h2c. No custom control CA. Administrator only; does not rotate the node key.
           content:
             application/json:
               schema:
@@ -792,9 +792,10 @@ components:
         panel_url: {type: string, description: HTTP or HTTPS origin without subpath; may include port}
         agent_host: {type: string, description: Hostname or IP without scheme or port}
         agent_port: {type: integer, minimum: 1, maximum: 65535, default: 9443}
+        agent_transport: {type: string, enum: [tls, plain], default: tls, description: 'TLS verifies public system trust; plain uses explicit test HTTP/2 without encryption'}
         installer_url: {type: string, description: HTTPS installer script URL}
         release_base_url: {type: string, description: HTTPS release directory without version or query string}
-        agent_version: {type: string, default: v0.6.0}
+        agent_version: {type: string, default: latest}
         install_token_minutes: {type: integer, minimum: 5, maximum: 1440, default: 30}
     UserInput:
       type: object

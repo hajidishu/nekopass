@@ -26,7 +26,7 @@ func TestInstallSettingsValidation(t *testing.T) {
 	if e := validateSettings(v); e != nil {
 		t.Fatal(e)
 	}
-	command := installCommand(v, "fixture-node-key", "", true)
+	command := installCommand(v, "fixture-node-key", true)
 	if e := installReady(v); e != nil {
 		t.Fatal("download addresses should be sufficient", e)
 	}
@@ -36,7 +36,7 @@ func TestInstallSettingsValidation(t *testing.T) {
 	if !strings.Contains(command, shellQuote(v.InstallerURL)) || !strings.Contains(command, "--upgrade") {
 		t.Fatal("unsafe command quoting or missing upgrade flag")
 	}
-	for _, value := range []string{"wget ", " && bash ", "--server 'panel.example.test:9443'", "--token 'fixture-node-key'", "--panel-url", shellQuote(v.ReleaseBaseURL), "--version"} {
+	for _, value := range []string{"wget ", " && bash ", "--server 'https://panel.example.test:9443'", "--token 'fixture-node-key'", "--panel-url", shellQuote(v.ReleaseBaseURL), "--version"} {
 		if !strings.Contains(command, value) {
 			t.Fatal("missing direct installation parameter")
 		}
@@ -147,7 +147,7 @@ func TestSettingsKeyAndInstallTicket(t *testing.T) {
 		Server string `json:"server"`
 	}
 	json.Unmarshal(redeemed.Body.Bytes(), &result)
-	if result.Token != nodeToken || result.Server != "panel.example.test:9443" {
+	if result.Token != nodeToken || result.Server != "https://panel.example.test:9443" {
 		t.Fatal("bootstrap missing connection data")
 	}
 	if strings.Contains(redeemed.Body.String(), "sha256") {

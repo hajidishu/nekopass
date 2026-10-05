@@ -29,6 +29,6 @@ wget https://github.com/hajidishu/nekopass/releases/latest/download/install-pane
 
 打开 `http://服务器地址:8080`。云服务器还需放行安全组端口。
 
-节点连接证书默认自动生成；网页 HTTPS 使用 [反向代理](./proxy.md)。
+节点连接可选 `plain`（测试明文 HTTP/2）、`existing`（已有公共 CA 证书）或 `proxy`（Nginx 终止 TLS）；默认 `plain`，不生成自签 CA。网页 HTTPS 使用 [反向代理](./proxy.md)。
 
 全部参数：`bash install-panel.sh --help`。忘记密码见 [日常管理](./manage.md#重置管理员密码)。

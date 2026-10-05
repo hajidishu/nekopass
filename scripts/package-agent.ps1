@@ -1,19 +1,9 @@
-param([string]$Version = 'v0.10.5', [string]$CAFile = '')
+param([string]$Version = 'v0.11.0')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or $Version.Contains('..')) { throw 'Invalid version' }
 $repoRoot = Split-Path -Parent $PSScriptRoot
 python (Join-Path $repoRoot 'scripts/check-public.py')
 if ($LASTEXITCODE -ne 0) { throw 'Public source check failed; packaging blocked' }
-$publicCA = ''
-if ($CAFile) {
-    $caText = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $CAFile).Path)
-    $certificatePattern = '-----BEGIN CERTIFICATE-----\s*[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----'
-    $certificates = [regex]::Matches($caText, $certificatePattern)
-    if ($certificates.Count -eq 0 -or [regex]::Replace($caText, $certificatePattern, '').Trim()) {
-        throw 'CAFile must contain public PEM certificates only; private keys and other content cannot be packaged'
-    }
-    $publicCA = (($certificates | ForEach-Object { $_.Value.Replace("`r`n", "`n") }) -join "`n") + "`n"
-}
 $assetRoot = Join-Path $repoRoot 'dist/oss/nekopass'
 $releaseRoot = Join-Path $assetRoot "releases/$Version"
 $utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -24,7 +14,7 @@ $managerText = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/nekopassctl.
 $managerPayload = "write_manager_payload() {`ncat <<'NEKOPASS_MANAGER_PAYLOAD'`n" + $managerText.TrimEnd() + "`nNEKOPASS_MANAGER_PAYLOAD`n}`n"
 $updaterText = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/nekopass-update.py')).Replace("`r`n", "`n")
 $updaterPayload = "write_updater_payload() {`ncat <<'NEKOPASS_UPDATER_PAYLOAD'`n" + $updaterText.TrimEnd() + "`nNEKOPASS_UPDATER_PAYLOAD`n}`n"
-$installerText = $installerText.Replace('# PACKAGED_MANAGER', $managerPayload).Replace('# PACKAGED_UPDATER', $updaterPayload).Replace('v0.10.5', $Version)
+$installerText = $installerText.Replace('# PACKAGED_MANAGER', $managerPayload).Replace('# PACKAGED_UPDATER', $updaterPayload).Replace('v0.11.0', $Version)
 [IO.File]::WriteAllText($installerPath, $installerText, $utf8)
 [IO.File]::WriteAllText((Join-Path $assetRoot 'nekopassctl.sh'), $managerText, $utf8)
 [IO.File]::WriteAllText((Join-Path $assetRoot 'nekopass-update.py'), $updaterText, $utf8)
@@ -47,14 +37,9 @@ try {
         if (-not $oldFile.FullName.StartsWith($resolvedAssets, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unexpected artifact path' }
         Remove-Item -LiteralPath $oldFile.FullName
     }
-    if ($CAFile) {
-        [IO.File]::WriteAllText((Join-Path $assetRoot 'ca.crt'), $publicCA, $utf8)
-    } elseif (Test-Path -LiteralPath (Join-Path $assetRoot 'ca.crt')) {
-        # Do not silently carry a prior deployment's certificate into a public release.
-        Remove-Item -LiteralPath (Join-Path $assetRoot 'ca.crt')
-    }
+    if (Test-Path -LiteralPath (Join-Path $assetRoot 'ca.crt')) { Remove-Item -LiteralPath (Join-Path $assetRoot 'ca.crt') }
     $settings = [ordered]@{
-        site_name = 'Nekopass'; panel_url = 'https://YOUR-PANEL.example.com:8443'; agent_host = 'YOUR-PANEL.example.com'; agent_port = 9443
+        site_name = 'Nekopass'; panel_url = 'https://YOUR-PANEL.example.com:8443'; agent_host = 'YOUR-PANEL.example.com'; agent_port = 9443; agent_transport = 'tls'
         installer_url = 'https://github.com/hajidishu/nekopass/releases/latest/download/install-agent.sh'
         release_base_url = 'https://github.com/hajidishu/nekopass/releases/download'; agent_version = 'latest'
         install_token_minutes = 30
@@ -70,7 +55,6 @@ Upload these files preserving the paths relative to dist/oss:
 - nekopass/releases/$Version/nekopass-agent-linux-amd64
 - nekopass/releases/$Version/nekopass-agent-linux-arm64
 
-For a private/self-signed control CA, also upload nekopass/ca.crt.
 Never upload the control TLS private key, agent.env or any state.db.
 
 Use settings.example.json as a reference for /admin/settings.

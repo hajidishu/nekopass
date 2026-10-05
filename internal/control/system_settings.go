@@ -3,14 +3,12 @@ package control
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,6 +23,7 @@ type SystemSettings struct {
 	PanelURL            string `json:"panel_url"`
 	AgentHost           string `json:"agent_host"`
 	AgentPort           int    `json:"agent_port"`
+	AgentTransport      string `json:"agent_transport"`
 	InstallerURL        string `json:"installer_url"`
 	ReleaseBaseURL      string `json:"release_base_url"`
 	AgentVersion        string `json:"agent_version"`
@@ -32,7 +31,7 @@ type SystemSettings struct {
 }
 
 func defaultSettings() SystemSettings {
-	return SystemSettings{SiteName: "Nekopass", AgentPort: 9443, AgentVersion: "latest", InstallerURL: release.LatestBase + "/install-agent.sh", ReleaseBaseURL: release.DownloadBase, InstallTokenMinutes: 30}
+	return SystemSettings{SiteName: "Nekopass", AgentPort: 9443, AgentTransport: "tls", AgentVersion: "latest", InstallerURL: release.LatestBase + "/install-agent.sh", ReleaseBaseURL: release.DownloadBase, InstallTokenMinutes: 30}
 }
 func (s *Server) readSettings(ctx context.Context) (SystemSettings, error) {
 	v := defaultSettings()
@@ -59,6 +58,9 @@ func httpsURL(raw string, originOnly bool) bool {
 var releaseVersion = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 func validateSettings(v SystemSettings) error {
+	if v.AgentTransport != "" && v.AgentTransport != "tls" && v.AgentTransport != "plain" {
+		return errors.New("节点连接方式须为 TLS 或明文 HTTP/2")
+	}
 	if strings.TrimSpace(v.SiteName) == "" || len([]rune(v.SiteName)) > 64 || strings.ContainsAny(v.SiteName, "\r\n\x00") {
 		return errors.New("站点名称须为 1–64 字")
 	}
@@ -236,11 +238,15 @@ func (s *Server) apiKeyUser(r *http.Request) (store.User, error) {
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
-func installCommand(v SystemSettings, token, ca string, bound bool) string {
-	args := []string{"--panel-url", v.PanelURL, "--server", net.JoinHostPort(v.AgentHost, strconv.Itoa(v.AgentPort)), "--token", token, "--download-base", v.ReleaseBaseURL, "--version", v.AgentVersion}
-	if ca != "" {
-		args = append(args, "--ca-base64", base64.StdEncoding.EncodeToString([]byte(ca)))
+func controlInstallServer(v SystemSettings) string {
+	scheme := "https://"
+	if v.AgentTransport == "plain" {
+		scheme = "http://"
 	}
+	return scheme + net.JoinHostPort(v.AgentHost, strconv.Itoa(v.AgentPort))
+}
+func installCommand(v SystemSettings, token string, bound bool) string {
+	args := []string{"--panel-url", v.PanelURL, "--server", controlInstallServer(v), "--token", token, "--download-base", v.ReleaseBaseURL, "--version", v.AgentVersion}
 	if bound {
 		args = append(args, "--upgrade")
 	}
@@ -253,16 +259,6 @@ func installCommand(v SystemSettings, token, ca string, bound bool) string {
 		}
 	}
 	return "wget " + shellQuote(v.InstallerURL) + " -O nekopass-install-agent.sh && bash nekopass-install-agent.sh " + strings.Join(quoted, " ")
-}
-func controlInstallCA() (string, error) {
-	if path := os.Getenv("NEKOPASS_AGENT_CA"); path != "" {
-		data, err := os.ReadFile(path)
-		if err != nil || len(data) > 65536 || publicCertificatePEM(string(data)) != nil {
-			return "", errors.New("节点连接公开 CA 配置无效")
-		}
-		return string(data), nil
-	}
-	return "", nil
 }
 func (s *Server) nodeInstallCommand(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
@@ -292,12 +288,7 @@ func (s *Server) nodeInstallCommand(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "请先在节点编辑中保存节点密钥；留空保存会自动生成")
 		return
 	}
-	ca, e := controlInstallCA()
-	if e != nil {
-		fail(w, 503, e.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"command": installCommand(v, token, ca, bound), "expires_at": nil, "existing_node": bound})
+	writeJSON(w, 200, map[string]any{"command": installCommand(v, token, bound), "expires_at": nil, "existing_node": bound})
 }
 func (s *Server) redeemInstall(w http.ResponseWriter, r *http.Request) {
 	auth := r.Header.Get("Authorization")
@@ -317,11 +308,6 @@ func (s *Server) redeemInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	controlCA, caErr := controlInstallCA()
-	if caErr != nil {
-		fail(w, 503, caErr.Error())
-		return
-	}
 	tx, e := s.Pool.Begin(ctx)
 	if e != nil {
 		s.dbError(w, e)
@@ -375,5 +361,5 @@ func (s *Server) redeemInstall(w http.ResponseWriter, r *http.Request) {
 		s.dbError(w, e)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"node_id": id, "server": net.JoinHostPort(v.AgentHost, strconv.Itoa(v.AgentPort)), "token": nodeToken, "version": v.AgentVersion, "download_base": v.ReleaseBaseURL, "control_ca": controlCA})
+	writeJSON(w, 200, map[string]any{"node_id": id, "server": controlInstallServer(v), "token": nodeToken, "version": v.AgentVersion, "download_base": v.ReleaseBaseURL})
 }

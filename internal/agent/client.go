@@ -2,37 +2,24 @@ package agent
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"log/slog"
-	"os"
 	"time"
 
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 )
 
-func Run(ctx context.Context, e *Engine, server, token, caFile string) error {
+func Run(ctx context.Context, e *Engine, server, token string) error {
 	if token == "" || server == "" {
 		return errors.New("server and node token required")
 	}
-	roots, err := x509.SystemCertPool()
+	target, transport, err := controlEndpoint(server)
 	if err != nil {
-		roots = x509.NewCertPool()
+		return err
 	}
-	if caFile != "" {
-		b, err := os.ReadFile(caFile)
-		if err != nil {
-			return err
-		}
-		if !roots.AppendCertsFromPEM(b) {
-			return errors.New("invalid CA certificate")
-		}
-	}
-	conn, err := grpc.NewClient(server, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12})), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(16<<20), grpc.MaxCallSendMsgSize(16<<20)))
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(transport), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(16<<20), grpc.MaxCallSendMsgSize(16<<20)))
 	if err != nil {
 		return err
 	}

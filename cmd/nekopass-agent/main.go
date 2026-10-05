@@ -24,9 +24,8 @@ func main() {
 	}
 }
 func run() error {
-	server := flag.String("server", os.Getenv("NEKOPASS_SERVER"), "control gRPC host:port")
+	server := flag.String("server", os.Getenv("NEKOPASS_SERVER"), "control endpoint: https://host:port (verified TLS) or http://host:port (h2c)")
 	statePath := flag.String("state", "/var/lib/nekopass-agent/state.db", "durable state; never delete or clone between nodes")
-	ca := flag.String("ca", os.Getenv("NEKOPASS_CA"), "trusted control CA certificate")
 	showVersion := flag.Bool("version", false, "show build version")
 	flag.Parse()
 	if version != "dev" {
@@ -58,5 +57,5 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	slog.Info("agent starting", "server", *server)
-	return agent.Run(ctx, engine, *server, os.Getenv("NEKOPASS_NODE_TOKEN"), *ca)
+	return agent.Run(ctx, engine, *server, os.Getenv("NEKOPASS_NODE_TOKEN"))
 }

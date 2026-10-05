@@ -18,7 +18,7 @@ CA='/etc/nekopass/tls/server.crt'
 class Quiet(http.server.SimpleHTTPRequestHandler):
  def log_message(self,*args):pass
 def command(*args,ok=True):
- p=subprocess.run(['bash',str(SCRIPT),'--service-name',SERVICE,'--ca-file',CA,*args],capture_output=True,text=True,timeout=180)
+ p=subprocess.run(['bash',str(SCRIPT),'--service-name',SERVICE,*args],capture_output=True,text=True,timeout=180,env={**os.environ,'CURL_CA_BUNDLE':CA})
  if ok and p.returncode:raise AssertionError('installer failed: '+p.stdout+p.stderr)
  if not ok and not p.returncode:raise AssertionError('invalid installation unexpectedly succeeded')
  return p
@@ -31,17 +31,17 @@ def main():
  handler=functools.partial(Quiet,directory=str(ASSETS));server=http.server.ThreadingHTTPServer(('127.0.0.1',10443),handler)
  tls=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);tls.load_cert_chain(CA,'/etc/nekopass/tls/server.key');server.socket=tls.wrap_socket(server.socket,server_side=True);threading.Thread(target=server.serve_forever,daemon=True).start()
  try:
-  cfg={**original,'panel_url':PANEL,'agent_host':'127.0.0.1','agent_port':19443,'installer_url':BASE+'/install-agent.sh','release_base_url':BASE+'/releases','agent_version':'v0.6.0'}
+  cfg={**original,'panel_url':PANEL,'agent_host':'127.0.0.1','agent_port':19443,'agent_transport':'plain','installer_url':BASE+'/install-agent.sh','release_base_url':BASE+'/releases','agent_version':os.environ.get('NEKOPASS_INSTALL_VERSION','v0.11.0')}
   api('admin/settings',cfg,'PUT')
   created=api('admin/nodes',{'name':'installer-e2e-'+secrets.token_hex(4)},'POST');node=created['id']
   generated=api('admin/nodes/'+str(node)+'/install-command',{},'POST')
   assert generated['command'].startswith('wget ') and created['token'] in generated['command']
   # Download failures must not leave a partial installation.
-  bad=command('--server','127.0.0.1:19443','--token',created['token'],'--binary-url',BASE+'/missing-binary',ok=False)
+  bad=command('--server','http://127.0.0.1:19443','--token',created['token'],'--binary-url',BASE+'/missing-binary',ok=False)
   assert not ROOT.exists()
   # Exercise the panel's download wrapper too. The local artifact
   # fixture uses the test CA; a public OSS endpoint uses the system trust store.
-  wrapper=generated['command'].replace('wget ', 'wget --ca-certificate='+CA+' ',1).replace('bash nekopass-install-agent.sh ', 'bash nekopass-install-agent.sh --service-name '+SERVICE+' --ca-file '+CA+' ',1)
+  wrapper=generated['command'].replace('wget ', 'wget --ca-certificate='+CA+' ',1).replace('bash nekopass-install-agent.sh ', 'bash nekopass-install-agent.sh --service-name '+SERVICE+' ',1)
   installed=subprocess.run(['bash','-c',wrapper],env={**os.environ,'CURL_CA_BUNDLE':CA},capture_output=True,text=True,timeout=180)
   assert installed.returncode==0, installed.stdout+installed.stderr
   info=lambda:next(n for n in api('admin/nodes') if n['id']==node)
@@ -49,7 +49,7 @@ def main():
   assert info()['token']==created['token']
   assert STATE.exists() and (ROOT/'agent.env').stat().st_mode&0o777==0o600
   original_env=(ROOT/'agent.env').read_bytes();old_binary=BIN.read_bytes()
-  assert subprocess.check_output([str(BIN),'-version'],text=True).startswith('nekopass-agent v0.6.0 linux/amd64')
+  assert subprocess.check_output([str(BIN),'-version'],text=True).startswith('nekopass-agent '+cfg['agent_version']+' linux/amd64')
   print('PASS download without checksum files, persistent node key, enrollment and isolated systemd start',flush=True)
   new=api('admin/nodes/'+str(node)+'/install-command',{},'POST')
   upgrade=shlex.split(new['command'].split(' && bash nekopass-install-agent.sh ',1)[1])
@@ -58,7 +58,7 @@ def main():
   wait(lambda:info()['online'] and not info()['sync_error'])
   assert (ROOT/'agent.env').read_bytes()==original_env
   assert subprocess.check_output(['systemctl','show','nekopass-agent','-p','MainPID','--value'],text=True).strip()==primary_pid
-  command('--server','127.0.0.1:19443','--token','a'*64,'--download-base',BASE+'/releases','--upgrade',ok=False)
+  command('--server','http://127.0.0.1:19443','--token','a'*64,'--download-base',BASE+'/releases','--upgrade',ok=False)
   assert (ROOT/'agent.env').read_bytes()==original_env
   print('PASS upgrade preserves identity/state and rebinding rejected; primary Agent untouched',flush=True)
  finally:

@@ -4,7 +4,7 @@
 
 在后台「节点管理」创建节点，复制该节点的「安装命令」，以 root 在节点服务器执行。
 
-命令使用 `wget … -O nekopass-install-agent.sh && bash nekopass-install-agent.sh …`，参数直接包含面板地址、主控地址与端口、节点密钥、版本和下载源。私有 CA 也会随参数传入，无需另行准备文件。命令可重复使用。
+命令使用 `wget … -O nekopass-install-agent.sh && bash nekopass-install-agent.sh …`，参数直接包含面板地址、主控地址与端口、节点密钥、版本和下载源。节点地址使用 `https://`（公共 CA 可信证书）或测试用 `http://`（明文 HTTP/2），不附带 CA 参数。命令可重复使用。
 
 节点显示「在线 / 已同步」后即可使用。端口范围、入口出口和探针设置均在后台修改。
 
@@ -29,7 +29,7 @@ sudo nekopassctl agent configure
 sudo nekopassctl agent restart
 ```
 
-主控使用安装器自动证书时，节点安装会自动保存公开 CA。
+生产环境填写 `https://域名:端口`，证书由公共 CA 签发并覆盖该域名；测试环境填写 `http://IP:端口`。`NEKOPASS_SERVER` 未带协议的旧地址仍按 TLS 连接。
 
 ## 升级
 
