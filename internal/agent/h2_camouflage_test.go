@@ -63,7 +63,7 @@ func TestCamouflageUniform404AndNoUnauthenticatedTargetDial(t *testing.T) {
 		}
 		body, _ := io.ReadAll(response.Body)
 		response.Body.Close()
-		if response.StatusCode != 404 || response.Header.Get("Server") != "nginx" || string(body) != nginx404Body || response.Header.Get("X-Stream-Reply") != "" {
+		if response.StatusCode != 404 || response.Header.Get("Server") != "" || string(body) != "404 page not found\n" || response.Header.Get("X-Stream-Reply") != "" {
 			t.Fatal("probe received distinguishable response", sample)
 		}
 	}

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.14.0
+  version: 0.14.1
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Admin-created accounts. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -927,7 +927,7 @@ components:
         client_sni: {type: string, description: Optional ingress SNI override; certificate names remain verified}
         fingerprint: {type: string, enum: ['off', chrome, firefox], default: 'off', description: 'off uses standard verified TLS; browser profiles use uTLS'}
         host: {type: string, description: 'HTTP authority, optional port; default uses the certificate hostname'}
-        fallback_url: {type: string, description: 'HTTP/HTTPS decoy reverse-proxy URL; empty returns nginx-style 404; HTTPS also handles pre-flight TLS rejection'}
+        fallback_url: {type: string, description: 'HTTP/HTTPS fallback reverse-proxy URL; empty returns ordinary 404; HTTPS also handles pre-flight TLS rejection'}
         certificate_mode: {type: string, enum: [self_signed, import, acme_dns, acme_http], default: self_signed}
         certificate: {type: string, description: Public PEM chain for import}
         private_key: {type: string, description: Matching private key for import; administrator-only}

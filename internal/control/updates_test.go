@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/release"
@@ -98,4 +99,49 @@ func TestOfflineAndLegacyNodesCannotReceiveUpdate(t *testing.T) {
 	securityStatus(t, f.request(f.admin, path, "POST", map[string]string{"version": "v0.11.0"}), 409)
 	f.p.Exec(ctx, "UPDATE nodes SET last_seen=now(),protocol_version=8 WHERE id=$1", node)
 	securityStatus(t, f.request(f.admin, path, "POST", map[string]string{"version": "v0.11.0"}), 409)
+}
+
+func TestOfflineUpdateTimeoutIsUnconfirmedAndAcceptsLateCompletion(t *testing.T) {
+	f := newSecurityFixture(t)
+	ctx := context.Background()
+	var node int64
+	if err := f.p.QueryRow(ctx, "INSERT INTO nodes(name,token_hash,protocol_version,agent_version,update_supported) VALUES($1,$2,12,'v0.14.0',true) RETURNING id", Secret(), Secret()).Scan(&node); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = f.p.Exec(ctx, "DELETE FROM nodes WHERE id=$1", node) })
+	if _, err := f.p.Exec(ctx, "INSERT INTO node_updates(node_id,version,state,requested_at) VALUES($1,'v0.14.1','running',now()-interval '30 minutes')", node); err != nil {
+		t.Fatal(err)
+	}
+	response := f.request(f.admin, "admin/nodes", "GET", nil)
+	securityStatus(t, response, 200)
+	var nodes []struct {
+		ID     int64 `json:"id"`
+		Update struct {
+			State string `json:"state"`
+		} `json:"update_status"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &nodes); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, n := range nodes {
+		if n.ID == node {
+			found = true
+			if n.Update.State != "unconfirmed" {
+				t.Fatal("expired update still shown as running")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("node missing from response")
+	}
+	stream := &StreamServer{Server: f.s}
+	_, err := stream.exchange(ctx, f.p, node, &pb.AgentMessage{InstanceId: Secret(), ProtocolVersion: 12, AgentVersion: "v0.14.1", UpdateSupported: true, UpdateStatus: &pb.UpdateStatus{Generation: 1, Version: "v0.14.1", State: "completed"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := f.p.QueryRow(ctx, "SELECT state FROM node_updates WHERE node_id=$1", node).Scan(&state); err != nil || state != "completed" {
+		t.Fatal("late completion was discarded", state, err)
+	}
 }

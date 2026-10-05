@@ -40,6 +40,8 @@ type Server struct {
 	releaseError   error
 	panelUpdateMu  sync.Mutex
 	panelUpdateDir string
+	settingsMu     sync.Mutex
+	agentListener  *agentListener
 }
 type loginBucket struct {
 	limiter *rate.Limiter

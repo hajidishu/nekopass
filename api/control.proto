@@ -87,6 +87,7 @@ message ControlMessage {
   repeated TunnelLink tunnel_links = 6;
   repeated EgressRule egress_rules = 7;
   UpdateRequest update = 8;
+  string control_endpoint = 9;
 }
 
 message UpdateRequest { int64 generation = 1; string version = 2; }

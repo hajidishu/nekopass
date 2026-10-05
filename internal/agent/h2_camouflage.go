@@ -9,23 +9,14 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 )
 
-const nginx404Body = "<html>\r\n<head><title>404 Not Found</title></head>\r\n<body>\r\n<center><h1>404 Not Found</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n"
-
 var camouflageTransport = &http.Transport{DialContext: (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, ForceAttemptHTTP2: true, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 5 * time.Second, IdleConnTimeout: 30 * time.Second, MaxIdleConns: 64, MaxIdleConnsPerHost: 4, MaxConnsPerHost: 64, MaxResponseHeaderBytes: 64 << 10}
 
-func nginx404(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Server", "nginx")
-	w.Header().Set("Content-Type", "text/html")
-	w.Header().Set("Content-Length", strconv.Itoa(len(nginx404Body)))
-	w.WriteHeader(http.StatusNotFound)
-	if r.Method != "HEAD" {
-		io.WriteString(w, nginx404Body)
-	}
+func ordinary404(w http.ResponseWriter, r *http.Request) {
+	http.NotFound(w, r)
 }
 
 func camouflageHostMatches(got, expected string) bool {
@@ -51,12 +42,12 @@ func camouflageHostMatches(got, expected string) bool {
 func (e *Engine) camouflage(w http.ResponseWriter, r *http.Request) {
 	node := e.node.Load()
 	if node == nil || node.Tls == nil || node.Tls.FallbackUrl == "" {
-		nginx404(w, r)
+		ordinary404(w, r)
 		return
 	}
 	target, err := url.Parse(node.Tls.FallbackUrl)
 	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Hostname() == "" || target.User != nil {
-		nginx404(w, r)
+		ordinary404(w, r)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -70,6 +61,6 @@ func (e *Engine) camouflage(w http.ResponseWriter, r *http.Request) {
 		p.Out.Header.Del("Authorization")
 		p.Out.Header.Del("Proxy-Authorization")
 		p.Out.Header.Del("X-Stream")
-	}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) { nginx404(w, r) }}
+	}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) { ordinary404(w, r) }}
 	proxy.ServeHTTP(w, r)
 }

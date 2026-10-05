@@ -15,15 +15,11 @@ func Run(ctx context.Context, e *Engine, server, token string) error {
 	if token == "" || server == "" {
 		return errors.New("server and node token required")
 	}
-	target, transport, err := controlEndpoint(server)
+	origin := server
+	server, err := e.redirectedControlEndpoint(origin)
 	if err != nil {
 		return err
 	}
-	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(transport), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(16<<20), grpc.MaxCallSendMsgSize(16<<20)))
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
 	c, err := e.state.Config()
 	if err != nil {
 		return err
@@ -32,11 +28,28 @@ func Run(ctx context.Context, e *Engine, server, token string) error {
 		return err
 	}
 	go e.collectProbe(ctx)
-	client := pb.NewControlClient(conn)
 	for ctx.Err() == nil {
-		err = runSession(ctx, e, client, token)
+		target, transport, err := controlEndpoint(server)
+		if err != nil {
+			return err
+		}
+		conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(transport), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(16<<20), grpc.MaxCallSendMsgSize(16<<20)))
+		if err != nil {
+			return err
+		}
+		err = runSession(ctx, e, pb.NewControlClient(conn), token, server)
+		conn.Close()
 		if ctx.Err() != nil {
 			break
+		}
+		var redirect *controlRedirect
+		if errors.As(err, &redirect) {
+			if err := e.saveControlEndpoint(origin, redirect.endpoint); err != nil {
+				return err
+			}
+			server = redirect.endpoint
+			slog.Info("control endpoint changed; reconnecting", "server", server)
+			continue
 		}
 		slog.Warn("control connection interrupted; retaining configuration and finite allowance", "error", err)
 		// Persist usage even while disconnected.
@@ -50,7 +63,7 @@ func Run(ctx context.Context, e *Engine, server, token string) error {
 	}
 	return nil
 }
-func runSession(parent context.Context, e *Engine, client pb.ControlClient, token string) error {
+func runSession(parent context.Context, e *Engine, client pb.ControlClient, token, server string) error {
 	ctx, cancel := context.WithCancel(metadata.AppendToOutgoingContext(parent, "authorization", "Bearer "+token))
 	defer cancel()
 	stream, err := client.Connect(ctx)
@@ -75,6 +88,12 @@ func runSession(parent context.Context, e *Engine, client pb.ControlClient, toke
 		}
 		if err = e.Apply(config); err != nil {
 			return err
+		}
+		if config.ControlEndpoint != "" && config.ControlEndpoint != server {
+			if _, _, err := controlEndpoint(config.ControlEndpoint); err != nil {
+				return err
+			}
+			return &controlRedirect{endpoint: config.ControlEndpoint}
 		}
 		select {
 		case <-ctx.Done():

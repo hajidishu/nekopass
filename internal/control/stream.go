@@ -69,6 +69,9 @@ func (s *StreamServer) Connect(stream pb.Control_ConnectServer) error {
 		if e != nil {
 			return status.Error(codes.FailedPrecondition, publicOperationError(e))
 		}
+		if report.ProtocolVersion >= 12 {
+			result.ControlEndpoint = s.Server.controlEndpoint()
+		}
 		if e = stream.Send(result); e != nil {
 			return e
 		}

@@ -23,7 +23,19 @@ type h2SessionKey struct{}
 type h2ServerSession struct {
 	mu     sync.Mutex
 	nonces map[string]bool
+	active int
 }
+
+func (s *h2ServerSession) reserve(limit int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit > 0 && s.active >= limit {
+		return false
+	}
+	s.active++
+	return true
+}
+func (s *h2ServerSession) release() { s.mu.Lock(); s.active--; s.mu.Unlock() }
 
 func (s *h2ServerSession) take(nonce string) bool {
 	s.mu.Lock()
@@ -46,7 +58,10 @@ func (e *Engine) startH2Server(ctx context.Context, ln net.Listener, cfg *pb.TLS
 		BaseContext: func(net.Listener) context.Context { return ctx }, ConnContext: func(parent context.Context, _ net.Conn) context.Context {
 			return context.WithValue(parent, h2SessionKey{}, &h2ServerSession{nonces: map[string]bool{}})
 		}}
-	if err = http2.ConfigureServer(server, &http2.Server{MaxConcurrentStreams: uint32(cfg.MaxStreams), MaxUploadBufferPerConnection: int32(cfg.ConnectionWindowMib) << 20, MaxUploadBufferPerStream: int32(cfg.StreamWindowMib) << 20, IdleTimeout: 60 * time.Second}); err != nil {
+	// SETTINGS precedes HTTP authentication by protocol design. Use the same
+	// initial settings as an ordinary Go HTTP/2 website, never private tunnel
+	// window sizes. Business stream limits are enforced only after authentication.
+	if err = http2.ConfigureServer(server, &http2.Server{IdleTimeout: 60 * time.Second}); err != nil {
 		return err
 	}
 	physical := int(e.maxConnections.Load())
@@ -123,6 +138,11 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 		e.camouflage(w, r)
 		return
 	}
+	if !session.reserve(int(cfg.MaxStreams)) {
+		http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	defer session.release()
 	active := e.connections.Add(1)
 	defer e.connections.Add(-1)
 	if limit := e.maxConnections.Load(); limit > 0 && active > limit {

@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,7 +19,6 @@ import (
 	"github.com/nekopass/nekopass/internal/release"
 	"github.com/nekopass/nekopass/internal/store"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"runtime"
 )
 
@@ -122,23 +119,18 @@ func run() error {
 	if certFile == "" && keyFile == "" {
 		certFile, keyFile = os.Getenv("NEKOPASS_TLS_CERT"), os.Getenv("NEKOPASS_TLS_KEY")
 	}
-	if certFile != "" || keyFile != "" {
-		cert, loadErr := tls.LoadX509KeyPair(certFile, keyFile)
-		if loadErr != nil {
-			return loadErr
-		}
-		grpcOptions = append(grpcOptions, grpc.Creds(credentials.NewTLS(&tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})))
-	}
-	grpcServer := grpc.NewServer(grpcOptions...)
-	pb.RegisterControlServer(grpcServer, &control.StreamServer{Server: server})
-	ln, err := net.Listen("tcp", *grpcAddr)
+	ln, agentCredentials, err := server.StartAgentListener(ctx, *grpcAddr, certFile, keyFile)
 	if err != nil {
 		return err
 	}
+	defer ln.Close()
+	grpcOptions = append(grpcOptions, grpc.Creds(agentCredentials))
+	grpcServer := grpc.NewServer(grpcOptions...)
+	pb.RegisterControlServer(grpcServer, &control.StreamServer{Server: server})
 	errCh := make(chan error, 2)
 	go func() { errCh <- grpcServer.Serve(ln) }()
 	go func() { errCh <- httpServer.ListenAndServe() }()
-	slog.Info("control ready", "http", *httpAddr, "grpc", *grpcAddr)
+	slog.Info("control ready", "http", *httpAddr, "grpc", ln.Addr().String())
 	select {
 	case <-ctx.Done():
 	case err = <-errCh:

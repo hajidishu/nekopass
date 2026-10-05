@@ -123,7 +123,7 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 		s.dbError(w, e)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"settings": v, "api_key_configured": has})
+	writeJSON(w, 200, map[string]any{"settings": v, "api_key_configured": has, "agent_listener": s.agentListenerStatus()})
 }
 func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
@@ -136,14 +136,60 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	v.SiteName = strings.TrimSpace(v.SiteName)
 	v.PanelURL = strings.TrimRight(v.PanelURL, "/")
 	v.ReleaseBaseURL = strings.TrimRight(v.ReleaseBaseURL, "/")
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
 	if e := validateSettings(v); e != nil {
 		fail(w, 400, e.Error())
 		return
 	}
-	data, _ := json.Marshal(v)
-	if _, e := s.Pool.Exec(r.Context(), "UPDATE site_settings SET config=$1,updated_at=now() WHERE id=1", data); e != nil {
+	var previous, plan agentListenPlan
+	if s.agentListener != nil {
+		old, e := s.readSettings(r.Context())
+		if e != nil {
+			s.dbError(w, e)
+			return
+		}
+		previous = s.agentListener.current()
+		// Replacing an HTTPS proxy with direct HTTP changes the default public
+		// port to the actual backend port; explicitly edited NAT ports are retained.
+		if old.AgentTransport != "plain" && v.AgentTransport == "plain" && old.AgentPort == v.AgentPort {
+			_, port, _ := net.SplitHostPort(previous.address)
+			v.AgentPort, _ = strconv.Atoi(port)
+		}
+		plan, e = s.agentListener.prepare(v)
+		if e != nil {
+			fail(w, 400, e.Error())
+			return
+		}
+	}
+	tx, e := s.Pool.Begin(r.Context())
+	if e != nil {
 		s.dbError(w, e)
 		return
+	}
+	defer tx.Rollback(r.Context())
+	data, _ := json.Marshal(v)
+	if _, e := tx.Exec(r.Context(), "UPDATE site_settings SET config=$1,updated_at=now() WHERE id=1", data); e != nil {
+		s.dbError(w, e)
+		return
+	}
+	if s.agentListener != nil {
+		pending := plan
+		pending.endpoint = previous.endpoint
+		if e := s.agentListener.apply(pending); e != nil {
+			fail(w, 409, e.Error())
+			return
+		}
+	}
+	if e := tx.Commit(r.Context()); e != nil {
+		if s.agentListener != nil {
+			_ = s.agentListener.apply(previous)
+		}
+		s.dbError(w, e)
+		return
+	}
+	if s.agentListener != nil {
+		_ = s.agentListener.apply(plan)
 	}
 	writeJSON(w, 200, v)
 }

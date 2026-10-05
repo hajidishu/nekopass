@@ -15,7 +15,7 @@ import sys
 import tempfile
 import zipfile
 
-ROOT_FILES = {'.gitignore', '.gitattributes', 'README.md', 'SECURITY.md', 'LICENSE',
+ROOT_FILES = {'.gitignore', '.gitattributes', 'README.md', 'CHANGELOG.md', 'SECURITY.md', 'LICENSE',
               'go.mod', 'go.sum', 'sqlc.yaml', '开发指南.md'}
 SOURCE_DIRS = {'.github', '.githooks', 'api', 'cmd', 'deploy', 'docs', 'internal',
                'scripts', 'tests', 'web'}

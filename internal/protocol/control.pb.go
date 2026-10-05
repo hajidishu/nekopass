@@ -787,6 +787,7 @@ type ControlMessage struct {
 	TunnelLinks       []*TunnelLink          `protobuf:"bytes,6,rep,name=tunnel_links,json=tunnelLinks,proto3" json:"tunnel_links,omitempty"`
 	EgressRules       []*EgressRule          `protobuf:"bytes,7,rep,name=egress_rules,json=egressRules,proto3" json:"egress_rules,omitempty"`
 	Update            *UpdateRequest         `protobuf:"bytes,8,opt,name=update,proto3" json:"update,omitempty"`
+	ControlEndpoint   string                 `protobuf:"bytes,9,opt,name=control_endpoint,json=controlEndpoint,proto3" json:"control_endpoint,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -875,6 +876,13 @@ func (x *ControlMessage) GetUpdate() *UpdateRequest {
 		return x.Update
 	}
 	return nil
+}
+
+func (x *ControlMessage) GetControlEndpoint() string {
+	if x != nil {
+		return x.ControlEndpoint
+	}
+	return ""
 }
 
 type UpdateRequest struct {
@@ -1990,7 +1998,7 @@ const file_api_control_proto_rawDesc = "" +
 	"\auser_id\x18\x04 \x01(\x03R\x06userId\x12\x1f\n" +
 	"\vquota_epoch\x18\x05 \x01(\x03R\n" +
 	"quotaEpoch\x12!\n" +
-	"\fexpires_unix\x18\x06 \x01(\x03R\vexpiresUnix\"\xa0\x03\n" +
+	"\fexpires_unix\x18\x06 \x01(\x03R\vexpiresUnix\"\xcb\x03\n" +
 	"\x0eControlMessage\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x03R\brevision\x12-\n" +
 	"\x05users\x18\x02 \x03(\v2\x17.nekopass.v1.UserPolicyR\x05users\x12'\n" +
@@ -1999,7 +2007,8 @@ const file_api_control_proto_rawDesc = "" +
 	"\x12acknowledged_usage\x18\x05 \x03(\v2\x12.nekopass.v1.UsageR\x11acknowledgedUsage\x12:\n" +
 	"\ftunnel_links\x18\x06 \x03(\v2\x17.nekopass.v1.TunnelLinkR\vtunnelLinks\x12:\n" +
 	"\fegress_rules\x18\a \x03(\v2\x17.nekopass.v1.EgressRuleR\vegressRules\x122\n" +
-	"\x06update\x18\b \x01(\v2\x1a.nekopass.v1.UpdateRequestR\x06update\"I\n" +
+	"\x06update\x18\b \x01(\v2\x1a.nekopass.v1.UpdateRequestR\x06update\x12)\n" +
+	"\x10control_endpoint\x18\t \x01(\tR\x0fcontrolEndpoint\"I\n" +
 	"\rUpdateRequest\x12\x1e\n" +
 	"\n" +
 	"generation\x18\x01 \x01(\x03R\n" +
