@@ -59,9 +59,11 @@ func (e *Engine) startH2Server(ctx context.Context, ln net.Listener, cfg *pb.TLS
 			return context.WithValue(parent, h2SessionKey{}, &h2ServerSession{nonces: map[string]bool{}})
 		}}
 	// SETTINGS precedes HTTP authentication by protocol design. Use the same
-	// initial settings as an ordinary Go HTTP/2 website, never private tunnel
-	// window sizes. Business stream limits are enforced only after authentication.
-	if err = http2.ConfigureServer(server, &http2.Server{IdleTimeout: 60 * time.Second}); err != nil {
+	// SETTINGS fields as an ordinary Go HTTP/2 website, never private per-stream
+	// window sizes. Connection-wide credit uses WINDOW_UPDATE, not SETTINGS;
+	// keep it configurable to avoid capping the whole pool on high-RTT links.
+	// Business stream limits are enforced only after authentication.
+	if err = http2.ConfigureServer(server, &http2.Server{MaxUploadBufferPerConnection: int32(cfg.ConnectionWindowMib) << 20, IdleTimeout: 60 * time.Second}); err != nil {
 		return err
 	}
 	physical := int(e.maxConnections.Load())
