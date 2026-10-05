@@ -46,6 +46,9 @@ var migration012 string
 //go:embed migration013.sql
 var migration013 string
 
+//go:embed migration014.sql
+var migration014 string
+
 func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	p, err := pgxpool.New(ctx, url)
 	if err != nil {
@@ -132,6 +135,11 @@ func Migrate(ctx context.Context, p *pgxpool.Pool) error {
 	}
 	if version < 13 {
 		if _, err = tx.Exec(ctx, migration013); err != nil {
+			return err
+		}
+	}
+	if version < 14 {
+		if _, err = tx.Exec(ctx, migration014); err != nil {
 			return err
 		}
 	}

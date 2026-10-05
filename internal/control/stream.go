@@ -292,6 +292,11 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 			return nil, e
 		}
 		v.IngressNodeId = nodeID
+		// Older Agents cannot detect both PROXY header versions. Keep other rules
+		// and the update channel usable, but never downgrade an enabled receiver.
+		if v.ProxyAccept == "auto" && r.ProtocolVersion < 10 {
+			v.Enabled = false
+		}
 		if v.EgressNodeId != 0 && (v.TunnelHost == "" || v.TunnelToken == "" || v.TunnelPort == 0) {
 			v.Enabled = false
 		}

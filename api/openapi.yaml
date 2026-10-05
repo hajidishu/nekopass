@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.11.0
+  version: 0.12.0
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Admin-created accounts. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -821,7 +821,7 @@ components:
         speed_mbps: {type: integer, enum: [0], default: 0, deprecated: true, description: Configure rule speed in plan instead}
         ip_limit: {type: integer, enum: [0], default: 0, deprecated: true, description: Configure IP cap in plan instead}
         connection_limit: {type: integer, enum: [0], default: 0, deprecated: true, description: Configure connection cap in plan instead}
-        proxy_accept: {type: string, enum: ['off', v1, v2], default: 'off'}
+        proxy_accept: {type: string, enum: ['off', auto, v1, v2], default: 'off', description: 'auto accepts either v1 or v2 from trusted CIDRs; requires Agent protocol v10'}
         proxy_send: {type: string, enum: ['off', v1, v2], default: 'off'}
         proxy_trusted_cidrs: {type: array, maxItems: 64, items: {type: string}, description: Required when proxy_accept enabled}
         target_host: {type: string, description: IP or DNS hostname without scheme or port}

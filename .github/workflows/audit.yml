@@ -52,6 +52,7 @@ jobs:
       - name: Frontend build and dependency audit
         run: |
           npm --prefix web ci
+          npm --prefix web test
           npm --prefix web run build
           npm --prefix web audit --audit-level=low
       - name: Documentation build and dependency audit

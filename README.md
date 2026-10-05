@@ -1,6 +1,8 @@
 # Nekopass
 
-TCP 端口转发面板，支持明文 / TLS 隧道，原生 systemd 部署。
+Nekopass是一个开源免费的端口转发面板，设计参考了nyanpass，但是你不需要为nekopass支付一分钱
+
+>此项目目前处于半成品状态
 
 ## 安装面板
 

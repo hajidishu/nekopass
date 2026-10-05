@@ -62,6 +62,20 @@ func readProxy(c net.Conn, mode string, trusted []string) (net.Conn, proxyAddres
 	defer c.SetReadDeadline(time.Time{})
 	b := bufio.NewReader(c)
 	wrapped := &bufferedConn{Conn: c, reader: b}
+	if mode == "auto" {
+		prefix, err := b.Peek(1)
+		if err != nil {
+			return c, a, err
+		}
+		switch prefix[0] {
+		case 'P':
+			mode = "v1"
+		case '\r':
+			mode = "v2"
+		default:
+			return c, a, errors.New("proxy protocol header required")
+		}
+	}
 	switch mode {
 	case "v1":
 		line := []byte{}

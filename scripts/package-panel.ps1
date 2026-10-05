@@ -1,4 +1,4 @@
-param([string]$Version = 'v0.11.0', [string]$DownloadBase = 'https://github.com/hajidishu/nekopass/releases/download')
+param([string]$Version = 'v0.12.0', [string]$DownloadBase = 'https://github.com/hajidishu/nekopass/releases/download')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or $Version.Contains('..')) { throw 'Invalid version' }
 if ($DownloadBase) {
@@ -18,6 +18,8 @@ try {
         $npmCommand = if ($env:OS -eq 'Windows_NT') { 'npm.cmd' } else { 'npm' }
         & $npmCommand ci
         if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+        & $npmCommand test
+        if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed' }
         & $npmCommand run build
         if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed' }
     } finally { Pop-Location }
@@ -31,7 +33,7 @@ try {
     $updater = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/nekopass-update.py')).Replace("`r`n", "`n")
     $updaterPayload = "write_updater_payload() {`ncat <<'NEKOPASS_UPDATER_PAYLOAD'`n" + $updater.TrimEnd() + "`nNEKOPASS_UPDATER_PAYLOAD`n}`n"
     $installer = $installer.Replace('# PACKAGED_MANAGER', $payload).Replace('# PACKAGED_UPDATER', $updaterPayload).Replace("DEFAULT_DOWNLOAD_BASE='https://github.com/hajidishu/nekopass/releases/download'", "DEFAULT_DOWNLOAD_BASE='$($DownloadBase.TrimEnd('/'))'")
-    $installer = $installer.Replace('v0.11.0', $Version)
+    $installer = $installer.Replace('v0.12.0', $Version)
     [IO.File]::WriteAllText((Join-Path $assets 'install-panel.sh'), $installer, $utf8)
     $env:GOOS = 'linux'; $env:CGO_ENABLED = '0'
     foreach ($architecture in @('amd64','arm64')) {

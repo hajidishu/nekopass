@@ -116,7 +116,7 @@ a { color: inherit; text-decoration: none; }
 .row-actions .el-button { width: 32px; height: 32px; padding: 7px; }
 .row-actions .ui-icon { margin: 0; }
 .rule-status { white-space: nowrap; }
-.rule-status.failed, .rule-status.quota_exhausted, .rule-status.expired { color: #d25454; }
+.rule-status.failed, .rule-status.quota_exhausted, .rule-status.expired, .rule-status.upgrade_required { color: #d25454; }
 .rule-status.disabled, .rule-status.offline, .rule-status.pending { color: var(--muted); }
 .rules-pagination { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding-top: 22px; font-size: 12px; }
 .rule-dock { position: fixed; right: 21px; bottom: 32px; z-index: 10; display: flex; flex-direction: column; padding: 6px 3px; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 3px 18px #00000012; border-radius: 9px; }
@@ -202,7 +202,7 @@ a { color: inherit; text-decoration: none; }
 .dark .entry-badge { background: #173453; border-color: #355c85; color: #94c5ff; }
 .dark .address-link { color: #92bfff; }
 .dark .rule-status.active { color: #9cc7ff; }
-.dark .rule-status.failed, .dark .rule-status.quota_exhausted, .dark .rule-status.expired, .dark .danger { color: #fb96a2; }
+.dark .rule-status.failed, .dark .rule-status.quota_exhausted, .dark .rule-status.expired, .dark .rule-status.upgrade_required, .dark .danger { color: #fb96a2; }
 .dark .success { color: #7bd1b9; }
 .dark .el-dialog, .dark .el-message-box { background: #142238; }
 .dark .el-dialog__title { color: #dbeaff; }

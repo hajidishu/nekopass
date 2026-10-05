@@ -82,10 +82,11 @@ func (in *RuleInput) normalize() error {
 	if in.ProxySend == "" {
 		in.ProxySend = "off"
 	}
-	for _, v := range []string{in.ProxyAccept, in.ProxySend} {
-		if v != "off" && v != "v1" && v != "v2" {
-			return errors.New("Proxy Protocol 版本无效")
-		}
+	if in.ProxyAccept != "off" && in.ProxyAccept != "v1" && in.ProxyAccept != "v2" && in.ProxyAccept != "auto" {
+		return errors.New("Proxy Protocol 接收模式无效")
+	}
+	if in.ProxySend != "off" && in.ProxySend != "v1" && in.ProxySend != "v2" {
+		return errors.New("Proxy Protocol 发送版本无效")
 	}
 	if in.SpeedMbps < 0 || in.SpeedMbps > 100000 || in.IPLimit < 0 || in.IPLimit > 1000000 || in.ConnectionLimit < 0 || in.ConnectionLimit > 1000000 {
 		return errors.New("规则限制超出范围")
@@ -254,6 +255,7 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
  CASE WHEN NOT r.enabled THEN 'disabled' WHEN NOT u.account_enabled THEN 'user_disabled' WHEN u.plan_id IS NULL THEN 'no_plan' WHEN NOT u.plan_enabled THEN 'plan_disabled' WHEN u.expires_at<=now() THEN 'expired' WHEN NOT n.ingress_enabled OR NOT EXISTS(SELECT 1 FROM user_nodes un WHERE un.user_id=r.user_id AND un.node_id=r.node_id) OR (r.egress_node_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM user_nodes un WHERE un.user_id=r.user_id AND un.node_id=r.egress_node_id)) THEN 'unauthorized'
  WHEN u.quota_bytes>=0 AND (u.quota_bytes<=COALESCE((SELECT sum(traffic) FROM current_grants WHERE user_id=u.id),0) OR u.quota_bytes<COALESCE((SELECT sum(issued-released+unlimited_spent) FROM current_grants WHERE user_id=u.id),0)) THEN 'quota_exhausted'
 	 WHEN n.last_seen IS NULL OR n.last_seen<now()-interval '12 seconds' OR (en.id IS NOT NULL AND (en.last_seen IS NULL OR en.last_seen<now()-interval '12 seconds')) THEN 'offline'
+	 WHEN r.proxy_accept='auto' AND n.protocol_version<10 THEN 'upgrade_required'
 	 WHEN n.sync_error<>'' OR COALESCE(en.sync_error,'')<>'' THEN 'failed' WHEN n.applied_revision<r.config_revision OR (en.id IS NOT NULL AND en.applied_revision<r.config_revision) THEN 'pending' ELSE 'active' END AS status
 	 FROM rules r JOIN user_entitlements u ON u.id=r.user_id JOIN nodes n ON n.id=r.node_id LEFT JOIN nodes en ON en.id=r.egress_node_id LEFT JOIN rule_groups g ON g.id=r.group_id WHERE $1 OR r.user_id=$2 ORDER BY r.id DESC`, u.IsAdmin, u.ID)
 	if e != nil {

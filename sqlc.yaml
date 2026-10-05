@@ -16,6 +16,7 @@ sql:
       - internal/store/migration011.sql
       - internal/store/migration012.sql
       - internal/store/migration013.sql
+      - internal/store/migration014.sql
     gen:
       go:
         package: store
