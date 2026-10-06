@@ -11,6 +11,17 @@ import (
 )
 
 func TestPageRoutesAndSafeReturns(t *testing.T) {
+	if route, ok := resolvePage("/admin/nodes/123/protocols"); !ok || route.file != "admin_node_protocols" || !route.admin || route.nodeID != 123 {
+		t.Fatal("protocol page route invalid")
+	}
+	for _, path := range []string{"/admin/nodes/0/protocols", "/admin/nodes/01/protocols", "/admin/nodes/-1/protocols"} {
+		if _, ok := resolvePage(path); ok {
+			t.Fatal("invalid protocol page accepted")
+		}
+	}
+	if safeNext("/admin/nodes/123/protocols", false) != "/" || safeNext("/admin/nodes/123/protocols", true) != "/admin/nodes/123/protocols" {
+		t.Fatal("protocol page return scope invalid")
+	}
 	if route, ok := resolvePage("/admin/nodes/123/ddns"); !ok || route.file != "admin_node_ddns" || !route.admin || route.nodeID != 123 {
 		t.Fatal("DDNS page route invalid")
 	}

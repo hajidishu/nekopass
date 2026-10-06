@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.14.2
+  version: 0.14.3
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Admin-created accounts. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -54,6 +54,42 @@ paths:
         '200': {description: 'generation, version and queued state; Agent protocol 9 and installed updater required. Update progress appears in admin nodes only. Uses fixed hajidishu/nekopass Releases; preserves node identity and quota state.'}
         '403': {$ref: '#/components/responses/Error'}
         '409': {description: Offline/legacy node, pending task or version conflict}
+  /admin/nodes/{id}/protocols:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    get:
+      summary: Get administrator node ingress, egress and transport settings
+      responses:
+        '200': {description: Node name, protocol configuration and available ingress nodes; excludes node credentials}
+        '403': {description: Administrator required}
+        '404': {description: Node not found}
+    put:
+      summary: Save ingress, egress and transport settings without changing basic node information
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/NodeProtocolsInput'}
+      responses:
+        '200': {description: Protocol settings saved and published}
+        '400': {description: Invalid configuration}
+        '403': {description: Administrator required}
+        '409': {description: Settings conflict with existing forwarding rules}
+  /admin/nodes/{id}/basic:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    put:
+      summary: Save basic node settings without changing ingress, egress or transport configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/NodeBasicInput'}
+      responses:
+        '200': {description: Basic settings saved and published}
+        '400': {description: Invalid configuration}
+        '403': {description: Administrator required}
+        '409': {description: Settings conflict with existing forwarding rules}
   /admin/nodes/{id}/ddns:
     parameters:
       - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
@@ -801,6 +837,39 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/RuleInput'}
   schemas:
+    NodeProtocolsInput:
+      type: object
+      additionalProperties: false
+      properties:
+        ingress_enabled: {type: boolean}
+        allow_direct: {type: boolean}
+        tunnel_exit_enabled: {type: boolean}
+        tunnel_protocol: {type: string, enum: [plain_tcp, tls_h2], description: Egress transport; ingress client settings are independent}
+        tunnel_listen_host: {type: string}
+        tunnel_listen_port: {type: integer, minimum: 0, maximum: 65535}
+        tunnel_public_host: {type: string}
+        allowed_ingress_ids: {type: array, items: {type: integer, minimum: 1}}
+        tls: {$ref: '#/components/schemas/TunnelTLS'}
+    NodeBasicInput:
+      type: object
+      additionalProperties: false
+      properties:
+        token: {type: string, description: Omit to retain the existing key; an explicit empty value generates a key}
+        name: {type: string}
+        public_address: {type: string}
+        notes: {type: string}
+        enabled: {type: boolean}
+        group_ids: {type: array, items: {type: integer, minimum: 1}}
+        listen_host: {type: string}
+        port_min: {type: integer}
+        port_max: {type: integer}
+        max_connections: {type: integer}
+        dial_timeout_seconds: {type: integer}
+        idle_timeout_seconds: {type: integer}
+        probe_interval_seconds: {type: integer}
+        disk_path: {type: string}
+        network_interfaces: {type: array, items: {type: string}}
+
     BillingCycle:
       type: string
       enum: [monthly, quarterly, semiannual, annual, biennial, triennial, onetime]

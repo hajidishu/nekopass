@@ -3,6 +3,8 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/jackc/pgx/v5"
 	"github.com/nekopass/nekopass/internal/store"
 	"net"
 	"net/http"
@@ -49,13 +51,61 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 	rows, e := s.Pool.Query(r.Context(), `SELECT n.id,n.name,n.agent_version,n.update_supported,(SELECT jsonb_build_object('generation',u.generation,'version',u.version,'state',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN 'unconfirmed' ELSE u.state END,'error',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN '超过 15 分钟未收到更新结果，请检查节点连接及更新日志' ELSE u.error END,'requested_at',u.requested_at,'updated_at',u.updated_at) FROM node_updates u WHERE u.node_id=n.id) AS update_status,n.token,(n.instance_id<>'') AS bound,n.public_address,n.notes,n.enabled,n.listen_host,n.port_min,n.port_max,n.max_connections,n.dial_timeout_seconds,n.idle_timeout_seconds,n.probe_interval_seconds,n.disk_path,n.network_interfaces,n.ingress_enabled,n.allow_direct,n.tunnel_exit_enabled,n.tunnel_protocol,n.tls_config AS tls,n.tls_status,n.tls_error,n.tls_not_after,n.protocol_version,n.tunnel_listen_host,n.tunnel_listen_port,n.tunnel_public_host,n.last_seen,n.applied_revision,n.config_revision,n.sync_error,n.active_connections,n.probe,n.probe_received_at,COALESCE(n.last_seen>now()-interval '12 seconds',false) AS online,COALESCE((SELECT array_agg(group_id ORDER BY group_id) FROM node_group_members WHERE node_id=n.id),'{}') AS group_ids,COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}') AS allowed_ingress_ids,(SELECT count(*) FROM rules WHERE node_id=n.id) AS rule_count FROM nodes n ORDER BY n.id`)
 	s.sendRows(w, rows, e)
 }
-func (s *Server) saveNode(w http.ResponseWriter, r *http.Request) {
+func (s *Server) saveNode(w http.ResponseWriter, r *http.Request) { s.saveNodePart(w, r, "full") }
+func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part string) {
 	if !admin(w, r) {
 		return
 	}
 	v := NodeInput{Enabled: true, ListenHost: "0.0.0.0", PortMin: 1024, PortMax: 65535, MaxConnections: 10000, DialTimeoutSeconds: 8, IdleTimeoutSeconds: 300, ProbeIntervalSeconds: 5, DiskPath: "/", NetworkInterfaces: []string{}, IngressEnabled: true, AllowDirect: true, TunnelProtocol: "plain_tcp", TunnelListenHost: "0.0.0.0"}
-	if !decode(w, r, &v) {
+	var partial any
+	switch part {
+	case "basic":
+		partial = &NodeBasicInput{}
+	case "protocols":
+		partial = &NodeProtocolsInput{}
+	}
+	if partial == nil {
+		if !decode(w, r, &v) {
+			return
+		}
+	} else if !decode(w, r, partial) {
 		return
+	}
+	ctx := r.Context()
+	tx, e := s.ruleTx(ctx)
+	if e != nil {
+		s.dbError(w, e)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if e = revokeOverlappingAPIKey(ctx, tx); e != nil {
+		s.dbError(w, e)
+		return
+	}
+	id, validID := resourceID(w, r)
+	if !validID {
+		return
+	}
+	var retainedHash string
+	if partial != nil {
+		if id == 0 {
+			fail(w, 404, "节点不存在")
+			return
+		}
+		v, retainedHash, e = loadNodeInput(ctx, tx, id)
+		if errors.Is(e, pgx.ErrNoRows) {
+			fail(w, 404, "节点不存在")
+			return
+		}
+		if e != nil {
+			s.dbError(w, e)
+			return
+		}
+		data, _ := json.Marshal(partial)
+		if e = json.Unmarshal(data, &v); e != nil {
+			fail(w, 400, "节点配置参数无效")
+			return
+		}
 	}
 	v.Name = strings.TrimSpace(v.Name)
 	if v.Token != "" && !validNodeToken(v.Token) {
@@ -74,21 +124,6 @@ func (s *Server) saveNode(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, "网卡名称无效")
 			return
 		}
-	}
-	ctx := r.Context()
-	tx, e := s.ruleTx(ctx)
-	if e != nil {
-		s.dbError(w, e)
-		return
-	}
-	defer tx.Rollback(ctx)
-	if e = revokeOverlappingAPIKey(ctx, tx); e != nil {
-		s.dbError(w, e)
-		return
-	}
-	id, validID := resourceID(w, r)
-	if !validID {
-		return
 	}
 	previousProtocol := ""
 	if id != 0 {
@@ -154,11 +189,19 @@ func (s *Server) saveNode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	token := v.Token
-	if token == "" {
+	preserveToken := part == "protocols"
+	if basic, ok := partial.(*NodeBasicInput); ok && basic.Token == nil {
+		preserveToken = true
+	}
+	if token == "" && !preserveToken {
 		token = Secret()
 	}
+	tokenHash := Hash(token)
+	if preserveToken {
+		tokenHash = retainedHash
+	}
 	var managementKey bool
-	if e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM site_settings WHERE api_key_hash=$1 AND api_key_hash<>'')", Hash(token)).Scan(&managementKey); e != nil {
+	if e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM site_settings WHERE api_key_hash=$1 AND api_key_hash<>'')", tokenHash).Scan(&managementKey); e != nil {
 		s.dbError(w, e)
 		return
 	}
@@ -169,7 +212,7 @@ func (s *Server) saveNode(w http.ResponseWriter, r *http.Request) {
 	var tokenChanged bool
 	if id == 0 {
 		tokenChanged = true
-		e = tx.QueryRow(ctx, "INSERT INTO nodes(name,token_hash,token) VALUES($1,$2,$3) RETURNING id", v.Name, Hash(token), token).Scan(&id)
+		e = tx.QueryRow(ctx, "INSERT INTO nodes(name,token_hash,token) VALUES($1,$2,$3) RETURNING id", v.Name, tokenHash, token).Scan(&id)
 	} else {
 		var conflict bool
 		e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rules WHERE node_id=$1 AND listen_port NOT BETWEEN $2 AND $3)", id, v.PortMin, v.PortMax).Scan(&conflict)
@@ -181,14 +224,14 @@ func (s *Server) saveNode(w http.ResponseWriter, r *http.Request) {
 		if e == nil {
 			e = tx.QueryRow(ctx, "SELECT token_hash FROM nodes WHERE id=$1 FOR UPDATE", id).Scan(&previousHash)
 		}
-		tokenChanged = e == nil && previousHash != Hash(token)
+		tokenChanged = e == nil && previousHash != tokenHash
 	}
 	if e != nil {
 		s.dbError(w, e)
 		return
 	}
 	interfaces, _ := json.Marshal(v.NetworkInterfaces)
-	tag, e := tx.Exec(ctx, `UPDATE nodes SET name=$2,public_address=$3,notes=$4,enabled=$5,listen_host=$6,port_min=$7,port_max=$8,max_connections=$9,dial_timeout_seconds=$10,idle_timeout_seconds=$11,probe_interval_seconds=$12,disk_path=$13,network_interfaces=$14,allow_direct=$15,tunnel_exit_enabled=$16,tunnel_protocol=$17,tunnel_listen_host=$18,tunnel_listen_port=$19,tunnel_public_host=$20,token=$21,token_hash=$22,ingress_enabled=$23,config_revision=(SELECT value+1 FROM revision WHERE id=1) WHERE id=$1`, id, v.Name, v.PublicAddress, v.Notes, v.Enabled, v.ListenHost, v.PortMin, v.PortMax, v.MaxConnections, v.DialTimeoutSeconds, v.IdleTimeoutSeconds, v.ProbeIntervalSeconds, v.DiskPath, interfaces, v.AllowDirect, v.TunnelExitEnabled, v.TunnelProtocol, v.TunnelListenHost, v.TunnelListenPort, v.TunnelPublicHost, token, Hash(token), v.IngressEnabled)
+	tag, e := tx.Exec(ctx, `UPDATE nodes SET name=$2,public_address=$3,notes=$4,enabled=$5,listen_host=$6,port_min=$7,port_max=$8,max_connections=$9,dial_timeout_seconds=$10,idle_timeout_seconds=$11,probe_interval_seconds=$12,disk_path=$13,network_interfaces=$14,allow_direct=$15,tunnel_exit_enabled=$16,tunnel_protocol=$17,tunnel_listen_host=$18,tunnel_listen_port=$19,tunnel_public_host=$20,token=$21,token_hash=$22,ingress_enabled=$23,config_revision=(SELECT value+1 FROM revision WHERE id=1) WHERE id=$1`, id, v.Name, v.PublicAddress, v.Notes, v.Enabled, v.ListenHost, v.PortMin, v.PortMax, v.MaxConnections, v.DialTimeoutSeconds, v.IdleTimeoutSeconds, v.ProbeIntervalSeconds, v.DiskPath, interfaces, v.AllowDirect, v.TunnelExitEnabled, v.TunnelProtocol, v.TunnelListenHost, v.TunnelListenPort, v.TunnelPublicHost, token, tokenHash, v.IngressEnabled)
 	if e != nil {
 		s.dbError(w, e)
 		return
