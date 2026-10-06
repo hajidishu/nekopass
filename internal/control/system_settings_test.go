@@ -36,13 +36,17 @@ func TestInstallSettingsValidation(t *testing.T) {
 	if !strings.Contains(command, shellQuote(v.InstallerURL)) || !strings.Contains(command, "--upgrade") {
 		t.Fatal("unsafe command quoting or missing upgrade flag")
 	}
-	for _, value := range []string{"wget ", " && bash ", "--server 'https://panel.example.test:9443'", "--token 'fixture-node-key'", "--panel-url", shellQuote(v.ReleaseBaseURL), "--version"} {
+	for _, value := range []string{"wget ", " && bash ", "--server 'https://panel.example.test:9443'", "--token 'fixture-node-key'", shellQuote(v.ReleaseBaseURL), "--version"} {
 		if !strings.Contains(command, value) {
 			t.Fatal("missing direct installation parameter")
 		}
 	}
-	if strings.Contains(command, "--install-token") || strings.Contains(command, "\n") {
+	if strings.Contains(command, "--install-token") || strings.Contains(command, "--panel-url") || strings.Contains(command, "\n") {
 		t.Fatal("old installation wrapper retained")
+	}
+	v.PanelURL = ""
+	if e := installReady(v); e != nil {
+		t.Fatal("direct installation should not require a web panel address", e)
 	}
 	v.PanelURL = "http://panel.example.test:8080"
 	if e := validateSettings(v); e != nil {

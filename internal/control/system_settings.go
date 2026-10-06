@@ -93,8 +93,8 @@ func panelURL(raw string) bool {
 	return httpsURL(raw, true) || strings.HasPrefix(raw, "http://") && httpsURL("https://"+strings.TrimPrefix(raw, "http://"), true)
 }
 func installReady(v SystemSettings) error {
-	if v.PanelURL == "" || v.AgentHost == "" || v.InstallerURL == "" || v.ReleaseBaseURL == "" {
-		return errors.New("请先配置面板地址、Agent 地址和安装文件下载地址")
+	if v.AgentHost == "" || v.InstallerURL == "" || v.ReleaseBaseURL == "" {
+		return errors.New("请先配置 Agent 地址和安装文件下载地址")
 	}
 	if strings.Contains(strings.ToLower(v.InstallerURL), "your-oss.example.com") || strings.Contains(strings.ToLower(v.ReleaseBaseURL), "your-oss.example.com") {
 		return errors.New("请先在系统设置中填写实际安装文件下载地址")
@@ -292,7 +292,7 @@ func controlInstallServer(v SystemSettings) string {
 	return scheme + net.JoinHostPort(v.AgentHost, strconv.Itoa(v.AgentPort))
 }
 func installCommand(v SystemSettings, token string, bound bool) string {
-	args := []string{"--panel-url", v.PanelURL, "--server", controlInstallServer(v), "--token", token, "--download-base", v.ReleaseBaseURL, "--version", v.AgentVersion}
+	args := []string{"--server", controlInstallServer(v), "--token", token, "--download-base", v.ReleaseBaseURL, "--version", v.AgentVersion}
 	if bound {
 		args = append(args, "--upgrade")
 	}

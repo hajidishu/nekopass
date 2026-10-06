@@ -44,7 +44,8 @@ def main():
         threading.Thread(target=server.serve_forever, daemon=True).start()
         url = f'https://127.0.0.1:{server.server_port}/agent'
         args = ['bash', str(installer), '--service-name', SERVICE, '--server', 'http://127.0.0.1:1',
-                '--token', 'cli-fixture-not-real-key', '--binary-url', url]
+                '--token', 'cli-fixture-not-real-key', '--binary-url', url,
+                '--panel-url', 'http://127.0.0.1:1']
         try:
             result = subprocess.run([*args, '--no-start'], capture_output=True, text=True, timeout=180, env={**os.environ,'CURL_CA_BUNDLE':CA})
             assert result.returncode == 0, result.stdout + result.stderr
@@ -52,6 +53,7 @@ def main():
             payload = installer.read_text().split("cat <<'NEKOPASS_MANAGER_PAYLOAD'\n", 1)[1].split('\nNEKOPASS_MANAGER_PAYLOAD\n', 1)[0] + '\n'
             assert cli.read_text() == payload and os.access(cli, os.X_OK)
             assert (CONFIG_DIR / 'agent.env').stat().st_mode & 0o777 == 0o600
+            assert 'NEKOPASS_PANEL_URL=' not in (CONFIG_DIR / 'agent.env').read_text()
             assert 'ConditionPathExists=' + str(CONFIG_DIR / 'agent.env') in UNIT.read_text()
             enabled = subprocess.run(['systemctl', 'is-enabled', SERVICE], capture_output=True, text=True)
             assert enabled.stdout.strip() == 'disabled'
@@ -61,6 +63,7 @@ def main():
             assert (CONFIG_DIR / 'agent.env').read_bytes() == original_env
             assert (STATE_DIR / 'state.db').exists()
             assert 'NEKOPASS_CA=' not in (CONFIG_DIR/'agent.env').read_text()
+            assert 'NEKOPASS_PANEL_URL=' not in (CONFIG_DIR/'agent.env').read_text()
             assert subprocess.check_output(['systemctl', 'is-enabled', SERVICE], text=True).strip() == 'enabled'
             assert subprocess.check_output(['systemctl', 'is-active', SERVICE], text=True).strip() == 'active'
             assert subprocess.check_output(['systemctl', 'is-active', SERVICE+'-update.path'], text=True).strip() == 'active'

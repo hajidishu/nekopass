@@ -36,6 +36,7 @@ def main():
   created=api('admin/nodes',{'name':'installer-e2e-'+secrets.token_hex(4)},'POST');node=created['id']
   generated=api('admin/nodes/'+str(node)+'/install-command',{},'POST')
   assert generated['command'].startswith('wget ') and created['token'] in generated['command']
+  assert '--panel-url' not in generated['command']
   # Download failures must not leave a partial installation.
   bad=command('--server','http://127.0.0.1:19443','--token',created['token'],'--binary-url',BASE+'/missing-binary',ok=False)
   assert not ROOT.exists()
@@ -49,6 +50,7 @@ def main():
   assert info()['token']==created['token']
   assert STATE.exists() and (ROOT/'agent.env').stat().st_mode&0o777==0o600
   original_env=(ROOT/'agent.env').read_bytes();old_binary=BIN.read_bytes()
+  assert 'NEKOPASS_PANEL_URL=' not in original_env.decode()
   assert subprocess.check_output([str(BIN),'-version'],text=True).startswith('nekopass-agent '+cfg['agent_version']+' linux/amd64')
   print('PASS download without checksum files, persistent node key, enrollment and isolated systemd start',flush=True)
   new=api('admin/nodes/'+str(node)+'/install-command',{},'POST')

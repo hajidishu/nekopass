@@ -4,7 +4,7 @@
 
 在后台「节点管理」创建节点，复制该节点的「安装命令」，以 root 在节点服务器执行。
 
-命令使用 `wget … -O nekopass-install-agent.sh && bash nekopass-install-agent.sh …`，参数直接包含面板地址、主控地址与端口、节点密钥、版本和下载源。节点地址使用 `https://`（公共 CA 可信证书）或测试用 `http://`（明文 HTTP/2），不附带 CA 参数。命令可重复使用。
+命令使用 `wget … -O nekopass-install-agent.sh && bash nekopass-install-agent.sh …`，参数直接包含主控 gRPC 地址与端口、节点密钥、版本和下载源。节点地址使用 `https://`（公共 CA 可信证书）或测试用 `http://`（明文 HTTP/2），不附带 CA 参数。命令可重复使用。
 
 节点显示「在线 / 已同步」后即可使用。端口范围、入口出口和探针设置均在后台修改。
 
@@ -18,7 +18,7 @@
 | 版本下载根地址 | `https://github.com/hajidishu/nekopass/releases/download` |
 | Agent 版本 | `latest`（最新正式版，也可填写版本号） |
 
-面板对外地址用于网页与安装接口；Agent 主控地址、端口用于节点连接，二者可以不同。
+节点连接信息由安装参数写入 `/etc/nekopass/agent.env`，只需 `NEKOPASS_SERVER` 和 `NEKOPASS_NODE_TOKEN`。规则、限速等运行配置通过 gRPC 下发；节点无需连接网页端口。
 
 ## 密钥与连接
 

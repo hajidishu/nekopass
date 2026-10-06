@@ -11,7 +11,7 @@ write_updater_payload() { return 1; }
 
 SERVER=''; TOKEN=''; TOKEN_FILE=''; PANEL_URL=''; INSTALL_TOKEN=''
 DOWNLOAD_BASE='https://github.com/hajidishu/nekopass/releases/download'
-VERSION='v0.14.6'; ARCH='auto'; BINARY_URL=''
+VERSION='v0.14.7'; ARCH='auto'; BINARY_URL=''
 SERVICE='nekopass-agent'
 UPGRADE=0; NO_START=0; DRY_RUN=0; WORK=''; CHANGED=0; WAS_ACTIVE=0; WAS_ENABLED=0
 usage() {
@@ -20,18 +20,18 @@ Nekopass Agent installer (Linux + systemd, run as root)
 
 Direct mode:
   bash install-agent.sh -s https://panel.example.com:9443 -t NODE_TOKEN \
-    -d https://github.com/hajidishu/nekopass/releases/download -v v0.14.6
+    -d https://github.com/hajidishu/nekopass/releases/download -v v0.14.7
 
-Panel-issued install command:
+Legacy installation credential (compatibility only):
   bash install-agent.sh -p https://panel.example.com -i INSTALL_TOKEN
 
   -s, --server URL             https://host:port for public TLS; http://host:port for test h2c
   -t, --token TOKEN            Node token, never a global management API key
       --token-file PATH       Read node token from a file
-  -p, --panel-url URL          HTTP(S) control-panel API root
+  -p, --panel-url URL          Legacy install-token API root; unused with --server/--token
   -i, --install-token TOKEN    One-time node-specific installation credential
   -d, --download-base URL      HTTPS release directory
-  -v, --version VERSION        Release directory name; default v0.14.6
+  -v, --version VERSION        Release directory name; default v0.14.7
   -a, --arch ARCH              auto, amd64 or arm64
       --binary-url URL        Override architecture binary download URL
       --service-name NAME     Default nekopass-agent; isolated suffix allowed
@@ -243,7 +243,6 @@ CHANGED=1
 systemctl stop "$SERVICE" 2>/dev/null || true
 install -m 755 "$WORK/agent" "$BIN"
 printf 'NEKOPASS_SERVER=%s\nNEKOPASS_NODE_TOKEN=%s\n' "$SERVER" "$TOKEN" > "$WORK/agent.env"
-if [[ -n "$PANEL_URL" ]]; then printf 'NEKOPASS_PANEL_URL=%s\n' "$PANEL_URL" >> "$WORK/agent.env"; fi
 install -m 600 "$WORK/agent.env" "$ENV_FILE"
 cat > "$WORK/agent.service" <<UNIT
 [Unit]
