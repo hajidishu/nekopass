@@ -19,7 +19,7 @@ async function update(){busy.value=true;try{await api(`admin/nodes/${id}/ddns/ru
 <template>
  <PageShell :me="me" :loading="loading" :error="error" active="nodes" admin>
   <div class="managed-rules-heading"><a class="back-link" href="/admin/nodes">← 返回节点管理</a><span>{{data?.node_name}} · DDNS</span></div>
-  <nav class="admin-resource-tabs"><a href="/admin/nodes">节点管理</a><a :href="`/admin/nodes/${id}/protocols`">传输协议</a><a :href="`/admin/nodes/${id}/ddns`" class="active">DDNS</a></nav>
+  <nav class="admin-resource-tabs"><a href="/admin/nodes">节点管理</a><a :href="`/admin/nodes/${id}/ddns`" class="active">DDNS</a></nav>
   <section class="surface"><div class="section-header"><strong>DDNS 设置</strong><el-button type="primary" :loading="busy" @click="save">保存并下发</el-button></div>
    <div class="section-body settings-form">
     <el-alert v-if="data && data.protocol_version<8" title="此节点需要升级到 Agent v0.9.0 或以上才能运行 DDNS。" type="warning" :closable="false"/>

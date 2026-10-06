@@ -7,7 +7,7 @@ write_manager_payload() { return 1; }
 write_updater_payload() { return 1; }
 # PACKAGED_UPDATER
 DEFAULT_DOWNLOAD_BASE='https://github.com/hajidishu/nekopass/releases/download'
-RELEASE_VERSION='v0.14.4'; DOWNLOAD_BASE=$DEFAULT_DOWNLOAD_BASE; PACKAGE_URL=''; PACKAGE=''; SOURCE_DIR=''
+RELEASE_VERSION='v0.14.5'; DOWNLOAD_BASE=$DEFAULT_DOWNLOAD_BASE; PACKAGE_URL=''; PACKAGE=''; SOURCE_DIR=''
 SERVICE='nekopass'; HOST=''; AGENT_HOST=''; AGENT_PORT=''; HTTP_PORT=8080; GRPC_PORT=9443; DB_PORT=''; PG_VERSION=''
 PG_SOURCE=system; ADMIN=admin; SITE=Nekopass; TLS_MODE=plain; TLS_CERT=''; TLS_KEY=''
 AGENT_INSTALLER='https://github.com/hajidishu/nekopass/releases/latest/download/install-agent.sh'; AGENT_RELEASES='https://github.com/hajidishu/nekopass/releases/download'; FIREWALL=auto; YES=0; SKIP_DEPS=0; DRY_RUN=0; WORK=''
@@ -25,7 +25,7 @@ Nekopass 面板一键安装（Debian/Ubuntu，原生 systemd，以 root 执行�
   --package-url URL        直接下载 HTTPS 发布包
   --download-base URL      HTTPS 版本下载根地址
   --source-dir PATH        已编译的源码目录（dist/bin + web/dist）
-  --version VERSION        默认 v0.14.4
+  --version VERSION        默认 v0.14.5
   --host HOST              用户/节点能访问的域名或 IP，不含协议
   --http-port PORT         网页 HTTP 端口，默认 8080
   --grpc-port PORT         节点连接端口，默认 9443
