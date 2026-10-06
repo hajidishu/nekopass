@@ -24,12 +24,14 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
 <el-switch v-model="nodeForm.tunnel_exit_enabled" @change="exitChanged" />
     </el-form-item>
     <el-form-item label="出口传输协议">
-    <el-select v-model="nodeForm.tunnel_protocol">
-    <el-option label="明文 TCP" value="plain_tcp" />
-    <el-option label="tls+h2" value="tls_h2" />
+    <el-select v-model="nodeForm.tunnel_transport">
+    <el-option label="raw(tcp)" value="raw_tcp" />
+    <el-option label="h2" value="h2" />
     </el-select>
     <span class="field-tip">节点作为出口时使用此协议；作为入口时按规则所选出口的协议连接。</span>
     </el-form-item>
+    <el-form-item label="安全性"><el-select v-model="nodeForm.tunnel_security"><el-option label="不加密" value="none"/><el-option label="TLS" value="tls"/></el-select><span class="field-tip">与传输协议独立选择；不加密时数据以明文传输。</span></el-form-item>
+    <p v-if="nodeForm.tunnel_transport==='raw_tcp'&&nodeForm.tunnel_security==='tls'||nodeForm.tunnel_transport==='h2'&&nodeForm.tunnel_security==='none'" class="field-tip">此组合需要入口和出口均升级至 v0.15.0 或以上；旧版节点升级前不会启用此组合。</p>
     <template v-if="nodeForm.tunnel_exit_enabled">
     <div class="form-grid">
     <el-form-item label="隧道对外地址">
@@ -41,8 +43,12 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
     <el-form-item label="出口监听端口">
     <el-input-number v-model="nodeForm.tunnel_listen_port" :min="1" :max="65535" />
     </el-form-item>
+    <el-form-item label="公网隧道端口">
+    <el-input-number v-model="nodeForm.tls.public_port" :min="0" :max="65535" />
+    <span class="field-tip">0 使用监听端口；支持 NAT / TCP 透传。</span>
+    </el-form-item>
     </div>
-    <template v-if="nodeForm.tunnel_protocol==='tls_h2'">
+    <template v-if="nodeForm.tunnel_security==='tls'">
     <div class="form-section-title">连接此出口的 TLS 参数</div>
     <p class="field-tip">所有入口连接此出口时使用以下设置。</p>
     <div class="form-grid">
@@ -56,20 +62,18 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
     <el-form-item label="连接 SNI（可选）">
     <el-input v-model="nodeForm.tls.client_sni" placeholder="留空使用本出口的证书域名"/>
     </el-form-item>
-    <el-form-item label="每入口 TLS 连接池上限">
+    </div><div v-if="nodeForm.tunnel_transport==='h2'" class="form-grid">
+    <el-form-item label="每入口 TLS 连接池上限" v-if="nodeForm.tunnel_transport==='h2'">
     <el-input-number v-model="nodeForm.tls.pool_size" :min="1" :max="8"/>
     </el-form-item>
     </div>
-    <div class="form-section-title">tls+h2 出口</div>
-    <p class="field-tip">新增回退行为需出口 v0.14.1 或更新版本。Host、路径或认证不匹配时执行下方 Fallback 配置。</p>
+    <div class="form-section-title">证书与安全设置</div>
+    <p v-if="nodeForm.tunnel_transport==='h2'" class="field-tip">Host、路径或认证不匹配时执行下方 Fallback 配置。</p>
     <div class="form-grid">
     <el-form-item label="证书域名 / SNI">
     <el-input v-model="nodeForm.tls.server_name" placeholder="你拥有的域名" />
     </el-form-item>
-    <el-form-item label="公网隧道端口">
-    <el-input-number v-model="nodeForm.tls.public_port" :min="0" :max="65535" />
-    <span class="field-tip">0 使用监听端口；支持 NAT / TCP 透传。</span>
-    </el-form-item>
+
     <el-form-item label="证书模式">
     <el-select v-model="nodeForm.tls.certificate_mode">
     <el-option label="自签名（自动生成并下发信任）" value="self_signed"/>
@@ -78,19 +82,19 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
     <el-option label="HTTP 自动申请 / 续期" value="acme_http"/>
     </el-select>
     </el-form-item>
-    <el-form-item label="HTTP Path">
+    <el-form-item v-if="nodeForm.tunnel_transport==='h2'" label="HTTP Path">
     <el-input v-model="nodeForm.tls.path"/>
     </el-form-item>
-    <el-form-item label="HTTP Host">
+    <el-form-item v-if="nodeForm.tunnel_transport==='h2'" label="HTTP Host">
     <el-input v-model="nodeForm.tls.host" placeholder="留空使用证书域名，可带端口" />
     </el-form-item>
     </div>
-    <div class="form-section-title">未认证访问 / Fallback</div>
+    <template v-if="nodeForm.tunnel_transport==='h2'"><div class="form-section-title">未认证访问 / Fallback</div>
     <el-form-item label="Fallback 网站地址">
     <el-input v-model="nodeForm.tls.fallback_url" placeholder="https://www.example.com（留空返回普通 404）" />
     <span class="field-tip">用于出口节点：未通过认证的请求反向代理到此网站。网站不可用或留空时返回普通 404；HTTPS 网站还可接管部分握手早期失败的连接。</span>
     </el-form-item>
-    <template v-if="nodeForm.tls.certificate_mode==='import'">
+    </template><template v-if="nodeForm.tls.certificate_mode==='import'">
     <el-form-item label="证书链 PEM">
     <el-input v-model="nodeForm.tls.certificate" type="textarea" :rows="4"/>
     </el-form-item>
@@ -133,7 +137,8 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
     <span class="field-tip">Cloudflare：api_token、可选 zone_token；阿里 DNS：access_key_id、access_key_secret；DNSPod：login_token。</span>
     </el-form-item>
     </template>
-    <div class="form-section-title">HTTP2 流控</div>
+    </template><template v-if="nodeForm.tunnel_transport==='h2'"><div class="form-section-title">HTTP2 传输设置</div>
+    <template v-if="nodeForm.tunnel_security==='none'"><div class="form-grid"><el-form-item label="HTTP Path"><el-input v-model="nodeForm.tls.path"/></el-form-item><el-form-item label="HTTP Host"><el-input v-model="nodeForm.tls.host" placeholder="留空使用出口地址"/></el-form-item><el-form-item label="连接池上限"><el-input-number v-model="nodeForm.tls.pool_size" :min="1" :max="8"/></el-form-item></div><el-form-item label="Fallback 网站地址"><el-input v-model="nodeForm.tls.fallback_url" placeholder="留空返回普通 404"/></el-form-item></template>
     <p class="field-tip">参数按此出口下发给连接它的入口；每流窗口用于接收此出口的数据，连接总窗口同时用于出口接收。出口 SETTINGS 使用普通默认值，业务流上限在认证后生效。</p>
     <div class="form-grid">
     <el-form-item label="每流接收窗口 / MiB">
@@ -142,7 +147,7 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
     <el-form-item label="每连接接收窗口 / MiB">
     <el-input-number v-model="nodeForm.tls.connection_window_mib" :min="nodeForm.tls.stream_window_mib" :max="256"/>
     </el-form-item>
-    <el-form-item label="每 TLS 连接并发流">
+    <el-form-item label="每连接并发流">
     <el-input-number v-model="nodeForm.tls.max_streams" :min="1" :max="1024"/>
     </el-form-item>
     </div>

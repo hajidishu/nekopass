@@ -19,6 +19,7 @@ import (
 	"time"
 
 	pb "github.com/nekopass/nekopass/internal/protocol"
+	"github.com/nekopass/nekopass/internal/tunnel"
 	"golang.org/x/net/http2"
 )
 
@@ -65,12 +66,12 @@ func newH2Transport() *h2Transport { return &h2Transport{pools: map[string]*h2Po
 func h2PoolKey(rule *pb.Rule) string {
 	encoded, _ := json.Marshal(rule.Tls)
 	sum := sha256.Sum256(encoded)
-	return net.JoinHostPort(rule.TunnelHost, strconv.Itoa(int(rule.TunnelPort))) + hex.EncodeToString(sum[:])
+	return rule.TunnelProtocol + net.JoinHostPort(rule.TunnelHost, strconv.Itoa(int(rule.TunnelPort))) + hex.EncodeToString(sum[:])
 }
 func (t *h2Transport) Prune(rules []*pb.Rule) {
 	wanted := map[string]bool{}
 	for _, rule := range rules {
-		if rule.TunnelProtocol == "tls_h2" && rule.Tls != nil {
+		if tunnel.H2(rule.TunnelProtocol) && rule.Tls != nil {
 			wanted[h2PoolKey(rule)] = true
 		}
 	}
@@ -105,7 +106,7 @@ func (t *h2Transport) Close() {
 
 func (t *h2Transport) Dial(dialCtx, lifetime context.Context, rule *pb.Rule, target string) (net.Conn, error) {
 	cfg := rule.Tls
-	if cfg == nil || cfg.ServerName == "" || cfg.Path == "" || len(rule.TunnelToken) != 64 {
+	if cfg == nil || tunnel.TLS(rule.TunnelProtocol) && cfg.ServerName == "" || cfg.Path == "" || len(rule.TunnelToken) != 64 {
 		return nil, errors.New("TLS tunnel configuration unavailable")
 	}
 	key := h2PoolKey(rule)
@@ -129,9 +130,17 @@ func (t *h2Transport) Dial(dialCtx, lifetime context.Context, rule *pb.Rule, tar
 	r, w := io.Pipe()
 	host := cfg.Host
 	if host == "" {
-		host = net.JoinHostPort(cfg.ServerName, strconv.Itoa(int(rule.TunnelPort)))
+		name := cfg.ServerName
+		if name == "" {
+			name = rule.TunnelHost
+		}
+		host = net.JoinHostPort(name, strconv.Itoa(int(rule.TunnelPort)))
 	}
-	request, err := http.NewRequestWithContext(ctx, "POST", "https://"+host+cfg.Path, r)
+	scheme := "http://"
+	if tunnel.TLS(rule.TunnelProtocol) {
+		scheme = "https://"
+	}
+	request, err := http.NewRequestWithContext(ctx, "POST", scheme+host+cfg.Path, r)
 	if err != nil {
 		cancel()
 		r.Close()
@@ -168,7 +177,7 @@ func (t *h2Transport) Dial(dialCtx, lifetime context.Context, rule *pb.Rule, tar
 			w.Close()
 			return nil, result.err
 		}
-		if result.r.StatusCode != http.StatusOK || (cfg.RequireResponseProof && !hmac.Equal([]byte(result.r.Header.Get("X-Stream-Reply")), []byte(h2ResponseProof(rule.TunnelToken, peer.exporter, metadata)))) {
+		if result.r.StatusCode != http.StatusOK || ((cfg.RequireResponseProof || !tunnel.TLS(rule.TunnelProtocol)) && !hmac.Equal([]byte(result.r.Header.Get("X-Stream-Reply")), []byte(h2ResponseProof(rule.TunnelToken, peer.exporter, metadata)))) {
 			result.r.Body.Close()
 			cancel()
 			r.Close()
@@ -249,7 +258,7 @@ func dialH2Peer(ctx context.Context, rule *pb.Rule) (*h2Peer, error) {
 	if err != nil {
 		roots = x509.NewCertPool()
 	}
-	if cfg.RootCa != "" && !roots.AppendCertsFromPEM([]byte(cfg.RootCa)) {
+	if tunnel.TLS(rule.TunnelProtocol) && cfg.RootCa != "" && !roots.AppendCertsFromPEM([]byte(cfg.RootCa)) {
 		return nil, errors.New("invalid TLS tunnel trust certificate")
 	}
 	d := net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
@@ -257,9 +266,13 @@ func dialH2Peer(ctx context.Context, rule *pb.Rule) (*h2Peer, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, exporter, err := dialTunnelTLS(ctx, raw, cfg, roots)
-	if err != nil {
-		return nil, err
+	var conn net.Conn = raw
+	var exporter []byte
+	if tunnel.TLS(rule.TunnelProtocol) {
+		conn, exporter, err = dialTunnelTLS(ctx, raw, cfg, roots)
+		if err != nil {
+			return nil, err
+		}
 	}
 	stream, connection := cfg.StreamWindowMib, cfg.ConnectionWindowMib
 	if stream < 1 || stream > 64 || connection < stream || connection > 256 {
@@ -276,6 +289,14 @@ func dialH2Peer(ctx context.Context, rule *pb.Rule) (*h2Peer, error) {
 	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("HTTP/2 setup: %w", err)
+	}
+	if !tunnel.TLS(rule.TunnelProtocol) {
+		exporter, err = requestH2Binding(ctx, cc, rule)
+		if err != nil {
+			cc.Close()
+			conn.Close()
+			return nil, err
+		}
 	}
 	return &h2Peer{cc: cc, conn: conn, exporter: exporter}, nil
 }

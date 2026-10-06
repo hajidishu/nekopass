@@ -10,6 +10,7 @@ import (
 	"time"
 
 	pb "github.com/nekopass/nekopass/internal/protocol"
+	"github.com/nekopass/nekopass/internal/tunnel"
 	"golang.org/x/time/rate"
 )
 
@@ -117,7 +118,7 @@ func (r *ruleRuntime) dial(ctx context.Context) (net.Conn, func(), error) {
 		if r.policy.EgressNodeId == 0 {
 			c, e = d.DialContext(dialCtx, "tcp", r.targets[i])
 		} else {
-			if r.policy.TunnelProtocol == "tls_h2" {
+			if tunnel.H2(r.policy.TunnelProtocol) {
 				if r.h2 == nil {
 					return nil, nil, errors.New("TLS transport unavailable")
 				}

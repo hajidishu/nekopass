@@ -12,13 +12,21 @@ import (
 )
 
 func dialTunnelTLS(ctx context.Context, raw net.Conn, cfg *pb.TLSClientConfig, roots *x509.CertPool) (net.Conn, []byte, error) {
+	return dialTunnelTLSProtocol(ctx, raw, cfg, roots, true)
+}
+
+func dialTunnelTLSProtocol(ctx context.Context, raw net.Conn, cfg *pb.TLSClientConfig, roots *x509.CertPool, h2 bool) (net.Conn, []byte, error) {
+	protocols := []string{"h2"}
+	if !h2 {
+		protocols = []string{"http/1.1"}
+	}
 	var conn net.Conn
 	var version uint16
 	var alpn string
 	var exporter []byte
 	var err error
 	if cfg.Fingerprint == "" || cfg.Fingerprint == "off" {
-		c := tls.Client(raw, &tls.Config{RootCAs: roots, ServerName: cfg.ServerName, MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, NextProtos: []string{"h2"}})
+		c := tls.Client(raw, &tls.Config{RootCAs: roots, ServerName: cfg.ServerName, MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, NextProtos: protocols})
 		conn = c
 		if err = c.HandshakeContext(ctx); err == nil {
 			state := c.ConnectionState()
@@ -53,9 +61,9 @@ func dialTunnelTLS(ctx context.Context, raw net.Conn, cfg *pb.TLSClientConfig, r
 		conn.Close()
 		return nil, nil, err
 	}
-	if version != tls.VersionTLS13 || alpn != "h2" {
+	if version != tls.VersionTLS13 || h2 && alpn != "h2" || !h2 && alpn != "" && alpn != "http/1.1" {
 		conn.Close()
-		return nil, nil, errors.New("TLS 1.3 and h2 must be negotiated")
+		return nil, nil, errors.New("TLS version or negotiated transport mismatch")
 	}
 	return conn, exporter, nil
 }

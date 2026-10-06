@@ -16,14 +16,16 @@ import (
 	"time"
 
 	pb "github.com/nekopass/nekopass/internal/protocol"
+	"github.com/nekopass/nekopass/internal/tunnel"
 	"golang.org/x/net/http2"
 )
 
 type h2SessionKey struct{}
 type h2ServerSession struct {
-	mu     sync.Mutex
-	nonces map[string]bool
-	active int
+	binding []byte
+	mu      sync.Mutex
+	nonces  map[string]bool
+	active  int
 }
 
 func (s *h2ServerSession) reserve(limit int) bool {
@@ -48,6 +50,9 @@ func (s *h2ServerSession) take(nonce string) bool {
 }
 
 func (e *Engine) startH2Server(ctx context.Context, ln net.Listener, cfg *pb.TLSServerConfig) error {
+	if !tunnel.TLS(e.node.Load().TunnelProtocol) {
+		return e.startH2PlainServer(ctx, ln, cfg)
+	}
 	pair, err := tls.X509KeyPair([]byte(cfg.Certificate), []byte(cfg.PrivateKey))
 	if err != nil {
 		return err
@@ -86,15 +91,18 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := node.Tls
+	if !tunnel.TLS(node.TunnelProtocol) && r.Method == "HEAD" && e.handleH2Binding(w, r, node) {
+		return
+	}
 	expectedHost := cfg.Host
 	if expectedHost == "" {
 		expectedHost = cfg.ServerName
 	}
-	if r.URL.Path != cfg.Path || r.URL.RawQuery != "" || r.Method != "POST" || r.ProtoMajor != 2 || !camouflageHostMatches(r.Host, expectedHost) {
+	if r.URL.Path != cfg.Path || r.URL.RawQuery != "" || r.Method != "POST" || r.ProtoMajor != 2 || expectedHost != "" && !camouflageHostMatches(r.Host, expectedHost) {
 		e.camouflage(w, r)
 		return
 	}
-	if !node.Enabled || !node.TunnelExitEnabled || r.TLS == nil || r.TLS.Version != tls.VersionTLS13 || r.TLS.NegotiatedProtocol != "h2" {
+	if !node.Enabled || !node.TunnelExitEnabled || !tunnel.H2(node.TunnelProtocol) || tunnel.TLS(node.TunnelProtocol) && (r.TLS == nil || r.TLS.Version != tls.VersionTLS13 || r.TLS.NegotiatedProtocol != "h2") || !tunnel.TLS(node.TunnelProtocol) && r.TLS != nil {
 		e.camouflage(w, r)
 		return
 	}
@@ -130,7 +138,17 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proof := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	exporter, err := r.TLS.ExportKeyingMaterial(exporterLabel, nil, 32)
+	var exporter []byte
+	if tunnel.TLS(node.TunnelProtocol) {
+		exporter, err = r.TLS.ExportKeyingMaterial(exporterLabel, nil, 32)
+	} else {
+		session, ok := r.Context().Value(h2SessionKey{}).(*h2ServerSession)
+		if !ok || len(session.binding) != 32 {
+			e.camouflage(w, r)
+			return
+		}
+		exporter = session.binding
+	}
 	if err != nil || len(key) != 64 || len(proof) != 64 || !hmac.Equal([]byte(proof), []byte(h2Proof(key, exporter, metadata))) || !h2RuleAllowed(policy, open) {
 		e.camouflage(w, r)
 		return
@@ -160,6 +178,11 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer target.Close()
+	current, n := e.tunnelPolicy.Load(), e.node.Load()
+	if r.Context().Err() != nil || n == nil || !n.Enabled || !n.TunnelExitEnabled || n.TunnelProtocol != node.TunnelProtocol || current == nil || current.links[open.Ingress] != key || !h2RuleAllowed(current, open) {
+		e.camouflage(w, r)
+		return
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Stream-Reply", h2ResponseProof(key, exporter, metadata))
 	w.WriteHeader(200)

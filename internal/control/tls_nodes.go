@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	pb "github.com/nekopass/nekopass/internal/protocol"
+	"github.com/nekopass/nekopass/internal/tunnel"
 )
 
 func prepareNodeTLS(ctx context.Context, tx pgx.Tx, id int64, input *NodeInput) error {
@@ -32,13 +33,13 @@ func prepareNodeTLS(ctx context.Context, tx pgx.Tx, id int64, input *NodeInput) 
 	if input.TLS != nil {
 		cfg = *input.TLS
 	}
-	if cfg.ServerName == "" && input.TunnelProtocol == "tls_h2" && ValidTarget(input.TunnelPublicHost) {
+	if cfg.ServerName == "" && tunnel.TLS(input.TunnelProtocol) && ValidTarget(input.TunnelPublicHost) {
 		cfg.ServerName = input.TunnelPublicHost
 	}
 	if err := cfg.normalize(); err != nil {
 		return err
 	}
-	if input.TunnelProtocol == "tls_h2" && input.TunnelExitEnabled {
+	if tunnel.TLS(input.TunnelProtocol) && input.TunnelExitEnabled {
 		if cfg.ServerName == "" {
 			return errors.New("TLS 出口需要 SNI 域名")
 		}
@@ -111,6 +112,12 @@ func appendTLSControl(ctx context.Context, tx pgx.Tx, nodeID int64, out *pb.Cont
 	}
 	out.Node.Tls = &pb.TLSServerConfig{ServerName: client.ServerName, Certificate: cert, PrivateKey: key, Path: client.Path,
 		StreamWindowMib: int32(client.StreamWindowMiB), ConnectionWindowMib: int32(client.ConnectionWindowMiB), MaxStreams: int32(client.MaxStreams), ChallengePort: int32(client.HTTPChallengePort), SiteTitle: client.SiteTitle, Host: client.Host, FallbackUrl: client.FallbackURL}
+	if !tunnel.TLS(out.Node.TunnelProtocol) {
+		out.Node.Tls.Certificate = ""
+		out.Node.Tls.PrivateKey = ""
+		out.Node.Tls.ServerName = ""
+		out.Node.Tls.Challenges = nil
+	}
 	rows, err := tx.Query(ctx, "SELECT domain,token,key_authorization,revision,extract(epoch FROM expires_at)::bigint FROM node_acme_challenges WHERE node_id=$1 AND expires_at>now()", nodeID)
 	if err != nil {
 		return err
@@ -128,12 +135,20 @@ func appendTLSControl(ctx context.Context, tx pgx.Tx, nodeID int64, out *pb.Cont
 	if err != nil {
 		return err
 	}
-	cache := map[int64]*pb.TLSClientConfig{}
+	if !tunnel.TLS(out.Node.TunnelProtocol) {
+		out.Node.Tls.Challenges = nil
+	}
+	type peerKey struct {
+		node int64
+		mode string
+	}
+	cache := map[peerKey]*pb.TLSClientConfig{}
 	for _, rule := range out.Rules {
-		if rule.TunnelProtocol != "tls_h2" {
+		if rule.EgressNodeId == 0 {
 			continue
 		}
-		settings := cache[rule.EgressNodeId]
+		key := peerKey{rule.EgressNodeId, rule.TunnelProtocol}
+		settings := cache[key]
 		if settings == nil {
 			var cfgData []byte
 			var root string
@@ -158,7 +173,13 @@ func appendTLSControl(ctx context.Context, tx pgx.Tx, nodeID int64, out *pb.Cont
 			// Transport options belong to the selected exit. A dual-role node's
 			// own exit configuration must not affect its connections to other exits.
 			settings = &pb.TLSClientConfig{ServerName: sni, Fingerprint: exit.Fingerprint, RootCa: root, Path: exit.Path, Host: host, RequireResponseProof: true, PoolSize: int32(exit.PoolSize), StreamWindowMib: int32(exit.StreamWindowMiB), ConnectionWindowMib: int32(exit.ConnectionWindowMiB)}
-			cache[rule.EgressNodeId] = settings
+			if !tunnel.TLS(rule.TunnelProtocol) {
+				settings.RootCa = ""
+				settings.ServerName = ""
+				settings.Fingerprint = "off"
+				settings.Host = exit.Host
+			}
+			cache[key] = settings
 			if exit.PublicPort != 0 {
 				for _, candidate := range out.Rules {
 					if candidate.EgressNodeId == rule.EgressNodeId {
@@ -168,6 +189,9 @@ func appendTLSControl(ctx context.Context, tx pgx.Tx, nodeID int64, out *pb.Cont
 			}
 		}
 		rule.Tls = settings
+		if !tunnel.TLS(rule.TunnelProtocol) && !tunnel.H2(rule.TunnelProtocol) {
+			rule.Tls = nil
+		}
 	}
 	return nil
 }

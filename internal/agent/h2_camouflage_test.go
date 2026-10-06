@@ -138,6 +138,9 @@ func TestCamouflageProxyStripsProofAndCustomHostPathWorks(t *testing.T) {
 	client := probeHTTPClient(t, cfg.Node.Tls.Certificate, int(cfg.Node.TunnelListenPort), cfg.Node.Tls.ServerName, true)
 	r, _ := http.NewRequest("POST", "https://cdn.example.test/images/upload", strings.NewReader("probe"))
 	r.Header.Set("X-Stream", "private metadata")
+	r.Header.Set("X-Stream-Ingress", "123")
+	r.Header.Set("X-Stream-Nonce", "private nonce")
+	r.Header.Set("X-Stream-Binding", "private binding")
 	r.Header.Set("Authorization", "Bearer private proof")
 	response, e := client.Do(r)
 	if e != nil {
@@ -149,7 +152,7 @@ func TestCamouflageProxyStripsProofAndCustomHostPathWorks(t *testing.T) {
 		t.Fatal("unauthenticated request did not receive decoy", e)
 	}
 	head := <-requests
-	if head.Get("Authorization") != "" || head.Get("X-Stream") != "" {
+	if head.Get("Authorization") != "" || head.Get("X-Stream") != "" || head.Get("X-Stream-Ingress") != "" || head.Get("X-Stream-Nonce") != "" || head.Get("X-Stream-Binding") != "" {
 		t.Fatal("tunnel proof leaked to decoy")
 	}
 	bad := proto.Clone(rule).(*pb.Rule)

@@ -61,6 +61,9 @@ func (e *Engine) camouflage(w http.ResponseWriter, r *http.Request) {
 		p.Out.Header.Del("Authorization")
 		p.Out.Header.Del("Proxy-Authorization")
 		p.Out.Header.Del("X-Stream")
+		p.Out.Header.Del("X-Stream-Ingress")
+		p.Out.Header.Del("X-Stream-Nonce")
+		p.Out.Header.Del("X-Stream-Binding")
 	}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) { ordinary404(w, r) }}
 	proxy.ServeHTTP(w, r)
 }

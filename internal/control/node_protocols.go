@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/jackc/pgx/v5"
+	"github.com/nekopass/nekopass/internal/tunnel"
 	"net/http"
 )
 
@@ -13,6 +14,8 @@ type NodeProtocolsInput struct {
 	AllowDirect       bool             `json:"allow_direct"`
 	IngressEnabled    bool             `json:"ingress_enabled"`
 	TunnelExitEnabled bool             `json:"tunnel_exit_enabled"`
+	TunnelTransport   string           `json:"tunnel_transport"`
+	TunnelSecurity    string           `json:"tunnel_security"`
 	TunnelProtocol    string           `json:"tunnel_protocol"`
 	TunnelListenHost  string           `json:"tunnel_listen_host"`
 	TunnelListenPort  int              `json:"tunnel_listen_port"`
@@ -61,6 +64,7 @@ func loadNodeInput(ctx context.Context, db interface {
 		return v, hash, err
 	}
 	v.TLS = &cfg
+	v.TunnelTransport, v.TunnelSecurity = tunnel.Split(v.TunnelProtocol)
 	return v, hash, nil
 }
 

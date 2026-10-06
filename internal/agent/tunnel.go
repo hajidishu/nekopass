@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	pb "github.com/nekopass/nekopass/internal/protocol"
+	"github.com/nekopass/nekopass/internal/tunnel"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -47,7 +49,7 @@ func tunnelRuleAllowed(policy *tunnelPolicy, ruleID, ingress, userID, epoch int6
 func (e *Engine) plainTunnelAllowed(ruleID, ingress, userID, epoch int64, target, key string) bool {
 	node := e.node.Load()
 	policy := e.tunnelPolicy.Load()
-	return node != nil && node.Enabled && node.TunnelExitEnabled && node.TunnelProtocol == "plain_tcp" && policy != nil && policy.links[ingress] == key && tunnelRuleAllowed(policy, ruleID, ingress, userID, epoch, target)
+	return node != nil && node.Enabled && node.TunnelExitEnabled && tunnel.Raw(node.TunnelProtocol) && policy != nil && policy.links[ingress] == key && tunnelRuleAllowed(policy, ruleID, ingress, userID, epoch, target)
 }
 
 // Each connection carries one framed request and one response before raw TCP
@@ -70,7 +72,7 @@ func writeTunnelHello(conn net.Conn, rule *pb.Rule, target string) error {
 }
 
 func dialTunnel(ctx context.Context, rule *pb.Rule, target string) (net.Conn, error) {
-	if rule.TunnelProtocol != "plain_tcp" {
+	if !tunnel.Raw(rule.TunnelProtocol) {
 		return nil, errors.New("unsupported tunnel protocol")
 	}
 	if rule.TunnelHost == "" || rule.TunnelPort < 1 {
@@ -80,6 +82,24 @@ func dialTunnel(ctx context.Context, rule *pb.Rule, target string) (net.Conn, er
 	conn, e := d.DialContext(ctx, "tcp", net.JoinHostPort(rule.TunnelHost, strconv.Itoa(int(rule.TunnelPort))))
 	if e != nil {
 		return nil, e
+	}
+	if tunnel.TLS(rule.TunnelProtocol) {
+		if rule.Tls == nil || rule.Tls.ServerName == "" {
+			conn.Close()
+			return nil, errors.New("TLS configuration unavailable")
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			roots = x509.NewCertPool()
+		}
+		if rule.Tls.RootCa != "" && !roots.AppendCertsFromPEM([]byte(rule.Tls.RootCa)) {
+			conn.Close()
+			return nil, errors.New("invalid TLS trust certificate")
+		}
+		conn, _, e = dialTunnelTLSProtocol(ctx, conn, rule.Tls, roots, false)
+		if e != nil {
+			return nil, e
+		}
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
@@ -119,7 +139,7 @@ func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
 	if e.tunnel != nil {
 		old := e.tunnel.config
 		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && old.Node != nil && old.Node.TunnelExitEnabled && old.Node.TunnelProtocol == c.Node.TunnelProtocol && old.Node.TunnelListenHost == c.Node.TunnelListenHost && old.Node.TunnelListenPort == c.Node.TunnelListenPort && sameH2Listener(old.Node.Tls, c.Node.Tls) {
-			if c.Node.TunnelProtocol == "tls_h2" {
+			if tunnel.TLS(c.Node.TunnelProtocol) {
 				pair, err := tls.X509KeyPair([]byte(c.Node.Tls.Certificate), []byte(c.Node.Tls.PrivateKey))
 				if err != nil {
 					return errors.New("TLS certificate update invalid")
@@ -137,14 +157,17 @@ func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
 	if c.Node == nil || !c.Node.Enabled || !c.Node.TunnelExitEnabled {
 		return nil
 	}
-	if c.Node.TunnelProtocol != "plain_tcp" && c.Node.TunnelProtocol != "tls_h2" {
+	if !tunnel.Valid(c.Node.TunnelProtocol) {
 		return errors.New("unsupported tunnel protocol")
 	}
 	if c.Node.TunnelListenPort < 1 || c.Node.TunnelListenPort > 65535 {
 		return errors.New("invalid tunnel listen port")
 	}
+	if (tunnel.H2(c.Node.TunnelProtocol) || tunnel.TLS(c.Node.TunnelProtocol)) && c.Node.Tls == nil {
+		return errors.New("tunnel transport configuration not synchronized")
+	}
 	address := net.JoinHostPort(c.Node.TunnelListenHost, strconv.Itoa(int(c.Node.TunnelListenPort)))
-	if c.Node.TunnelProtocol == "tls_h2" {
+	if tunnel.TLS(c.Node.TunnelProtocol) {
 		if c.Node.Tls == nil {
 			return errors.New("TLS configuration not synchronized")
 		}
@@ -159,7 +182,7 @@ func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	e.tunnel = &tunnelListener{ln: ln, cancel: cancel, config: proto.Clone(c).(*pb.ControlMessage)}
 	e.tunnelPolicy.Store(policyOf(c))
-	if c.Node.TunnelProtocol == "tls_h2" {
+	if tunnel.H2(c.Node.TunnelProtocol) {
 		if err := e.startH2Server(ctx, ln, c.Node.Tls); err != nil {
 			cancel()
 			ln.Close()
@@ -167,6 +190,12 @@ func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
 			return err
 		}
 		return nil
+	}
+	if tunnel.TLS(c.Node.TunnelProtocol) {
+		settings := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return e.h2Certificate.Load(), nil }}
+		pair, _ := tls.X509KeyPair([]byte(c.Node.Tls.Certificate), []byte(c.Node.Tls.PrivateKey))
+		e.h2Certificate.Store(&pair)
+		ln = tls.NewListener(ln, settings)
 	}
 	e.wg.Add(1)
 	go e.acceptTunnel(ctx, ln)
@@ -283,7 +312,7 @@ func (e *Engine) handleTunnel(ctx context.Context, upstream net.Conn) {
 	}()
 	go func() {
 		_, err := io.Copy(upstream, targetConn)
-		if tcp, ok := upstream.(*net.TCPConn); ok {
+		if tcp, ok := upstream.(interface{ CloseWrite() error }); ok {
 			_ = tcp.CloseWrite()
 		}
 		finished <- err

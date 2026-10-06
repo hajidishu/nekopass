@@ -22,8 +22,10 @@ async function load(){
 }
 const {me,loading,error}=usePage(load,{admin:true})
 async function save(){
- let credentials:Record<string,string>
- try{credentials=JSON.parse(dnsJSON.value);if(!credentials||typeof credentials!=='object'||Array.isArray(credentials))throw Error()}catch{ElMessage.error('DNS 凭据须为 JSON 对象');return}
+ let credentials=nodeForm.tls.dns_credentials
+ if(nodeForm.tunnel_security==='tls'&&nodeForm.tls.certificate_mode==='acme_dns'){
+  try{credentials=JSON.parse(dnsJSON.value);if(!credentials||typeof credentials!=='object'||Array.isArray(credentials))throw Error()}catch{ElMessage.error('DNS 凭据须为 JSON 对象');return}
+ }
  busy.value=true
  try{nodeForm.tls.dns_credentials=credentials;await api(`admin/nodes/${editID}/protocols`,'PUT',nodeForm);await load();ElMessage.success('入口、出口与传输协议配置已保存并下发')}catch(e){ElMessage.error((e as Error).message)}finally{busy.value=false}
 }

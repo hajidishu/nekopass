@@ -30,8 +30,10 @@ watch(()=>props.modelValue,async open=>{
  finally{if(current===generation)loading.value=false}
 })
 async function save(){
- let credentials:Record<string,string>
- try{credentials=JSON.parse(dnsJSON.value);if(!credentials||typeof credentials!=='object'||Array.isArray(credentials))throw Error()}catch{ElMessage.error('DNS 凭据须为 JSON 对象');return}
+ let credentials=form.tls.dns_credentials
+ if(form.tunnel_security==='tls'&&form.tls.certificate_mode==='acme_dns'){
+  try{credentials=JSON.parse(dnsJSON.value);if(!credentials||typeof credentials!=='object'||Array.isArray(credentials))throw Error()}catch{ElMessage.error('DNS 凭据须为 JSON 对象');return}
+ }
  saving.value=true
  try{
   form.tls.dns_credentials=credentials

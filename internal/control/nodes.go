@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/jackc/pgx/v5"
 	"github.com/nekopass/nekopass/internal/store"
+	"github.com/nekopass/nekopass/internal/tunnel"
 	"net"
 	"net/http"
 	"path"
@@ -33,6 +34,8 @@ type NodeInput struct {
 	AllowDirect          bool             `json:"allow_direct"`
 	IngressEnabled       bool             `json:"ingress_enabled"`
 	TunnelExitEnabled    bool             `json:"tunnel_exit_enabled"`
+	TunnelTransport      string           `json:"tunnel_transport"`
+	TunnelSecurity       string           `json:"tunnel_security"`
 	TunnelProtocol       string           `json:"tunnel_protocol"`
 	TunnelListenHost     string           `json:"tunnel_listen_host"`
 	TunnelListenPort     int              `json:"tunnel_listen_port"`
@@ -48,7 +51,7 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
 		return
 	}
-	rows, e := s.Pool.Query(r.Context(), `SELECT n.id,n.name,n.agent_version,n.update_supported,(SELECT jsonb_build_object('generation',u.generation,'version',u.version,'state',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN 'unconfirmed' ELSE u.state END,'error',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN '超过 15 分钟未收到更新结果，请检查节点连接及更新日志' ELSE u.error END,'requested_at',u.requested_at,'updated_at',u.updated_at) FROM node_updates u WHERE u.node_id=n.id) AS update_status,n.token,(n.instance_id<>'') AS bound,n.public_address,n.notes,n.enabled,n.listen_host,n.port_min,n.port_max,n.max_connections,n.dial_timeout_seconds,n.idle_timeout_seconds,n.probe_interval_seconds,n.disk_path,n.network_interfaces,n.ingress_enabled,n.allow_direct,n.tunnel_exit_enabled,n.tunnel_protocol,n.tls_config AS tls,n.tls_status,n.tls_error,n.tls_not_after,n.protocol_version,n.tunnel_listen_host,n.tunnel_listen_port,n.tunnel_public_host,n.last_seen,n.applied_revision,n.config_revision,n.sync_error,n.active_connections,n.probe,n.probe_received_at,COALESCE(n.last_seen>now()-interval '12 seconds',false) AS online,COALESCE((SELECT array_agg(group_id ORDER BY group_id) FROM node_group_members WHERE node_id=n.id),'{}') AS group_ids,COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}') AS allowed_ingress_ids,(SELECT count(*) FROM rules WHERE node_id=n.id) AS rule_count FROM nodes n ORDER BY n.id`)
+	rows, e := s.Pool.Query(r.Context(), `SELECT n.id,n.name,n.agent_version,n.update_supported,(SELECT jsonb_build_object('generation',u.generation,'version',u.version,'state',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN 'unconfirmed' ELSE u.state END,'error',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN '超过 15 分钟未收到更新结果，请检查节点连接及更新日志' ELSE u.error END,'requested_at',u.requested_at,'updated_at',u.updated_at) FROM node_updates u WHERE u.node_id=n.id) AS update_status,n.token,(n.instance_id<>'') AS bound,n.public_address,n.notes,n.enabled,n.listen_host,n.port_min,n.port_max,n.max_connections,n.dial_timeout_seconds,n.idle_timeout_seconds,n.probe_interval_seconds,n.disk_path,n.network_interfaces,n.ingress_enabled,n.allow_direct,n.tunnel_exit_enabled,n.tunnel_protocol,CASE WHEN n.tunnel_protocol IN ('plain_h2','tls_h2') THEN 'h2' ELSE 'raw_tcp' END AS tunnel_transport,CASE WHEN n.tunnel_protocol IN ('tls_tcp','tls_h2') THEN 'tls' ELSE 'none' END AS tunnel_security,n.tls_config AS tls,n.tls_status,n.tls_error,n.tls_not_after,n.protocol_version,n.tunnel_listen_host,n.tunnel_listen_port,n.tunnel_public_host,n.last_seen,n.applied_revision,n.config_revision,n.sync_error,n.active_connections,n.probe,n.probe_received_at,COALESCE(n.last_seen>now()-interval '12 seconds',false) AS online,COALESCE((SELECT array_agg(group_id ORDER BY group_id) FROM node_group_members WHERE node_id=n.id),'{}') AS group_ids,COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}') AS allowed_ingress_ids,(SELECT count(*) FROM rules WHERE node_id=n.id) AS rule_count FROM nodes n ORDER BY n.id`)
 	s.sendRows(w, rows, e)
 }
 func (s *Server) saveNode(w http.ResponseWriter, r *http.Request) { s.saveNodePart(w, r, "full") }
@@ -107,6 +110,14 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 			return
 		}
 	}
+	if v.TunnelTransport != "" || v.TunnelSecurity != "" {
+		v.TunnelProtocol, e = tunnel.Compose(v.TunnelTransport, v.TunnelSecurity)
+		if e != nil {
+			fail(w, 400, "传输协议或安全性无效")
+			return
+		}
+	}
+	v.TunnelTransport, v.TunnelSecurity = tunnel.Split(v.TunnelProtocol)
 	v.Name = strings.TrimSpace(v.Name)
 	if v.Token != "" && !validNodeToken(v.Token) {
 		fail(w, 400, "节点密钥须为 8–128 位英文字母、数字、下划线或连字符")
@@ -115,7 +126,7 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 	if v.AllowedIngressIDs == nil {
 		v.AllowedIngressIDs = []int64{}
 	}
-	if v.Name == "" || len(v.Name) > 80 || len(v.Notes) > 4000 || (v.PublicAddress != "" && !ValidTarget(v.PublicAddress)) || net.ParseIP(v.ListenHost) == nil || v.PortMin < 1024 || v.PortMax > 65535 || v.PortMin > v.PortMax || v.MaxConnections < 0 || v.MaxConnections > 1000000 || v.DialTimeoutSeconds < 1 || v.DialTimeoutSeconds > 120 || v.IdleTimeoutSeconds < 10 || v.IdleTimeoutSeconds > 86400 || v.ProbeIntervalSeconds < 2 || v.ProbeIntervalSeconds > 60 || !path.IsAbs(v.DiskPath) || len(v.DiskPath) > 512 || len(v.NetworkInterfaces) > 32 || len(v.GroupIDs) > 1000 || len(v.AllowedIngressIDs) > 1000 || (v.TunnelProtocol != "plain_tcp" && v.TunnelProtocol != "tls_h2") || net.ParseIP(v.TunnelListenHost) == nil || (v.TunnelListenPort != 0 && (v.TunnelListenPort < 1 || v.TunnelListenPort > 65535)) || (v.TunnelPublicHost != "" && !ValidTarget(v.TunnelPublicHost)) || (v.TunnelExitEnabled && (v.TunnelListenPort == 0 || v.TunnelPublicHost == "")) || (!v.TunnelExitEnabled && len(v.AllowedIngressIDs) > 0) {
+	if v.Name == "" || len(v.Name) > 80 || len(v.Notes) > 4000 || (v.PublicAddress != "" && !ValidTarget(v.PublicAddress)) || net.ParseIP(v.ListenHost) == nil || v.PortMin < 1024 || v.PortMax > 65535 || v.PortMin > v.PortMax || v.MaxConnections < 0 || v.MaxConnections > 1000000 || v.DialTimeoutSeconds < 1 || v.DialTimeoutSeconds > 120 || v.IdleTimeoutSeconds < 10 || v.IdleTimeoutSeconds > 86400 || v.ProbeIntervalSeconds < 2 || v.ProbeIntervalSeconds > 60 || !path.IsAbs(v.DiskPath) || len(v.DiskPath) > 512 || len(v.NetworkInterfaces) > 32 || len(v.GroupIDs) > 1000 || len(v.AllowedIngressIDs) > 1000 || !tunnel.Valid(v.TunnelProtocol) || net.ParseIP(v.TunnelListenHost) == nil || (v.TunnelListenPort != 0 && (v.TunnelListenPort < 1 || v.TunnelListenPort > 65535)) || (v.TunnelPublicHost != "" && !ValidTarget(v.TunnelPublicHost)) || (v.TunnelExitEnabled && (v.TunnelListenPort == 0 || v.TunnelPublicHost == "")) || (!v.TunnelExitEnabled && len(v.AllowedIngressIDs) > 0) {
 		fail(w, 400, "节点配置参数无效")
 		return
 	}

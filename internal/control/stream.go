@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	pb "github.com/nekopass/nekopass/internal/protocol"
+	"github.com/nekopass/nekopass/internal/tunnel"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -356,7 +357,7 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 	}
 	tlsVersions := map[int64]int{}
 	for _, rule := range out.Rules {
-		if rule.TunnelProtocol == "tls_h2" {
+		if rule.EgressNodeId != 0 {
 			version, known := tlsVersions[rule.EgressNodeId]
 			if !known {
 				if e = tx.QueryRow(ctx, "SELECT protocol_version FROM nodes WHERE id=$1", rule.EgressNodeId).Scan(&version); e != nil {
@@ -364,10 +365,15 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 				}
 				tlsVersions[rule.EgressNodeId] = version
 			}
-			if r.ProtocolVersion < 11 || version < 11 {
+			if r.ProtocolVersion < int32(tunnel.MinimumVersion(rule.TunnelProtocol)) || version < tunnel.MinimumVersion(rule.TunnelProtocol) {
 				rule.Enabled = false
 			}
 		}
+	}
+	if out.Node.TunnelExitEnabled && (out.Node.TunnelProtocol == "tls_tcp" || out.Node.TunnelProtocol == "plain_h2") && r.ProtocolVersion < 13 {
+		out.Node.TunnelExitEnabled = false
+		out.TunnelLinks = nil
+		out.EgressRules = nil
 	}
 	if e = appendDDNSControl(ctx, tx, nodeID, out); e != nil {
 		return nil, e

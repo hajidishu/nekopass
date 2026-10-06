@@ -844,7 +844,9 @@ components:
         ingress_enabled: {type: boolean}
         allow_direct: {type: boolean}
         tunnel_exit_enabled: {type: boolean}
-        tunnel_protocol: {type: string, enum: [plain_tcp, tls_h2], description: Egress transport; ingress client settings are independent}
+        tunnel_transport: {type: string, enum: [raw_tcp, h2], description: Egress transport independent of encryption}
+        tunnel_security: {type: string, enum: [none, tls], description: Egress security independent of transport}
+        tunnel_protocol: {type: string, enum: [plain_tcp, tls_tcp, plain_h2, tls_h2], description: Legacy combination encoding; prefer tunnel_transport and tunnel_security}
         tunnel_listen_host: {type: string}
         tunnel_listen_port: {type: integer, minimum: 0, maximum: 65535}
         tunnel_public_host: {type: string}
@@ -972,7 +974,9 @@ components:
         allow_direct: {type: boolean, default: true, description: Whether users may select direct forwarding on this ingress}
         ingress_enabled: {type: boolean, default: true, description: Whether this node may be used as an ingress; false still allows exit functionality}
         tunnel_exit_enabled: {type: boolean, default: false}
-        tunnel_protocol: {type: string, enum: [plain_tcp, tls_h2], default: plain_tcp, description: TLS HTTP2 requires Agent protocol 7}
+        tunnel_transport: {type: string, enum: [raw_tcp, h2], description: Egress transport independent of encryption}
+        tunnel_security: {type: string, enum: [none, tls], description: Egress security independent of transport}
+        tunnel_protocol: {type: string, enum: [plain_tcp, tls_tcp, plain_h2, tls_h2], default: plain_tcp, description: Legacy combination encoding; tls_tcp and plain_h2 require Agent protocol 13}
         tunnel_listen_host: {type: string, default: '0.0.0.0'}
         tunnel_listen_port: {type: integer, minimum: 0, maximum: 65535, description: Required at 1–65535 when tunnel_exit_enabled; low ports need native service bind capability}
         tls: {$ref: '#/components/schemas/TunnelTLS'}
