@@ -43,7 +43,12 @@ func (s *Server) wallet(w http.ResponseWriter, r *http.Request) {
 	if entries == nil {
 		entries = []map[string]any{}
 	}
-	writeJSON(w, 200, map[string]any{"balance_cents": balance, "currency": "CNY", "entries": entries, "minimum_recharge_cents": 1000, "payment_channels": []any{}})
+	methods, e := s.publicPaymentMethods(r.Context())
+	if e != nil {
+		paymentDBError(w)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"balance_cents": balance, "currency": "CNY", "entries": entries, "minimum_recharge_cents": 1000, "payment_channels": methods})
 }
 
 func (s *Server) orders(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +66,7 @@ func (s *Server) orders(w http.ResponseWriter, r *http.Request) {
 		s.dbError(w, e)
 		return
 	}
-	rows, e := s.Pool.Query(r.Context(), `SELECT id,order_no,kind,plan_name,cycle,amount_cents,status,snapshot,created_at,paid_at FROM shop_orders WHERE user_id=$1 ORDER BY id DESC LIMIT 20 OFFSET $2`, uid, (page-1)*20)
+	rows, e := s.Pool.Query(r.Context(), `SELECT id,order_no,kind,plan_name,cycle,amount_cents,status,snapshot,payment_method_name,(EXISTS(SELECT 1 FROM payment_attempts a WHERE a.order_id=shop_orders.id) AND status='pending') AS can_pay,created_at,paid_at FROM shop_orders WHERE user_id=$1 ORDER BY id DESC LIMIT 20 OFFSET $2`, uid, (page-1)*20)
 	if e != nil {
 		s.dbError(w, e)
 		return
@@ -77,8 +82,8 @@ func (s *Server) orders(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"items": items, "total": total, "page": page})
 }
 
-// Until a payment gateway is connected, only an authenticated administrator may
-// credit funds. This is audited manual recharge, never a user-side payment claim.
+// Manual recharge remains an administrator-only audited operation. Online
+// payments enter through a separate verified, idempotent notification handler.
 func (s *Server) adminRecharge(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
 		return

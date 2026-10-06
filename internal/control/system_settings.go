@@ -34,9 +34,14 @@ func defaultSettings() SystemSettings {
 	return SystemSettings{SiteName: "Nekopass", AgentPort: 9443, AgentTransport: "tls", AgentVersion: "latest", InstallerURL: release.LatestBase + "/install-agent.sh", ReleaseBaseURL: release.DownloadBase, InstallTokenMinutes: 30}
 }
 func (s *Server) readSettings(ctx context.Context) (SystemSettings, error) {
+	return readSystemSettings(ctx, s.Pool)
+}
+func readSystemSettings(ctx context.Context, query interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}) (SystemSettings, error) {
 	v := defaultSettings()
 	var data []byte
-	e := s.Pool.QueryRow(ctx, "SELECT config FROM site_settings WHERE id=1").Scan(&data)
+	e := query.QueryRow(ctx, "SELECT config FROM site_settings WHERE id=1").Scan(&data)
 	if e != nil {
 		return v, e
 	}

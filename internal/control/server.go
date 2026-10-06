@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nekopass/nekopass/internal/payment"
+	"github.com/nekopass/nekopass/internal/payment/epay"
 	"github.com/nekopass/nekopass/internal/release"
 	"github.com/nekopass/nekopass/internal/store"
 	"golang.org/x/crypto/bcrypt"
@@ -26,6 +28,7 @@ import (
 )
 
 type Server struct {
+	payments       *payment.Registry
 	Pool           *pgxpool.Pool
 	query          *store.Queries
 	loginMu        sync.Mutex
@@ -52,6 +55,7 @@ type userKey struct{}
 func New(p *pgxpool.Pool) *Server {
 	s := &Server{Pool: p, query: store.New(p), loginBuckets: map[string]*loginBucket{}, loginWorkers: make(chan struct{}, 4)}
 	s.releaseClient = release.NewClient()
+	s.payments = payment.NewRegistry(epay.Driver{})
 	_ = s.SetTrustedProxies("127.0.0.0/8,::1/128")
 	return s
 }
@@ -162,6 +166,13 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	api.HandleFunc("GET /api/v1/rule-nodes", s.ruleNodes)
 	api.HandleFunc("GET /api/v1/node-status", s.nodeStatus)
 	api.HandleFunc("GET /api/v1/admin/plans", s.plans)
+	api.HandleFunc("GET /api/v1/admin/payment-interfaces", s.paymentInterfaces)
+	api.HandleFunc("GET /api/v1/admin/payment-methods", s.paymentMethods)
+	api.HandleFunc("POST /api/v1/admin/payment-methods", s.savePaymentMethod)
+	api.HandleFunc("PUT /api/v1/admin/payment-methods/{id}", s.savePaymentMethod)
+	api.HandleFunc("DELETE /api/v1/admin/payment-methods/{id}", s.deletePaymentMethod)
+	api.HandleFunc("POST /api/v1/wallet/recharge", s.createRecharge)
+	api.HandleFunc("POST /api/v1/orders/{id}/pay", s.payRechargeOrder)
 	api.HandleFunc("POST /api/v1/admin/plans", s.savePlan)
 	api.HandleFunc("PUT /api/v1/admin/plans/{id}", s.savePlan)
 	api.HandleFunc("DELETE /api/v1/admin/plans/{id}", s.deletePlan)
@@ -190,6 +201,11 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	root.HandleFunc("POST /api/v1/login", s.login)
 	root.HandleFunc("GET /api/v1/site", s.publicSite)
 	root.HandleFunc("POST /api/v1/node-install/redeem", s.redeemInstall)
+	root.HandleFunc("GET /api/v1/payments/notify/{interface}/{methodID}", s.paymentNotify)
+	root.HandleFunc("POST /api/v1/payments/notify/{interface}/{methodID}", s.paymentNotify)
+	root.HandleFunc("GET /api/v1/payments/return", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/orders?payment=returned", http.StatusSeeOther)
+	})
 	root.Handle("/api/", s.auth(api))
 	root.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
@@ -207,7 +223,7 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
-		if r.Method != "GET" && r.Method != "HEAD" {
+		if r.Method != "GET" && r.Method != "HEAD" && !paymentCallbackPath(r) {
 			if site := r.Header.Get("Sec-Fetch-Site"); site == "cross-site" || site == "same-site" {
 				fail(w, 403, "来源不匹配")
 				return

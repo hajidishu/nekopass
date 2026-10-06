@@ -138,8 +138,101 @@ paths:
     get:
       summary: Current account balance and most recent 100 wallet entries
       responses:
-        '200': {description: 'balance_cents integer, currency CNY, entries, minimum_recharge_cents, empty payment_channels until a gateway is implemented'}
+        '200': {description: 'balance_cents integer, currency CNY, entries, minimum_recharge_cents, payment_channels containing enabled method id/name only'}
         '401': {$ref: '#/components/responses/Error'}
+  /wallet/recharge:
+    post:
+      summary: Create an online wallet recharge order; no funds credited before verified notification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payment_method_id, amount, request_key]
+              properties:
+                payment_method_id: {type: integer, format: int64}
+                amount: {type: string, description: CNY decimal amount with at most two fractional digits; minimum 10.00}
+                request_key: {type: string, minLength: 16, maxLength: 80}
+      responses:
+        '200': {description: Order id/status and checkout URL; replaying the same request key returns the existing order}
+        '400': {description: Invalid method or amount}
+        '409': {description: Request key conflict or panel URL not configured}
+        '429': {description: Too many recently created pending recharge orders}
+  /orders/{id}/pay:
+    post:
+      summary: Continue payment for an owned pending online recharge order
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: integer, format: int64}}
+      responses:
+        '200': {description: Checkout URL}
+        '404': {description: Order missing or belongs to another user}
+        '409': {description: Order already completed or cancelled}
+  /admin/payment-interfaces:
+    get:
+      summary: Registered payment interfaces and their configuration field definitions
+      responses:
+        '200': {description: Administrator-only driver definitions; currently EPay V1}
+        '403': {description: Administrator required}
+  /admin/payment-methods:
+    get:
+      summary: Administrator payment method configurations, 50 per page, without a creation count limit
+      parameters:
+        - {in: query, name: page, schema: {type: integer, minimum: 1}}
+      responses:
+        '200': {description: items/total/page; merchant configuration is administrator-only}
+    post:
+      summary: Create a payment method using a registered interface
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, interface, config]
+              properties:
+                name: {type: string, maxLength: 80}
+                interface: {type: string, example: epay}
+                config: {type: object, additionalProperties: {type: string}, description: 'EPay fields: url, pid, key, type'}
+                enabled: {type: boolean, default: true}
+                sort_order: {type: integer, default: 0}
+      responses:
+        '200': {description: Payment method id}
+        '400': {description: Invalid interface or configuration}
+  /admin/payment-methods/{id}:
+    parameters:
+      - {in: path, name: id, required: true, schema: {type: integer, format: int64}}
+    put:
+      summary: Update name, interface, config, enabled and sort_order; existing order snapshots are preserved
+      responses:
+        '200': {description: Payment method id}
+        '400': {description: Invalid configuration}
+    delete:
+      summary: Delete a method while keeping existing orders and their verified notification handling
+      responses:
+        '200': {description: Deleted}
+  /payments/notify/{interface}/{methodID}:
+    parameters:
+      - {in: path, name: interface, required: true, schema: {type: string}}
+      - {in: path, name: methodID, required: true, schema: {type: integer, format: int64}}
+    get:
+      security: []
+      summary: Gateway notification authenticated by signature, merchant, order and amount, not by user session
+      responses:
+        '200': {description: EPay success acknowledgement; repeated callbacks never credit twice}
+        '400': {description: Invalid payment notification}
+    post:
+      security: []
+      summary: Signed gateway notification; EPay uses application/x-www-form-urlencoded
+      responses:
+        '200': {description: Verified payment recorded once}
+        '400': {description: Invalid payment notification}
+  /payments/return:
+    get:
+      security: []
+      summary: Browser return redirects to orders and does not credit funds
+      responses:
+        '303': {description: Redirect to /orders}
   /orders:
     get:
       summary: Current account orders only, including manual recharge and balance purchases

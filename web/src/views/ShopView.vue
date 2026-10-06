@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import {computed,ref,reactive} from 'vue'
+import {computed,ref,reactive,watch} from 'vue'
 import {ElMessage} from 'element-plus'
 import PageShell from '../PageShell.vue'
 import {usePage} from '../page'
 import {api,quotaText,limitText,type User} from '../api'
-import {cycles,yuan,cycleName,dateText,requestKey,type ShopPlan,type Wallet,type Quote} from '../commerce'
+import {cycles,yuan,cycleName,dateText,requestKey,openCheckout,type Checkout,type ShopPlan,type Wallet,type Quote} from '../commerce'
 const wallet=ref<Wallet|null>(null),plans=ref<ShopPlan[]>([]),profile=ref<User|null>(null)
 const selected=reactive<Record<number,string>>({}),rechargeAmount=ref('100.00'),dialog=ref(false),quote=ref<Quote|null>(null),purchaseKey=ref(''),purchaseBusy=ref(false)
 const {me,loading,error,busy,run,refresh}=usePage(async()=>{
@@ -12,6 +12,10 @@ const {me,loading,error,busy,run,refresh}=usePage(async()=>{
  for(const plan of p)if(!(selected[plan.id] in plan.prices))selected[plan.id]=cycles.find(c=>c.key in plan.prices)?.key||''
 },{interval:15000})
 const insufficient=computed(()=>quote.value!==null&&(wallet.value?.balance_cents||0)<quote.value.amount_cents)
+const paymentMethod=ref<number|null>(null),recharging=ref(false),rechargeKey=ref(requestKey())
+watch([rechargeAmount,paymentMethod],()=>{rechargeKey.value=requestKey()})
+watch(()=>wallet.value?.payment_channels,methods=>{if(!methods?.some(m=>m.id===paymentMethod.value))paymentMethod.value=methods?.[0]?.id||null})
+async function recharge(){if(recharging.value||!paymentMethod.value)return;recharging.value=true;try{const result=await api<{checkout:Checkout;status:string}>('wallet/recharge','POST',{amount:rechargeAmount.value,payment_method_id:paymentMethod.value,request_key:rechargeKey.value});if(result.status==='paid'){await refresh();rechargeKey.value=requestKey();ElMessage.success('此充值订单已完成')}else openCheckout(result.checkout)}catch(e){ElMessage.error((e as Error).message)}finally{recharging.value=false}}
 async function preview(plan:ShopPlan){await run(async()=>{quote.value=await api<Quote>('shop/quote','POST',{plan_id:plan.id,cycle:selected[plan.id]});purchaseKey.value=requestKey();dialog.value=true})}
 async function purchase(){
  if(!quote.value||purchaseBusy.value)return
@@ -25,7 +29,7 @@ async function purchase(){
 <template><PageShell :me="me" :loading="loading" :error="error" active="shop">
  <section class="surface shop-wallet"><div class="section-header"><strong>我的钱包</strong><a class="text-link" href="/orders">我的订单</a></div><div class="section-body">
   <div class="wallet-balance">钱包余额：<strong>{{yuan(wallet?.balance_cents||0)}}</strong><span>元</span></div>
-  <section class="shop-recharge"><h3>钱包充值</h3><div class="recharge-amount"><el-input v-model="rechargeAmount" inputmode="decimal" aria-label="充值金额"><template #prepend>充值金额</template><template #append>CNY</template></el-input></div><p>最小充值金额：{{yuan(wallet?.minimum_recharge_cents||1000)}} 元</p><p class="subtle">暂未接入支付通道，可联系管理员充值余额。</p><el-button type="primary" disabled>充值</el-button></section>
+  <section class="shop-recharge"><h3>钱包充值</h3><div class="recharge-amount"><el-input v-model="rechargeAmount" inputmode="decimal" :disabled="recharging" aria-label="充值金额"><template #prepend>充值金额</template><template #append>CNY</template></el-input></div><p>最小充值金额：{{yuan(wallet?.minimum_recharge_cents||1000)}} 元</p><template v-if="wallet?.payment_channels.length"><el-radio-group :disabled="recharging" v-model="paymentMethod" aria-label="支付方式"><el-radio v-for="method in wallet.payment_channels" :key="method.id" :value="method.id">{{method.name}}</el-radio></el-radio-group><p><el-button type="primary" :loading="recharging" :disabled="!paymentMethod" @click="recharge">充值</el-button></p></template><p v-else class="subtle">暂无可用支付方式，请联系管理员。</p></section>
   <details v-if="wallet?.entries.length" class="wallet-history"><summary>余额明细</summary><el-table :data="wallet.entries"><el-table-column label="时间" min-width="180"><template #default="{row}">{{dateText(row.created_at)}}</template></el-table-column><el-table-column prop="note" label="说明" min-width="200"/><el-table-column label="金额 / 元" width="130"><template #default="{row}"><span :class="row.amount_cents>=0?'credit-amount':'debit-amount'">{{row.amount_cents>0?'+':''}}{{yuan(row.amount_cents)}}</span></template></el-table-column><el-table-column label="余额 / 元" width="130"><template #default="{row}">{{yuan(row.balance_after_cents)}}</template></el-table-column></el-table><p class="field-tip">显示最近 100 条余额记录。</p></details>
  </div></section>
  <section v-if="profile?.plan_id" class="surface current-subscription"><div class="section-header"><strong>当前套餐 · {{profile.plan_name}}</strong></div><div class="section-body subscription-summary"><span>到期时间：{{dateText(profile.expires_at)}}</span><span>下次流量重置：{{dateText(profile.next_reset_at,'无自动重置')}}</span><p class="field-tip">同套餐续费保留个人资源设置并立即重置已用流量，放弃当前周期剩余时间；后续未开始的月份仍然保留。</p></div></section>
