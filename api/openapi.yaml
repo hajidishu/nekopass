@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.14.5
+  version: 0.14.6
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Admin-created accounts. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -990,10 +990,10 @@ components:
     TunnelTLS:
       type: object
       additionalProperties: false
-      description: Administrator-only TLS settings. DNS credentials and certificate private keys are never exposed by user node endpoints.
+      description: Administrator-only exit TLS protocol settings. Connection options are supplied to ingress nodes for this exit; DNS credentials and private keys are not forwarded.
       properties:
         server_name: {type: string, description: Exit certificate domain and default SNI}
-        client_sni: {type: string, description: Optional ingress SNI override; certificate names remain verified}
+        client_sni: {type: string, description: Optional SNI used by all ingress connections to this exit; certificate names remain verified}
         fingerprint: {type: string, enum: ['off', chrome, firefox], default: 'off', description: 'off uses standard verified TLS; browser profiles use uTLS'}
         host: {type: string, description: 'HTTP authority, optional port; default uses the certificate hostname'}
         fallback_url: {type: string, description: 'HTTP/HTTPS fallback reverse-proxy URL; empty returns ordinary 404; HTTPS also handles pre-flight TLS rejection'}

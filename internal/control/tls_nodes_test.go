@@ -54,9 +54,21 @@ func TestTLSNodeConfigurationScopeAndProtocolGate(t *testing.T) {
 		return v.ID
 	}
 	entryInput := node("plain_tcp")
+	entryTLS := DefaultTunnelTLS()
+	entryTLS.Fingerprint = "chrome"
+	entryTLS.ClientSNI = "entry-override.example.test"
+	entryTLS.PoolSize = 1
+	entryTLS.StreamWindowMiB = 4
+	entryTLS.ConnectionWindowMiB = 8
+	entryInput.TLS = &entryTLS
 	entry := create(entryInput)
 	settings := DefaultTunnelTLS()
 	settings.ServerName = "tunnel.example.test"
+	settings.Fingerprint = "firefox"
+	settings.ClientSNI = "tunnel.example.test"
+	settings.PoolSize = 4
+	settings.StreamWindowMiB = 12
+	settings.ConnectionWindowMiB = 96
 	settings.PublicPort = 443
 	settings.Host = "cdn.example.test"
 	settings.Path = "/images/upload"
@@ -126,8 +138,11 @@ func TestTLSNodeConfigurationScopeAndProtocolGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err = stream.exchange(ctx, p, entry, entryReport)
-	if err != nil || len(out.Rules) != 1 || !out.Rules[0].Enabled || out.Rules[0].Tls.Fingerprint != "off" || out.Rules[0].Tls.Host != settings.Host || out.Rules[0].Tls.Path != settings.Path || !out.Rules[0].Tls.RequireResponseProof {
+	if err != nil || len(out.Rules) != 1 || !out.Rules[0].Enabled || out.Rules[0].Tls.Fingerprint != "firefox" || out.Rules[0].Tls.Host != settings.Host || out.Rules[0].Tls.Path != settings.Path || !out.Rules[0].Tls.RequireResponseProof {
 		t.Fatal("new TLS client settings or version gate incorrect", err)
+	}
+	if cfg := out.Rules[0].Tls; cfg.ServerName != settings.ClientSNI || cfg.PoolSize != int32(settings.PoolSize) || cfg.StreamWindowMib != int32(settings.StreamWindowMiB) || cfg.ConnectionWindowMib != int32(settings.ConnectionWindowMiB) {
+		t.Fatal("ingress node settings overrode the selected exit transport")
 	}
 	exitReport.ProtocolVersion = 7
 	out, err = stream.exchange(ctx, p, exit, exitReport)

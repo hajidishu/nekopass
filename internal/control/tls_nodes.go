@@ -148,14 +148,16 @@ func appendTLSControl(ctx context.Context, tx pgx.Tx, nodeID int64, out *pb.Cont
 				return err
 			}
 			sni := exit.ServerName
-			if client.ClientSNI != "" {
-				sni = client.ClientSNI
+			if exit.ClientSNI != "" {
+				sni = exit.ClientSNI
 			}
 			host := exit.Host
 			if host == "" {
 				host = exit.ServerName
 			}
-			settings = &pb.TLSClientConfig{ServerName: sni, Fingerprint: client.Fingerprint, RootCa: root, Path: exit.Path, Host: host, RequireResponseProof: true, PoolSize: int32(client.PoolSize), StreamWindowMib: int32(client.StreamWindowMiB), ConnectionWindowMib: int32(client.ConnectionWindowMiB)}
+			// Transport options belong to the selected exit. A dual-role node's
+			// own exit configuration must not affect its connections to other exits.
+			settings = &pb.TLSClientConfig{ServerName: sni, Fingerprint: exit.Fingerprint, RootCa: root, Path: exit.Path, Host: host, RequireResponseProof: true, PoolSize: int32(exit.PoolSize), StreamWindowMib: int32(exit.StreamWindowMiB), ConnectionWindowMib: int32(exit.ConnectionWindowMiB)}
 			cache[rule.EgressNodeId] = settings
 			if exit.PublicPort != 0 {
 				for _, candidate := range out.Rules {

@@ -50,7 +50,7 @@ func TestNodeProtocolAndBasicPagesSaveOnlyTheirOwnConfiguration(t *testing.T) {
 		t.Fatal("protocol save overwrote basic configuration")
 	}
 	if !loaded.IngressEnabled || !loaded.TunnelExitEnabled || loaded.TLS.Fingerprint != "firefox" {
-		t.Fatal("dual-role plain exit erased TLS ingress settings")
+		t.Fatal("switching exit protocol erased saved transport options")
 	}
 	data, _ := json.Marshal(loaded)
 	var basic NodeBasicInput

@@ -10,7 +10,7 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
 <template>
 <el-form label-position="top" @submit.prevent="$emit('submit')">
     <div class="form-section-title">入口配置</div>
-    <p class="field-tip">入口按用户所选出口的协议连接；TLS 客户端配置与本节点的出口协议独立。</p>
+    <p class="field-tip">入口按用户所选出口的传输协议和参数连接。</p>
     <el-form-item label="允许作为入口">
     <el-switch v-model="nodeForm.ingress_enabled" />
     <span class="field-tip switch-hint">关闭后用户不能将此节点选作入口；开启下方出口功能即可作为专用出口。</span>
@@ -19,24 +19,6 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
     <el-switch v-model="nodeForm.allow_direct" />
     <span class="field-tip switch-hint">关闭后，此入口的规则必须选择已关联的出口节点。</span>
     </el-form-item>
-    <template v-if="nodeForm.ingress_enabled">
-    <div class="form-section-title">TLS 客户端</div>
-    <div class="form-grid">
-    <el-form-item label="uTLS 指纹">
-    <el-select v-model="nodeForm.tls.fingerprint">
-    <el-option label="关闭（标准 TLS）" value="off"/>
-    <el-option label="Chrome（库内预设）" value="chrome"/>
-    <el-option label="Firefox（库内预设）" value="firefox"/>
-    </el-select>
-    </el-form-item>
-    <el-form-item label="可选 SNI 覆盖">
-    <el-input v-model="nodeForm.tls.client_sni" placeholder="留空使用出口证书域名"/>
-    </el-form-item>
-    <el-form-item label="每出口 TLS 连接池上限">
-    <el-input-number v-model="nodeForm.tls.pool_size" :min="1" :max="8"/>
-    </el-form-item>
-    </div>
-    </template>
     <div class="form-section-title">出口配置</div>
     <el-form-item label="作为出口节点">
 <el-switch v-model="nodeForm.tunnel_exit_enabled" @change="exitChanged" />
@@ -61,6 +43,23 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
     </el-form-item>
     </div>
     <template v-if="nodeForm.tunnel_protocol==='tls_h2'">
+    <div class="form-section-title">连接此出口的 TLS 参数</div>
+    <p class="field-tip">所有入口连接此出口时使用以下设置。</p>
+    <div class="form-grid">
+    <el-form-item label="uTLS 指纹">
+    <el-select v-model="nodeForm.tls.fingerprint">
+    <el-option label="关闭（标准 TLS）" value="off"/>
+    <el-option label="Chrome（库内预设）" value="chrome"/>
+    <el-option label="Firefox（库内预设）" value="firefox"/>
+    </el-select>
+    </el-form-item>
+    <el-form-item label="连接 SNI（可选）">
+    <el-input v-model="nodeForm.tls.client_sni" placeholder="留空使用本出口的证书域名"/>
+    </el-form-item>
+    <el-form-item label="每入口 TLS 连接池上限">
+    <el-input-number v-model="nodeForm.tls.pool_size" :min="1" :max="8"/>
+    </el-form-item>
+    </div>
     <div class="form-section-title">tls+h2 出口</div>
     <p class="field-tip">新增回退行为需出口 v0.14.1 或更新版本。Host、路径或认证不匹配时执行下方 Fallback 配置。</p>
     <div class="form-grid">
@@ -134,17 +133,8 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
     <span class="field-tip">Cloudflare：api_token、可选 zone_token；阿里 DNS：access_key_id、access_key_secret；DNSPod：login_token。</span>
     </el-form-item>
     </template>
-    </template>
-    <el-form-item label="允许哪些入口使用此出口">
-    <el-select v-model="nodeForm.allowed_ingress_ids" multiple filterable placeholder="选择入口节点">
-    <el-option v-for="n in nodes.filter(n=>n.id!==editID && n.ingress_enabled)" :key="n.id" :label="n.name" :value="n.id" />
-    </el-select>
-    <span class="field-tip">用户还需要同时获得入口和出口所属节点组的套餐权限。</span>
-    </el-form-item>
-    </template>
-    <template v-if="nodeForm.ingress_enabled || (nodeForm.tunnel_exit_enabled && nodeForm.tunnel_protocol==='tls_h2')">
     <div class="form-section-title">HTTP2 流控</div>
-    <p class="field-tip">每流窗口用于入口下载，连接总窗口在入口和出口均生效。出口 SETTINGS 使用普通 HTTP/2 默认值；业务流上限在认证后生效，并受协议并发上限约束。</p>
+    <p class="field-tip">参数按此出口下发给连接它的入口；每流窗口用于接收此出口的数据，连接总窗口同时用于出口接收。出口 SETTINGS 使用普通默认值，业务流上限在认证后生效。</p>
     <div class="form-grid">
     <el-form-item label="每流接收窗口 / MiB">
     <el-input-number v-model="nodeForm.tls.stream_window_mib" :min="1" :max="64"/>
@@ -157,5 +147,13 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
     </el-form-item>
     </div>
     </template>
+    <el-form-item label="允许哪些入口使用此出口">
+    <el-select v-model="nodeForm.allowed_ingress_ids" multiple filterable placeholder="选择入口节点">
+    <el-option v-for="n in nodes.filter(n=>n.id!==editID && n.ingress_enabled)" :key="n.id" :label="n.name" :value="n.id" />
+    </el-select>
+    <span class="field-tip">用户还需要同时获得入口和出口所属节点组的套餐权限。</span>
+    </el-form-item>
+    </template>
+
     </el-form>
 </template>
