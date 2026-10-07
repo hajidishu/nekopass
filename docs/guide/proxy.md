@@ -16,7 +16,9 @@ location / {
 
 后台「系统设置」的面板对外地址填写实际 HTTPS 地址。
 
-代理在其他服务器时，在 `/etc/nekopass/control.env` 将 `NEKOPASS_TRUSTED_PROXIES` 设置为代理 IP / 网段，然后重启面板。
+代理在其他服务器时，在 `/etc/nekopass/control.env` 将 `NEKOPASS_TRUSTED_PROXIES` 设置为代理来源 CIDR，多个网段用逗号分隔，然后重启面板。单个 IPv4 使用 `/32`，IPv6 使用 `/128`；这里应填写主控实际看到的代理地址。
+
+网页和 API 应使用同一个对外地址。当前未提供浏览器直接跨域调用独立 API 域名的部署模式。
 
 ## 节点控制连接
 

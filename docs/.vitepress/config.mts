@@ -41,12 +41,25 @@ export default defineConfig({
         ]
       },
       {
-        text: '使用与管理',
+        text: '用户功能',
         items: [
+          { text: '注册与邀请', link: '/guide/account' },
+          { text: '商城与余额', link: '/guide/shop' },
           { text: '转发规则', link: '/guide/rules' },
+          { text: '工单', link: '/guide/tickets' },
+          { text: '订单查询', link: '/guide/orders' },
+          { text: '站点公告', link: '/guide/announcements' }
+        ]
+      },
+      {
+        text: '管理员与部署',
+        items: [
+          { text: '用户与套餐', link: '/guide/users' },
+          { text: '节点与节点组 / DDNS', link: '/guide/nodes' },
           { text: '节点中转', link: '/guide/tunnel' },
-          { text: '日常管理', link: '/guide/manage' },
           { text: '支付方式', link: '/guide/payments' },
+          { text: '转发安全', link: '/guide/security' },
+          { text: '日常管理', link: '/guide/manage' },
           { text: '反向代理', link: '/guide/proxy' },
           { text: '常见问题', link: '/guide/troubleshooting' }
         ]
