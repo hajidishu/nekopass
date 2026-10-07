@@ -32,6 +32,7 @@ type h2Open struct {
 	Epoch   int64  `json:"epoch"`
 	Target  string `json:"target"`
 	Nonce   string `json:"nonce"`
+	Seq     uint64 `json:"seq,omitempty"`
 }
 
 func h2Proof(key string, exporter, metadata []byte) string {
@@ -46,10 +47,12 @@ func h2ResponseProof(key string, exporter, metadata []byte) string {
 }
 
 type h2Peer struct {
-	cc       *http2.ClientConn
-	conn     net.Conn
-	exporter []byte
-	opened   int
+	cc          *http2.ClientConn
+	conn        net.Conn
+	exporter    []byte
+	opened      int
+	sequence    uint64
+	exhaustedAt time.Time
 }
 type h2Pool struct {
 	mu    sync.Mutex
@@ -125,7 +128,6 @@ func (t *h2Transport) Dial(dialCtx, lifetime context.Context, rule *pb.Rule, tar
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, err
 	}
-	metadata, _ := json.Marshal(h2Open{Ingress: rule.IngressNodeId, Rule: rule.Id, User: rule.UserId, Epoch: rule.QuotaEpoch, Target: target, Nonce: hex.EncodeToString(nonce[:])})
 	ctx, cancel := context.WithCancel(lifetime)
 	r, w := io.Pipe()
 	host := cfg.Host
@@ -147,13 +149,14 @@ func (t *h2Transport) Dial(dialCtx, lifetime context.Context, rule *pb.Rule, tar
 		w.Close()
 		return nil, err
 	}
-	peer, err := pool.reserve(dialCtx, rule)
+	peer, seq, err := pool.reserve(dialCtx, rule)
 	if err != nil {
 		cancel()
 		r.Close()
 		w.Close()
 		return nil, err
 	}
+	metadata, _ := json.Marshal(h2Open{Ingress: rule.IngressNodeId, Rule: rule.Id, User: rule.UserId, Epoch: rule.QuotaEpoch, Target: target, Nonce: hex.EncodeToString(nonce[:]), Seq: seq})
 	request.Header.Set("Content-Type", "application/octet-stream")
 	request.Header.Set("User-Agent", "Mozilla/5.0")
 	request.Header.Set("X-Stream", base64.RawURLEncoding.EncodeToString(metadata))
@@ -199,7 +202,7 @@ func (t *h2Transport) Dial(dialCtx, lifetime context.Context, rule *pb.Rule, tar
 	}
 }
 
-func (p *h2Pool) reserve(ctx context.Context, rule *pb.Rule) (*h2Peer, error) {
+func (p *h2Pool) reserve(ctx context.Context, rule *pb.Rule) (*h2Peer, uint64, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	limit := int(rule.Tls.PoolSize)
@@ -207,7 +210,7 @@ func (p *h2Pool) reserve(ctx context.Context, rule *pb.Rule) (*h2Peer, error) {
 		limit = 2
 	}
 	if limit > 8 {
-		return nil, errors.New("invalid TLS pool size")
+		return nil, 0, errors.New("invalid TLS pool size")
 	}
 	// Add lazily under load; empty users/rules never create a TLS connection.
 	for len(p.peers) < limit {
@@ -217,7 +220,7 @@ func (p *h2Pool) reserve(ctx context.Context, rule *pb.Rule) (*h2Peer, error) {
 		peer, err := dialH2Peer(ctx, rule)
 		if err != nil {
 			if len(p.peers) == 0 {
-				return nil, err
+				return nil, 0, err
 			}
 			break
 		}
@@ -226,30 +229,44 @@ func (p *h2Pool) reserve(ctx context.Context, rule *pb.Rule) (*h2Peer, error) {
 	for offset := 0; offset < len(p.peers); offset++ {
 		index := (p.next + offset) % len(p.peers)
 		peer := p.peers[index]
-		if peer.opened < 4096 && peer.cc.ReserveNewRequest() {
+		if (rule.Tls.SequenceAuth || peer.opened < 4096) && peer.cc.ReserveNewRequest() {
 			peer.opened++
+			seq := uint64(0)
+			if rule.Tls.SequenceAuth {
+				peer.sequence++
+				seq = peer.sequence
+			} else if peer.opened == 4096 {
+				peer.exhaustedAt = time.Now()
+			}
 			p.next = index + 1
-			return peer, nil
+			return peer, seq, nil
 		}
 	}
-	// Replace a drained stale peer, never multiply connections past the configured cap.
+	// Legacy peers have a lifetime nonce budget. Give outstanding streams a
+	// finite grace period, then rotate even if a client holds a stream forever.
+	// Updated peers use bounded sequence replay state and have no such budget.
 	for index, peer := range p.peers {
 		state := peer.cc.State()
-		if state.StreamsActive == 0 && state.StreamsReserved == 0 {
+		if state.StreamsActive == 0 && state.StreamsReserved == 0 || !peer.exhaustedAt.IsZero() && time.Since(peer.exhaustedAt) >= 30*time.Second {
 			peer.cc.Close()
 			peer.conn.Close()
 			replacement, err := dialH2Peer(ctx, rule)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			p.peers[index] = replacement
 			if replacement.cc.ReserveNewRequest() {
 				replacement.opened++
-				return replacement, nil
+				seq := uint64(0)
+				if rule.Tls.SequenceAuth {
+					replacement.sequence++
+					seq = replacement.sequence
+				}
+				return replacement, seq, nil
 			}
 		}
 	}
-	return nil, errors.New("HTTP/2 tunnel stream capacity reached; retry later")
+	return nil, 0, errors.New("HTTP/2 tunnel stream capacity reached; retry later")
 }
 
 func dialH2Peer(ctx context.Context, rule *pb.Rule) (*h2Peer, error) {

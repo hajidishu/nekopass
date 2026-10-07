@@ -111,6 +111,9 @@ message NodeConfig {
  string tunnel_protocol = 15;
  TLSServerConfig tls = 16;
  DDNSConfig ddns = 17;
+ repeated string proxy_trusted_cidrs = 18;
+ repeated string target_deny_cidrs = 19;
+ bool security_configured = 20;
 }
 
 message DDNSConfig {
@@ -147,6 +150,7 @@ message TLSClientConfig {
  int32 connection_window_mib = 7;
  string host = 8;
  bool require_response_proof = 9;
+ bool sequence_auth = 10;
 }
 message TLSServerConfig {
  string server_name = 1;

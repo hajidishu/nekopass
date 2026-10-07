@@ -54,12 +54,11 @@ export function prepareRuleImport(data: RuleImport, destination: ImportDestinati
     const accept = r.accept_proxy_protocol === 1 ? 'auto' : 'off'
     const send = proxySendModes[r.proxy_protocol ?? 0]
     if (send === undefined) throw new Error('不支持此 proxy_protocol 数值')
-    if (accept !== 'off' && !destination.trustedCIDRs.length) throw new Error('接收 Proxy Protocol 的规则需要填写信任代理网段')
     return {
       user_id: destination.userID, node_id: destination.nodeID, egress_node_id: destination.egressNodeID,
       name: r.name, group_id: destination.groupID, listen_port: destination.randomPorts ? 0 : r.listen_port,
       targets: [...r.dest], balance: 'random', speed_mbps: 0, ip_limit: 0, connection_limit: 0,
-      proxy_accept: accept, proxy_send: send, proxy_trusted_cidrs: accept === 'off' ? [] : [...destination.trustedCIDRs], enabled: true,
+      proxy_accept: accept, proxy_send: send, proxy_trusted_cidrs: [], enabled: true,
     }
   })
 }

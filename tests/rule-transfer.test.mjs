@@ -30,11 +30,11 @@ test('independent Proxy Protocol receiving, v1 sending and v2 TCP/UDP mapping', 
   for (const [code, send] of [[undefined, 'off'], [0, 'off'], [1, 'v1'], [2, 'v2'], [3, 'v2']]) {
     const data = parseRuleImport(JSON.stringify({ ...example, proxy_protocol: code, accept_proxy_protocol: 1 }))
     assert.equal(nyanpassNeedsProxyTrust(data), true)
-    assert.throws(() => prepareRuleImport(data, destination), /信任代理网段/)
+    assert.equal(prepareRuleImport(data, destination)[0].proxy_accept, 'auto')
     const [rule] = prepareRuleImport(data, { ...destination, trustedCIDRs: ['192.0.2.0/24'] })
     assert.equal(rule.proxy_accept, 'auto')
     assert.equal(rule.proxy_send, send)
-    assert.deepEqual(rule.proxy_trusted_cidrs, ['192.0.2.0/24'])
+    assert.deepEqual(rule.proxy_trusted_cidrs, [])
     const exported = JSON.parse(encodeNyanpassRules([rule]))
     assert.equal(exported.accept_proxy_protocol, 1)
     assert.equal(exported.proxy_protocol, send === 'off' ? undefined : send === 'v1' ? 1 : 3)

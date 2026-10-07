@@ -30,6 +30,17 @@ func testDB(t *testing.T) *pgxpool.Pool {
 	if err = store.Migrate(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
+
+	// Existing integration fixtures intentionally use local targets and older
+	// capabilities. Configure that environment explicitly; ACL tests replace it.
+	var original []byte
+	if err = p.QueryRow(context.Background(), "SELECT config FROM site_settings WHERE id=1").Scan(&original); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = p.Exec(context.Background(), `UPDATE site_settings SET config=config||'{"target_deny_cidrs":[],"proxy_trusted_cidrs":["192.0.2.0/24"]}'::jsonb WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = p.Exec(context.Background(), "UPDATE site_settings SET config=$1 WHERE id=1", original) })
 	return p
 }
 func TestConcurrentGrantsAndReplay(t *testing.T) {

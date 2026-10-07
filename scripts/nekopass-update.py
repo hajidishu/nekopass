@@ -194,14 +194,23 @@ def update(service, version):
     binary = base / 'bin' / ('nekopass-agent' if agent else 'nekopass')
     if base.resolve() != base or binary.is_symlink() or not binary.is_file():
         raise ValueError('Installation directory is invalid')
+    pending = binary.with_name(binary.name + ".update-pending")
+    candidate = binary.with_name(binary.name + ".next")
+    resume_active = False
+    if not agent and pending.exists():
+        recovery = json.loads(pending.read_text())
+        required = recovery['version']
+        resume_active = recovery['was_active'] is True
+        if not TAG.fullmatch(required) or tuple(map(int, TAG.fullmatch(version).groups())) < tuple(map(int, TAG.fullmatch(required).groups())):
+            raise ValueError("Incomplete panel migration requires the same or a newer release")
     old = current(binary, agent)
-    if TAG.fullmatch(old) and tuple(map(int, TAG.fullmatch(old).groups())) >= tuple(map(int, TAG.fullmatch(version).groups())):
+    if not pending.exists() and TAG.fullmatch(old) and tuple(map(int, TAG.fullmatch(old).groups())) >= tuple(map(int, TAG.fullmatch(version).groups())):
         print('Already up to date:', old, flush=True)
         return
     arch = {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(platform.machine())
     if not arch:
         raise ValueError('Only Linux amd64/arm64 is supported')
-    active = subprocess.run(['systemctl', 'is-active', '--quiet', service]).returncode == 0
+    active = subprocess.run(['systemctl', 'is-active', '--quiet', service]).returncode == 0 or resume_active
     # Staging stays on the binary filesystem, allowing atomic rename.
     with tempfile.TemporaryDirectory(prefix='.update-', dir=base) as temp:
         stage = pathlib.Path(temp)
@@ -221,23 +230,42 @@ def update(service, version):
         if current(replacement, agent) != version:
             raise ValueError('Downloaded binary version does not match release')
         backup = binary.with_name(binary.name + '.previous')
-        shutil.copy2(binary, backup)
+        if not pending.exists():
+            shutil.copy2(binary, backup)
         print('Updating', service, old, '->', version, flush=True)
         if active:
             run(['systemctl', 'stop', service])
         installed = False
+        migration_attempted = False
+        migration_succeeded = False
         try:
             if not agent:
                 config = '/etc/nekopass/control.env' if service == 'nekopass' else '/etc/' + service + '/control.env'
                 user = subprocess.check_output(['systemctl', 'show', service, '-p', 'User', '--value'], text=True).strip()
                 if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', user):
                     raise ValueError('Invalid service user')
+                # Keep the compatible binary and a recovery marker outside temporary
+                # staging. A failed migration may also commit some schema steps.
+                os.replace(replacement, candidate)
+                staged_marker = stage / 'update-pending'
+                staged_marker.write_text(json.dumps({'version': version, 'was_active': active}))
+                os.replace(staged_marker, pending)
+                replacement = candidate
+                # Install first: even a power loss immediately after migration
+                # must not leave the old executable enabled on the next boot.
+                os.replace(replacement, binary)
+                installed = True
+                migration_attempted = True
                 # systemd reads EnvironmentFile directly; no sourcing or credential output.
-                run(['systemd-run', '--quiet', '--wait', '--pipe', '--collect', '-p', 'User=' + user, '-p', 'EnvironmentFile=' + config, '--', str(replacement), '-mode', 'migrate'])
-                shutil.copytree(stage / 'web', base / 'web', dirs_exist_ok=True)
-            os.replace(replacement, binary)
-            installed = True
+                run(['systemd-run', '--quiet', '--wait', '--pipe', '--collect', '-p', 'User=' + user, '-p', 'EnvironmentFile=' + config, '--', str(binary), '-mode', 'migrate'])
+                migration_succeeded = True
+            else:
+                os.replace(replacement, binary)
+                installed = True
             if not agent:
+                # Never perform fallible asset/helper copies before installing
+                # the executable compatible with the migrated database.
+                shutil.copytree(stage / 'web', base / 'web', dirs_exist_ok=True)
                 for name in ['nekopassctl', 'nekopass-update']:
                     source = stage / 'bin' / name
                     if source.is_file():
@@ -255,9 +283,11 @@ def update(service, version):
                 shutil.copy2(backup, binary)
                 if active:
                     run(['systemctl', 'start', service])
-            elif not installed and active:
+            elif active and (installed and migration_succeeded or not migration_attempted and not pending.exists()):
                 run(['systemctl', 'start', service])
             raise
+        if not agent:
+            pending.unlink(missing_ok=True)
         print('Update complete:', version, flush=True)
 
 

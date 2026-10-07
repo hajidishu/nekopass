@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nekopass/nekopass/internal/payment"
 	"github.com/nekopass/nekopass/internal/payment/epay"
+	"github.com/nekopass/nekopass/internal/registration"
 	"github.com/nekopass/nekopass/internal/release"
 	"github.com/nekopass/nekopass/internal/store"
 	"golang.org/x/crypto/bcrypt"
@@ -28,6 +29,8 @@ import (
 )
 
 type Server struct {
+	mailWorkers    chan struct{}
+	sendMail       func(context.Context, registration.SMTP, string, string, string) error
 	payments       *payment.Registry
 	Pool           *pgxpool.Pool
 	query          *store.Queries
@@ -54,6 +57,8 @@ type userKey struct{}
 
 func New(p *pgxpool.Pool) *Server {
 	s := &Server{Pool: p, query: store.New(p), loginBuckets: map[string]*loginBucket{}, loginWorkers: make(chan struct{}, 4)}
+	s.mailWorkers = make(chan struct{}, 4)
+	s.sendMail = registration.SendCode
 	s.releaseClient = release.NewClient()
 	s.payments = payment.NewRegistry(epay.Driver{})
 	_ = s.SetTrustedProxies("127.0.0.0/8,::1/128")
@@ -133,6 +138,7 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	api.HandleFunc("GET /api/v1/profile", s.profile)
 	api.HandleFunc("GET /api/v1/wallet", s.wallet)
 	api.HandleFunc("GET /api/v1/orders", s.orders)
+	api.HandleFunc("GET /api/v1/referrals", s.referrals)
 	api.HandleFunc("GET /api/v1/shop/plans", s.shopPlans)
 	api.HandleFunc("POST /api/v1/shop/quote", s.shopQuote)
 	api.HandleFunc("POST /api/v1/shop/purchase", s.shopPurchase)
@@ -199,6 +205,10 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 
 	root := http.NewServeMux()
 	root.HandleFunc("POST /api/v1/login", s.login)
+	root.HandleFunc("GET /api/v1/registration", s.registrationConfig)
+	root.HandleFunc("GET /api/v1/registration/captcha", s.captcha)
+	root.HandleFunc("POST /api/v1/registration/email-code", s.sendRegistrationCode)
+	root.HandleFunc("POST /api/v1/register", s.register)
 	root.HandleFunc("GET /api/v1/site", s.publicSite)
 	root.HandleFunc("POST /api/v1/node-install/redeem", s.redeemInstall)
 	root.HandleFunc("GET /api/v1/payments/notify/{interface}/{methodID}", s.paymentNotify)
@@ -282,7 +292,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	if len(in.Username) == 0 || len(in.Username) > 64 || len(in.Password) < 12 || len(in.Password) > 72 {
+	originalUsername := in.Username
+	if email, err := registration.Email(in.Username); err == nil {
+		in.Username = email
+	}
+	if len(in.Username) == 0 || len(in.Username) > 254 || len(in.Password) < 12 || len(in.Password) > 72 {
 		fail(w, 401, "账号或密码错误")
 		return
 	}
@@ -300,6 +314,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, e := s.query.FindUserByName(r.Context(), in.Username)
+	// Preserve exact login for legacy administrator-created mixed-case emails.
+	if e != nil && originalUsername != in.Username {
+		u, e = s.query.FindUserByName(r.Context(), originalUsername)
+	}
 	passwordHash := dummyLoginHash
 	if e == nil && u.Enabled {
 		passwordHash = []byte(u.PasswordHash)

@@ -17,6 +17,7 @@ func testUser(t *testing.T, p *pgxpool.Pool, quota int64, limit int, isAdmin boo
 		t.Fatal(e)
 	}
 	t.Cleanup(func() {
+		_, _ = p.Exec(ctx, "DELETE FROM referral_rewards WHERE inviter_id=$1 OR invitee_id=$1", id)
 		for _, q := range []string{"DELETE FROM wallet_entries WHERE user_id=$1 OR actor_id=$1", "DELETE FROM shop_orders WHERE user_id=$1 OR actor_id=$1", "DELETE FROM wallet_accounts WHERE user_id=$1"} {
 			_, _ = p.Exec(ctx, q, id)
 		}

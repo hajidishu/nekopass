@@ -1,11 +1,13 @@
 package control
 
 import (
+	"github.com/nekopass/nekopass/internal/registration"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
 )
 
 type UserInput struct {
+	Referral *UserReferralSettings `json:"referral,omitempty"`
 	UserResourcesInput
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -21,7 +23,10 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
  u.traffic_base_bytes+COALESCE((SELECT sum(issued-released+unlimited_spent) FROM current_grants WHERE user_id=u.id),0)::bigint AS allocated_bytes,u.resources_revision,
  COALESCE((SELECT array_agg(group_id ORDER BY group_id) FROM user_node_groups WHERE user_id=u.id),'{}') AS node_group_ids,
  COALESCE((SELECT array_agg(node_id) FROM user_nodes WHERE user_id=u.id),'{}') AS node_ids,
- (SELECT count(*) FROM rules WHERE user_id=u.id) AS rule_count
+ (SELECT count(*) FROM rules WHERE user_id=u.id) AS rule_count,
+ (SELECT referral_enabled FROM users WHERE id=u.id) AS referral_enabled,
+ (SELECT referral_mode FROM users WHERE id=u.id) AS referral_mode,
+ (SELECT referral_rate_bps FROM users WHERE id=u.id) AS referral_rate_bps
  FROM user_entitlements u WHERE $1 OR u.id=$2 ORDER BY u.id`, u.IsAdmin, u.ID)
 	s.sendRows(w, rows, e)
 }
@@ -37,8 +42,15 @@ func (s *Server) saveUser(w http.ResponseWriter, r *http.Request) {
 	if !validID {
 		return
 	}
-	if v.Username == "" || len(v.Username) > 64 || v.PlanID < 0 {
+	if email, err := registration.Email(v.Username); err == nil {
+		v.Username = email
+	}
+	if v.Username == "" || len(v.Username) > 254 || v.PlanID < 0 {
 		fail(w, 400, "用户参数无效")
+		return
+	}
+	if err := v.Referral.validate(); err != nil {
+		fail(w, 400, err.Error())
 		return
 	}
 	if err := v.UserResourcesInput.validate(); err != nil {
@@ -65,6 +77,22 @@ func (s *Server) saveUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
+	if _, e = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(lower($1),734296))", v.Username); e != nil {
+		s.dbError(w, e)
+		return
+	}
+
+	if _, err := registration.Email(v.Username); err == nil {
+		var duplicate bool
+		if e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE lower(username)=$1 AND id<>$2)", v.Username, id).Scan(&duplicate); e != nil {
+			s.dbError(w, e)
+			return
+		}
+		if duplicate {
+			fail(w, 409, "此邮箱已注册")
+			return
+		}
+	}
 	var oldPlan int64
 	var before []byte
 	if id != 0 {
@@ -124,6 +152,10 @@ func (s *Server) saveUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if e != nil {
+		s.dbError(w, e)
+		return
+	}
+	if e = saveUserReferral(ctx, tx, id, v.Referral); e != nil {
 		s.dbError(w, e)
 		return
 	}

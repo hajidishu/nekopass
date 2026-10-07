@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nekopass/nekopass/internal/ddns"
+	"github.com/nekopass/nekopass/internal/networkpolicy"
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/release"
 	"golang.org/x/time/rate"
@@ -42,6 +44,7 @@ type Engine struct {
 	closed          bool
 	maxConnections  atomic.Int64
 	node            atomic.Pointer[pb.NodeConfig]
+	targetPolicy    atomic.Pointer[networkpolicy.Policy]
 	probe           atomic.Pointer[pb.Probe]
 	connections     atomic.Int64
 	tunnel          *tunnelListener
@@ -104,6 +107,13 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 	if e.closed {
 		return errors.New("engine closed")
 	}
+	if c.Node != nil {
+		policy, err := targetPolicy(c.Node.SecurityConfigured, c.Node.TargetDenyCidrs)
+		if err != nil {
+			return err
+		}
+		e.targetPolicy.Store(policy)
+	}
 	for _, ack := range c.AcknowledgedUsage {
 		key := epochKey(ack.UserId, ack.QuotaEpoch)
 		a := e.retired[key]
@@ -129,7 +139,7 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 	restartListeners := false
 	if c.Node != nil {
 		old := e.node.Load()
-		restartListeners = old != nil && (old.DialTimeoutSeconds != c.Node.DialTimeoutSeconds || old.IdleTimeoutSeconds != c.Node.IdleTimeoutSeconds)
+		restartListeners = old != nil && (old.DialTimeoutSeconds != c.Node.DialTimeoutSeconds || old.IdleTimeoutSeconds != c.Node.IdleTimeoutSeconds || !slices.Equal(old.ProxyTrustedCidrs, c.Node.ProxyTrustedCidrs) || old.SecurityConfigured != c.Node.SecurityConfigured)
 		e.node.Store(proto.Clone(c.Node).(*pb.NodeConfig))
 		e.maxConnections.Store(c.Node.MaxConnections)
 		e.configureDDNS(c.Node.Ddns)
@@ -212,6 +222,7 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 		l := &listener{rule: r, runtime: newRuleRuntime(r), ln: ln, ctx: ctx, cancel: cancel}
 		l.runtime.configureNode(e.nodeConfiguration())
 		l.runtime.h2 = e.h2
+		l.runtime.dialTarget = e.dialTarget
 		e.listeners[id] = l
 		count := e.counters[id]
 		if count == nil {
@@ -268,7 +279,11 @@ func (e *Engine) forward(l *listener, client net.Conn, a *Account, count *atomic
 	ctx, cancel := context.WithCancel(context.WithValue(l.ctx, activityKey{}, activity))
 	defer cancel()
 	defer client.Close()
-	effective, addresses, err := readProxy(client, l.rule.ProxyAccept, l.rule.ProxyTrustedCidrs)
+	trusted := l.rule.ProxyTrustedCidrs
+	if node := e.node.Load(); node != nil && node.SecurityConfigured {
+		trusted = node.ProxyTrustedCidrs
+	}
+	effective, addresses, err := readProxy(client, l.rule.ProxyAccept, trusted)
 	if err != nil {
 		return
 	}
@@ -307,7 +322,7 @@ func (e *Engine) forward(l *listener, client net.Conn, a *Account, count *atomic
 			case <-stopped:
 				return
 			case <-ticker.C:
-				if !a.valid() || (l.runtime.idleTimeout > 0 && time.Since(time.Unix(0, activity.Load())) >= l.runtime.idleTimeout) {
+				if !a.valid() || (l.rule.EgressNodeId == 0 && !e.targetAllowed(target)) || (l.runtime.idleTimeout > 0 && time.Since(time.Unix(0, activity.Load())) >= l.runtime.idleTimeout) {
 					cancel()
 				}
 			}
@@ -396,7 +411,7 @@ func (e *Engine) Report() (*pb.AgentMessage, error) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 	}
-	r := &pb.AgentMessage{ProtocolVersion: 13, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load()}
+	r := &pb.AgentMessage{ProtocolVersion: 14, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load()}
 	users := map[int64]DiskUser{}
 	for _, a := range e.users {
 		u, wanted, err := a.report()

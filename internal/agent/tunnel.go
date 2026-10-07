@@ -266,6 +266,14 @@ func (e *Engine) handleTunnel(ctx context.Context, upstream net.Conn) {
 		_, _ = upstream.Write([]byte{1})
 		return
 	}
+	dialCtx, cancelDial := context.WithTimeout(ctx, policy.dialTimeout)
+	targetConn, err := e.dialTarget(dialCtx, "tcp", target)
+	cancelDial()
+	if err != nil {
+		_, _ = upstream.Write([]byte{2})
+		return
+	}
+	defer targetConn.Close()
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
@@ -276,7 +284,7 @@ func (e *Engine) handleTunnel(ctx context.Context, upstream net.Conn) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if !e.plainTunnelAllowed(ruleID, ingress, userID, epoch, target, key) {
+				if !e.targetAllowed(targetConn) || !e.plainTunnelAllowed(ruleID, ingress, userID, epoch, target, key) {
 					cancel()
 					return
 				}
@@ -284,13 +292,7 @@ func (e *Engine) handleTunnel(ctx context.Context, upstream net.Conn) {
 		}
 	}()
 	defer func() { cancel(); <-watchDone }()
-	dialer := net.Dialer{Timeout: policy.dialTimeout, KeepAlive: 30 * time.Second}
-	targetConn, err := dialer.DialContext(ctx, "tcp", target)
-	if err != nil {
-		_, _ = upstream.Write([]byte{2})
-		return
-	}
-	defer targetConn.Close()
+
 	stopTarget := context.AfterFunc(ctx, func() { targetConn.Close() })
 	defer stopTarget()
 	// Authorization may have changed while the target connection was opening.

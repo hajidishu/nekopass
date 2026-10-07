@@ -26,6 +26,7 @@ type ruleRuntime struct {
 	dialTimeout  time.Duration
 	idleTimeout  time.Duration
 	h2           *h2Transport
+	dialTarget   func(context.Context, string, string) (net.Conn, error)
 }
 
 func newRuleRuntime(r *pb.Rule) *ruleRuntime {
@@ -116,7 +117,11 @@ func (r *ruleRuntime) dial(ctx context.Context) (net.Conn, func(), error) {
 		var c net.Conn
 		var e error
 		if r.policy.EgressNodeId == 0 {
-			c, e = d.DialContext(dialCtx, "tcp", r.targets[i])
+			if r.dialTarget != nil {
+				c, e = r.dialTarget(dialCtx, "tcp", r.targets[i])
+			} else {
+				c, e = d.DialContext(dialCtx, "tcp", r.targets[i])
+			}
 		} else {
 			if tunnel.H2(r.policy.TunnelProtocol) {
 				if r.h2 == nil {

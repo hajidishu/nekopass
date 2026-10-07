@@ -77,6 +77,55 @@ class UpdaterTests(unittest.TestCase):
   for version in ['../v1.0.0','v1.0.0;id','v1.0.0\n','https://evil.example','v1.0.0-beta']:
    self.assertIsNone(updater.TAG.fullmatch(version))
   self.assertIsNotNone(updater.TAG.fullmatch('v0.10.0'))
+ @unittest.skipIf(sys.platform=='win32','Linux installation paths')
+ def test_panel_assets_failure_keeps_compatible_binary_and_can_retry(self):
+  self.panel_failure_recovery('assets')
+ @unittest.skipIf(sys.platform=='win32','Linux installation paths')
+ def test_panel_install_failure_never_migrates_or_starts_an_incompatible_binary(self):
+  self.panel_failure_recovery('install')
+ @unittest.skipIf(sys.platform=='win32','Linux installation paths')
+ def test_partial_migration_failure_keeps_old_binary_stopped(self):
+  self.panel_failure_recovery('migration')
+ def panel_failure_recovery(self,failure):
+  original_path=pathlib.Path;real_replace=updater.os.replace;real_copytree=updater.shutil.copytree
+  with tempfile.TemporaryDirectory() as temp:
+   root=original_path(temp);base=root/'opt/nekopass';(base/'bin').mkdir(parents=True)
+   binary=base/'bin/nekopass';binary.write_bytes(b'\x7fELFold')
+   def paths(value):
+    value=str(value)
+    return root/value.lstrip('/') if value.startswith(('/opt/','/usr/local/')) else original_path(value)
+   def extract(archive,stage):
+    (stage/'bin').mkdir();(stage/'bin/nekopass').write_bytes(b'\x7fELFnew')
+    (stage/'web').mkdir();(stage/'web/index.html').write_text('new')
+   def copytree(source,target,**kwargs):
+    if failure=='assets':raise OSError('fixture assets copy failure')
+    return real_copytree(source,target,**kwargs)
+   def replace(source,target):
+    if failure=='install' and target==binary:raise OSError('fixture install failure')
+    return real_replace(source,target)
+   def run(args,**kwargs):
+    if failure=='migration' and args[0]=='systemd-run':raise OSError('fixture partial migration failure')
+   def version(path,agent):return 'v0.15.1' if path.read_bytes()==b'\x7fELFold' else 'v0.15.2'
+   active=types.SimpleNamespace(returncode=0)
+   with patch.object(updater.pathlib,'Path',paths),patch.object(updater.platform,'machine',return_value='x86_64'),patch.object(updater,'download'),patch.object(updater,'extract_panel',side_effect=extract),patch.object(updater,'current',side_effect=version),patch.object(updater.subprocess,'run',return_value=active),patch.object(updater.subprocess,'check_output',return_value='nekopass\n'),patch.object(updater,'run',side_effect=run) as commands,patch.object(updater.time,'sleep'),patch.object(updater.shutil,'copytree',side_effect=copytree),patch.object(updater.os,'replace',side_effect=replace):
+    with self.assertRaises(OSError):updater.update('nekopass','v0.15.2')
+    pending=base/'bin/nekopass.update-pending'
+    self.assertEqual(json.loads(pending.read_text()),{'version':'v0.15.2','was_active':True})
+    starts=[call for call in commands.call_args_list if call.args[0]==['systemctl','start','nekopass']]
+    if failure=='assets':
+     self.assertEqual(binary.read_bytes(),b'\x7fELFnew');self.assertEqual(len(starts),1)
+    elif failure=='install':
+     self.assertEqual(binary.read_bytes(),b'\x7fELFold');self.assertEqual(len(starts),0)
+     self.assertTrue((base/'bin/nekopass.next').exists())
+     self.assertFalse(any(call.args[0][0]=='systemd-run' for call in commands.call_args_list))
+    else:
+     self.assertEqual(binary.read_bytes(),b'\x7fELFnew');self.assertEqual(len(starts),0)
+    with self.assertRaises(ValueError):updater.update('nekopass','v0.15.1')
+    # A retry must repair assets even if the installed executable is latest.
+    failure='none';active.returncode=1;commands.reset_mock();updater.update('nekopass','v0.15.2')
+    commands.assert_any_call(['systemctl','start','nekopass'])
+    self.assertFalse(pending.exists());self.assertEqual((base/'web/index.html').read_text(),'new')
+    self.assertEqual(binary.read_bytes(),b'\x7fELFnew')
  @unittest.skipIf(sys.platform=='win32','Linux request flags')
  def test_request_schema_and_symlink(self):
   with tempfile.TemporaryDirectory() as temp:

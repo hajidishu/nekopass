@@ -359,6 +359,10 @@ func (s *Server) checkout(w http.ResponseWriter, r *http.Request, pay bool) {
 		s.dbError(w, e)
 		return
 	}
+	if e = creditReferral(ctx, tx, uid, oid, price, p.Name); e != nil {
+		s.dbError(w, e)
+		return
+	}
 	if e = finishRules(ctx, tx); e != nil {
 		s.dbError(w, e)
 		return

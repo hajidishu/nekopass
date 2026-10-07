@@ -14,24 +14,34 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/nekopass/nekopass/internal/networkpolicy"
+	"github.com/nekopass/nekopass/internal/registration"
 	"github.com/nekopass/nekopass/internal/release"
 	"github.com/nekopass/nekopass/internal/store"
 )
 
 type SystemSettings struct {
-	SiteName            string `json:"site_name"`
-	PanelURL            string `json:"panel_url"`
-	AgentHost           string `json:"agent_host"`
-	AgentPort           int    `json:"agent_port"`
-	AgentTransport      string `json:"agent_transport"`
-	InstallerURL        string `json:"installer_url"`
-	ReleaseBaseURL      string `json:"release_base_url"`
-	AgentVersion        string `json:"agent_version"`
-	InstallTokenMinutes int    `json:"install_token_minutes"`
+	RegistrationEnabled bool              `json:"registration_enabled"`
+	CaptchaMode         string            `json:"captcha_mode"`
+	SMTP                registration.SMTP `json:"smtp"`
+	ReferralEnabled     bool              `json:"referral_enabled"`
+	ReferralMode        string            `json:"referral_mode"`
+	ReferralRate        string            `json:"referral_rate"`
+	ProxyTrustedCIDRs   []string          `json:"proxy_trusted_cidrs"`
+	TargetDenyCIDRs     []string          `json:"target_deny_cidrs"`
+	SiteName            string            `json:"site_name"`
+	PanelURL            string            `json:"panel_url"`
+	AgentHost           string            `json:"agent_host"`
+	AgentPort           int               `json:"agent_port"`
+	AgentTransport      string            `json:"agent_transport"`
+	InstallerURL        string            `json:"installer_url"`
+	ReleaseBaseURL      string            `json:"release_base_url"`
+	AgentVersion        string            `json:"agent_version"`
+	InstallTokenMinutes int               `json:"install_token_minutes"`
 }
 
 func defaultSettings() SystemSettings {
-	return SystemSettings{SiteName: "Nekopass", AgentPort: 9443, AgentTransport: "tls", AgentVersion: "latest", InstallerURL: release.LatestBase + "/install-agent.sh", ReleaseBaseURL: release.DownloadBase, InstallTokenMinutes: 30}
+	return SystemSettings{CaptchaMode: "image", SMTP: registration.SMTP{Port: 587, Security: "starttls"}, ReferralMode: "first", ReferralRate: "15", ProxyTrustedCIDRs: []string{}, TargetDenyCIDRs: networkpolicy.Defaults(), SiteName: "Nekopass", AgentPort: 9443, AgentTransport: "tls", AgentVersion: "latest", InstallerURL: release.LatestBase + "/install-agent.sh", ReleaseBaseURL: release.DownloadBase, InstallTokenMinutes: 30}
 }
 func (s *Server) readSettings(ctx context.Context) (SystemSettings, error) {
 	return readSystemSettings(ctx, s.Pool)
@@ -63,6 +73,24 @@ func httpsURL(raw string, originOnly bool) bool {
 var releaseVersion = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 func validateSettings(v SystemSettings) error {
+	if v.CaptchaMode != "off" && v.CaptchaMode != "image" {
+		return errors.New("人机验证方式无效")
+	}
+	if v.ReferralMode != "first" && v.ReferralMode != "recurring" {
+		return errors.New("邀请返利类型无效")
+	}
+	if _, err := referralRate(v.ReferralRate); err != nil {
+		return err
+	}
+	if err := v.SMTP.Validate(v.RegistrationEnabled); err != nil {
+		return err
+	}
+	if _, err := networkpolicy.Normalize(v.ProxyTrustedCIDRs, 64); err != nil {
+		return err
+	}
+	if _, err := networkpolicy.Normalize(v.TargetDenyCIDRs, 256); err != nil {
+		return err
+	}
 	if v.AgentTransport != "" && v.AgentTransport != "tls" && v.AgentTransport != "plain" {
 		return errors.New("节点连接方式须为 TLS 或明文 HTTP/2")
 	}
@@ -147,6 +175,8 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, e.Error())
 		return
 	}
+	v.ProxyTrustedCIDRs, _ = networkpolicy.Normalize(v.ProxyTrustedCIDRs, 64)
+	v.TargetDenyCIDRs, _ = networkpolicy.Normalize(v.TargetDenyCIDRs, 256)
 	var previous, plan agentListenPlan
 	if s.agentListener != nil {
 		old, e := s.readSettings(r.Context())
@@ -175,6 +205,10 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	data, _ := json.Marshal(v)
 	if _, e := tx.Exec(r.Context(), "UPDATE site_settings SET config=$1,updated_at=now() WHERE id=1", data); e != nil {
+		s.dbError(w, e)
+		return
+	}
+	if e = store.New(tx).BumpRevision(r.Context()); e != nil {
 		s.dbError(w, e)
 		return
 	}

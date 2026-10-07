@@ -22,7 +22,7 @@ type pageRoute struct {
 
 func resolvePage(path string) (pageRoute, bool) {
 	pages := map[string]pageRoute{
-		"/shop": {file: "shop"}, "/orders": {file: "orders"}, "/admin/payment_gateways": {file: "admin_payment_gateways", admin: true},
+		"/register": {file: "register"}, "/referrals": {file: "referrals"}, "/shop": {file: "shop"}, "/orders": {file: "orders"}, "/admin/payment_gateways": {file: "admin_payment_gateways", admin: true},
 		"/admin/settings": {file: "admin_settings", admin: true},
 		"/":               {file: "home"}, "/login": {file: "login"}, "/profile": {file: "profile"}, "/forward_rules": {file: "forward_rules"}, "/node_status": {file: "node_status"},
 		"/admin": {file: "admin", admin: true}, "/admin/announcements": {file: "admin_announcements", admin: true}, "/admin/users": {file: "admin_users", admin: true}, "/admin/plans": {file: "admin_plans", admin: true}, "/admin/nodes": {file: "admin_nodes", admin: true}, "/admin/node_groups": {file: "admin_node_groups", admin: true},
@@ -59,7 +59,7 @@ func safeNext(raw string, isAdmin bool) string {
 		return "/"
 	}
 	p, ok := resolvePage(u.Path)
-	if !ok || p.file == "login" || (p.admin && !isAdmin) {
+	if !ok || (p.file == "login" || p.file == "register") || (p.admin && !isAdmin) {
 		return "/"
 	}
 	return u.RequestURI()
@@ -127,7 +127,7 @@ func (s *Server) pages(static http.Handler) http.Handler {
 				user = &u
 			}
 		}
-		if route.file == "login" {
+		if route.file == "login" || route.file == "register" {
 			if user != nil {
 				http.Redirect(w, r, safeNext(r.URL.Query().Get("next"), user.IsAdmin), http.StatusSeeOther)
 				return

@@ -10,6 +10,7 @@ import {usePage} from '../page'
 import {api,bytes,quotaText,limitText,type User,type Plan,type NodeGroup} from '../api'
 const users=ref<User[]>([]),plans=ref<Plan[]>([]),userPage=ref(1),search=ref(''),dialog=ref(false),editID=ref(0)
 const resource=reactive(resourcesOf()),originalResource=ref<ResourceForm>(),originalUser=ref<User>(),nodeGroups=ref<NodeGroup[]>([])
+const referral=reactive({enabled:'inherit',mode:'inherit',rate:''})
 const form=reactive({username:'',password:'',enabled:true,plan_id:0})
 const rechargeDialog=ref(false),rechargeUser=ref<User|null>(null),recharge=reactive({amount:'100.00',note:'',request_key:''})
 function credit(u:User){rechargeUser.value=u;Object.assign(recharge,{amount:'100.00',note:'',request_key:requestKey()});rechargeDialog.value=true}
@@ -17,12 +18,12 @@ async function saveCredit(){if(!rechargeUser.value)return;await run(async()=>{aw
 const filtered=computed(()=>users.value.filter(u=>u.username.toLowerCase().includes(search.value.toLowerCase())))
 const paged=computed(()=>filtered.value.slice((userPage.value-1)*25,userPage.value*25))
 const {me,loading,error,busy,run,refresh}=usePage(async()=>{const[u,p,g]=await Promise.all([api<User[]>('admin/users'),api<Plan[]>('admin/plans'),api<NodeGroup[]>('admin/node-groups')]);users.value=u;plans.value=p;nodeGroups.value=g},{admin:true,interval:5000})
-function edit(u?:User){editID.value=u?.id||0;originalUser.value=u;originalResource.value=u?resourcesOf(u):undefined;Object.assign(resource,resourcesOf(u));Object.assign(form,{username:u?.username||'',password:'',enabled:u?.enabled??true,plan_id:u?.plan_id||0});dialog.value=true}
+function edit(u?:User){editID.value=u?.id||0;originalUser.value=u;originalResource.value=u?resourcesOf(u):undefined;Object.assign(resource,resourcesOf(u));Object.assign(form,{username:u?.username||'',password:'',enabled:u?.enabled??true,plan_id:u?.plan_id||0});Object.assign(referral,{enabled:u?.referral_enabled==null?'inherit':u.referral_enabled?'on':'off',mode:u?.referral_mode||'inherit',rate:u?.referral_rate_bps==null?'':String(u.referral_rate_bps/100)});dialog.value=true}
 function selectPlan(id:number){form.plan_id=id;Object.assign(resource,id===originalUser.value?.plan_id?resourcesOf(originalUser.value):planResources(plans.value.find(p=>p.id===id)))}
 async function save(){await run(async()=>{
  const changes=resourceChanges(resource,form.plan_id===originalUser.value?.plan_id?originalResource.value:undefined)
  if(resource.traffic_gib===originalResource.value?.traffic_gib)delete changes.traffic_bytes
- await api(`admin/users${editID.value?'/'+editID.value:''}`,editID.value?'PUT':'POST',{...form,...changes,...(editID.value?{expected_resources_revision:originalUser.value?.resources_revision}: {})})
+ await api(`admin/users${editID.value?'/'+editID.value:''}`,editID.value?'PUT':'POST',{...form,referral:{enabled:referral.enabled==='inherit'?null:referral.enabled==='on',mode:referral.mode,rate:referral.rate||null},...changes,...(editID.value?{expected_resources_revision:originalUser.value?.resources_revision}: {})})
  dialog.value=false;await refresh();ElMessage.success('用户已保存')
 })}
 </script>
@@ -30,7 +31,7 @@ async function save(){await run(async()=>{
  <el-dialog v-model="dialog" :title="editID?'编辑用户':'创建用户'" width="680px" top="4vh" class="managed-form-dialog"><el-form label-position="top">
   <el-form-item label="用户名"><el-input v-model="form.username" /></el-form-item><el-form-item :label="editID?'新密码（留空不修改）':'密码（至少 12 字节）'"><el-input v-model="form.password" type="password" show-password /></el-form-item>
   <el-form-item label="套餐"><el-select :model-value="form.plan_id" @update:model-value="selectPlan($event)" filterable><el-option label="未分配套餐" :value="0" /><el-option v-for="p in plans" :key="p.id" :label="p.name+(p.enabled?'':'（停用）')" :value="p.id" /></el-select><span class="field-tip">分配或更换套餐时复制初始设置，已有用户不随套餐修改。同套餐续费保留个人设置并重置已用流量。</span></el-form-item>
-  <div class="form-section-title">个人资源设置</div><div class="form-grid">
+  <div class="form-section-title">邀请返利</div><div class="form-grid"><el-form-item label="个人返利功能"><el-select v-model="referral.enabled"><el-option label="跟随系统设置" value="inherit"/><el-option label="开启" value="on"/><el-option label="关闭" value="off"/></el-select></el-form-item><el-form-item label="推荐返利类型"><el-select v-model="referral.mode"><el-option label="跟随系统设置" value="inherit"/><el-option label="循环返利" value="recurring"/><el-option label="首次返利" value="first"/></el-select></el-form-item><el-form-item label="推荐返利比例"><el-input v-model="referral.rate" inputmode="decimal" placeholder="留空跟随系统设置"><template #append>%</template></el-input></el-form-item></div><p class="field-tip">系统关闭邀请返利时，个人开启设置不生效。</p><div class="form-section-title">个人资源设置</div><div class="form-grid">
    <el-form-item label="总流量额度"><LimitInput v-model="resource.quota_gib" unit="GiB" :sentinel="-1" :min="0" :max="1073741824" :precision="6" /></el-form-item>
    <el-form-item label="已用流量"><el-input v-model="resource.traffic_gib" inputmode="decimal"><template #append>GiB</template></el-input></el-form-item>
    <el-form-item label="每节点用户限速"><LimitInput v-model="resource.speed_mbps" unit="Mbps" :max="100000" /></el-form-item>

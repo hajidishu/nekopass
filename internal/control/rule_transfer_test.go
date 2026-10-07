@@ -37,9 +37,9 @@ func TestImportedAutoProxyRuleIsAtomicScopedAndSafeForOlderAgents(t *testing.T) 
 		return f.request(actor, path, "POST", map[string]any{"rules": values}).Code
 	}
 	invalid := rule
-	invalid.ProxyTrustedCIDRs = nil
+	invalid.Targets = []string{"invalid-target"}
 	if post(f.user, "rules/import", rule, invalid) != 400 || count() != 0 {
-		t.Fatal("invalid receiver partially saved a batch")
+		t.Fatal("invalid target partially saved a batch")
 	}
 	invalid = rule
 	invalid.ListenPort++

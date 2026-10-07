@@ -26,6 +26,8 @@ type h2ServerSession struct {
 	mu      sync.Mutex
 	nonces  map[string]bool
 	active  int
+	high    uint64
+	seen    [128]uint64 // 8192 counters; constant memory even on long-lived peers.
 }
 
 func (s *h2ServerSession) reserve(limit int) bool {
@@ -46,6 +48,31 @@ func (s *h2ServerSession) take(nonce string) bool {
 		return false
 	}
 	s.nonces[nonce] = true
+	return true
+}
+
+func (s *h2ServerSession) takeSequence(seq uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if seq == 0 || seq <= s.high && s.high-seq >= 8192 {
+		return false
+	}
+	if seq > s.high {
+		if seq-s.high >= 8192 {
+			s.seen = [128]uint64{}
+		} else {
+			for offset := uint64(1); offset <= seq-s.high; offset++ {
+				n := s.high + offset
+				s.seen[(n%8192)/64] &^= uint64(1) << (n % 64)
+			}
+		}
+		s.high = seq
+	}
+	index, bit := (seq%8192)/64, uint64(1)<<(seq%64)
+	if s.seen[index]&bit != 0 {
+		return false
+	}
+	s.seen[index] |= bit
 	return true
 }
 
@@ -154,7 +181,7 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session, ok := r.Context().Value(h2SessionKey{}).(*h2ServerSession)
-	if !ok || !session.take(open.Nonce) {
+	if !ok || (open.Seq == 0 && !session.take(open.Nonce)) || (open.Seq != 0 && !session.takeSequence(open.Seq)) {
 		e.camouflage(w, r)
 		return
 	}
@@ -170,8 +197,7 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dialCtx, cancelDial := context.WithTimeout(r.Context(), policy.dialTimeout)
-	d := net.Dialer{KeepAlive: 30 * time.Second}
-	target, err := d.DialContext(dialCtx, "tcp", open.Target)
+	target, err := e.dialTarget(dialCtx, "tcp", open.Target)
 	cancelDial()
 	if err != nil {
 		http.Error(w, "Service unavailable", 502)
@@ -205,7 +231,7 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 			case <-ticker.C:
 				current := e.tunnelPolicy.Load()
 				n := e.node.Load()
-				if n == nil || !n.Enabled || !n.TunnelExitEnabled || current == nil || current.links[open.Ingress] != key || !h2RuleAllowed(current, open) {
+				if !e.targetAllowed(target) || n == nil || !n.Enabled || !n.TunnelExitEnabled || current == nil || current.links[open.Ingress] != key || !h2RuleAllowed(current, open) {
 					cancel()
 					return
 				}

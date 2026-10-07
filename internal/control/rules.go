@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/nekopass/nekopass/internal/networkpolicy"
 	"github.com/nekopass/nekopass/internal/store"
 )
 
@@ -103,7 +104,7 @@ func (in *RuleInput) normalize() error {
 		}
 	}
 	if in.ProxyAccept != "off" && len(in.ProxyTrustedCIDRs) == 0 {
-		return errors.New("开启接收 Proxy Protocol 时需指定信任代理网段")
+		return errors.New("管理员尚未配置 Proxy Protocol 信任网段")
 	}
 	return nil
 }
@@ -122,8 +123,24 @@ func putRule(ctx context.Context, tx pgx.Tx, actor store.User, id int64, in Rule
 	if !actor.IsAdmin {
 		in.UserID = actor.ID
 	}
+	settings, err := readSystemSettings(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	// Never accept a tenant-supplied trust boundary, including imports/batches.
+	in.ProxyTrustedCIDRs = settings.ProxyTrustedCIDRs
 	if e := in.normalize(); e != nil {
 		return 0, e
+	}
+	policy, err := networkpolicy.Compile(settings.TargetDenyCIDRs)
+	if err != nil {
+		return 0, err
+	}
+	for _, target := range in.Targets {
+		host, _, _ := net.SplitHostPort(target)
+		if ip, e := netip.ParseAddr(host); e == nil && policy.Denied(ip) {
+			return 0, errors.New("目标 IP 位于管理员禁止的网段")
+		}
 	}
 	if id != 0 {
 		var owner int64
@@ -250,16 +267,23 @@ func (s *Server) saveRule(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
 	u := ruleActor(r)
+	settings, e := s.readSettings(r.Context())
+	if e != nil {
+		s.dbError(w, e)
+		return
+	}
 	rows, e := s.Pool.Query(r.Context(), `SELECT r.id,r.user_id,r.node_id,COALESCE(r.egress_node_id,0) AS egress_node_id,COALESCE(en.name,'') AS egress_node_name,COALESCE(en.tunnel_protocol,'') AS egress_tunnel_protocol,r.listen_host,r.listen_port,r.target_host,r.target_port,r.enabled,r.name,r.group_id,r.targets,r.balance,r.proxy_accept,r.proxy_send,r.proxy_trusted_cidrs,r.traffic_baseline,r.config_revision,u.rule_speed_bps/125000 AS speed_mbps,u.rule_ip_limit AS ip_limit,u.rule_connection_limit AS connection_limit,u.username,n.name AS node_name,n.public_address,n.last_seen,n.sync_error,n.applied_revision,
  COALESCE(g.name,'') AS group_name,GREATEST(COALESCE((SELECT sum(t.traffic) FROM rule_usage t WHERE t.rule_id=r.id),0)::bigint-r.traffic_baseline,0) AS traffic_bytes,
  CASE WHEN NOT r.enabled THEN 'disabled' WHEN NOT u.account_enabled THEN 'user_disabled' WHEN u.plan_id IS NULL THEN 'no_plan' WHEN NOT u.plan_enabled THEN 'plan_disabled' WHEN u.expires_at<=now() THEN 'expired' WHEN NOT n.ingress_enabled OR NOT EXISTS(SELECT 1 FROM user_nodes un WHERE un.user_id=r.user_id AND un.node_id=r.node_id) OR (r.egress_node_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM user_nodes un WHERE un.user_id=r.user_id AND un.node_id=r.egress_node_id)) THEN 'unauthorized'
  WHEN u.quota_bytes>=0 AND (u.quota_bytes<=u.traffic_base_bytes+COALESCE((SELECT sum(traffic) FROM current_grants WHERE user_id=u.id),0) OR u.quota_bytes<u.traffic_base_bytes+COALESCE((SELECT sum(issued-released+unlimited_spent) FROM current_grants WHERE user_id=u.id),0)) THEN 'quota_exhausted'
 	 WHEN n.last_seen IS NULL OR n.last_seen<now()-interval '12 seconds' OR (en.id IS NOT NULL AND (en.last_seen IS NULL OR en.last_seen<now()-interval '12 seconds')) THEN 'offline'
-	 WHEN r.proxy_accept='auto' AND n.protocol_version<10 THEN 'upgrade_required'
+	 WHEN $3 AND (n.protocol_version<14 OR (en.id IS NOT NULL AND en.protocol_version<14)) THEN 'upgrade_required'
+ WHEN r.proxy_accept<>'off' AND $4 THEN 'proxy_untrusted'
+ WHEN r.proxy_accept='auto' AND n.protocol_version<10 THEN 'upgrade_required'
 	 WHEN en.tunnel_protocol='tls_h2' AND (n.protocol_version<11 OR en.protocol_version<11) THEN 'upgrade_required'
  WHEN en.tunnel_protocol IN ('tls_tcp','plain_h2') AND (n.protocol_version<13 OR en.protocol_version<13) THEN 'upgrade_required'
 	 WHEN n.sync_error<>'' OR COALESCE(en.sync_error,'')<>'' THEN 'failed' WHEN n.applied_revision<r.config_revision OR (en.id IS NOT NULL AND en.applied_revision<r.config_revision) THEN 'pending' ELSE 'active' END AS status
-	 FROM rules r JOIN user_entitlements u ON u.id=r.user_id JOIN nodes n ON n.id=r.node_id LEFT JOIN nodes en ON en.id=r.egress_node_id LEFT JOIN rule_groups g ON g.id=r.group_id WHERE $1 OR r.user_id=$2 ORDER BY r.id DESC`, u.IsAdmin, u.ID)
+	 FROM rules r JOIN user_entitlements u ON u.id=r.user_id JOIN nodes n ON n.id=r.node_id LEFT JOIN nodes en ON en.id=r.egress_node_id LEFT JOIN rule_groups g ON g.id=r.group_id WHERE $1 OR r.user_id=$2 ORDER BY r.id DESC`, u.IsAdmin, u.ID, len(settings.TargetDenyCIDRs) > 0, len(settings.ProxyTrustedCIDRs) == 0)
 	if e != nil {
 		s.dbError(w, e)
 		return
@@ -268,6 +292,9 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		s.dbError(w, e)
 		return
+	}
+	for _, rule := range v {
+		rule["proxy_trusted_cidrs"] = settings.ProxyTrustedCIDRs
 	}
 	writeJSON(w, 200, v)
 }

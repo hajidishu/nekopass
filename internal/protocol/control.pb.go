@@ -1024,6 +1024,9 @@ type NodeConfig struct {
 	TunnelProtocol       string                 `protobuf:"bytes,15,opt,name=tunnel_protocol,json=tunnelProtocol,proto3" json:"tunnel_protocol,omitempty"`
 	Tls                  *TLSServerConfig       `protobuf:"bytes,16,opt,name=tls,proto3" json:"tls,omitempty"`
 	Ddns                 *DDNSConfig            `protobuf:"bytes,17,opt,name=ddns,proto3" json:"ddns,omitempty"`
+	ProxyTrustedCidrs    []string               `protobuf:"bytes,18,rep,name=proxy_trusted_cidrs,json=proxyTrustedCidrs,proto3" json:"proxy_trusted_cidrs,omitempty"`
+	TargetDenyCidrs      []string               `protobuf:"bytes,19,rep,name=target_deny_cidrs,json=targetDenyCidrs,proto3" json:"target_deny_cidrs,omitempty"`
+	SecurityConfigured   bool                   `protobuf:"varint,20,opt,name=security_configured,json=securityConfigured,proto3" json:"security_configured,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -1175,6 +1178,27 @@ func (x *NodeConfig) GetDdns() *DDNSConfig {
 		return x.Ddns
 	}
 	return nil
+}
+
+func (x *NodeConfig) GetProxyTrustedCidrs() []string {
+	if x != nil {
+		return x.ProxyTrustedCidrs
+	}
+	return nil
+}
+
+func (x *NodeConfig) GetTargetDenyCidrs() []string {
+	if x != nil {
+		return x.TargetDenyCidrs
+	}
+	return nil
+}
+
+func (x *NodeConfig) GetSecurityConfigured() bool {
+	if x != nil {
+		return x.SecurityConfigured
+	}
+	return false
 }
 
 type DDNSConfig struct {
@@ -1412,6 +1436,7 @@ type TLSClientConfig struct {
 	ConnectionWindowMib  int32                  `protobuf:"varint,7,opt,name=connection_window_mib,json=connectionWindowMib,proto3" json:"connection_window_mib,omitempty"`
 	Host                 string                 `protobuf:"bytes,8,opt,name=host,proto3" json:"host,omitempty"`
 	RequireResponseProof bool                   `protobuf:"varint,9,opt,name=require_response_proof,json=requireResponseProof,proto3" json:"require_response_proof,omitempty"`
+	SequenceAuth         bool                   `protobuf:"varint,10,opt,name=sequence_auth,json=sequenceAuth,proto3" json:"sequence_auth,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -1505,6 +1530,13 @@ func (x *TLSClientConfig) GetHost() string {
 func (x *TLSClientConfig) GetRequireResponseProof() bool {
 	if x != nil {
 		return x.RequireResponseProof
+	}
+	return false
+}
+
+func (x *TLSClientConfig) GetSequenceAuth() bool {
+	if x != nil {
+		return x.SequenceAuth
 	}
 	return false
 }
@@ -2020,7 +2052,7 @@ const file_api_control_proto_rawDesc = "" +
 	"generation\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x14\n" +
 	"\x05state\x18\x03 \x01(\tR\x05state\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\xb7\x05\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"\xc4\x06\n" +
 	"\n" +
 	"NodeConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1f\n" +
@@ -2041,7 +2073,10 @@ const file_api_control_proto_rawDesc = "" +
 	"\anode_id\x18\x0e \x01(\x03R\x06nodeId\x12'\n" +
 	"\x0ftunnel_protocol\x18\x0f \x01(\tR\x0etunnelProtocol\x12.\n" +
 	"\x03tls\x18\x10 \x01(\v2\x1c.nekopass.v1.TLSServerConfigR\x03tls\x12+\n" +
-	"\x04ddns\x18\x11 \x01(\v2\x17.nekopass.v1.DDNSConfigR\x04ddns\"\xcd\x02\n" +
+	"\x04ddns\x18\x11 \x01(\v2\x17.nekopass.v1.DDNSConfigR\x04ddns\x12.\n" +
+	"\x13proxy_trusted_cidrs\x18\x12 \x03(\tR\x11proxyTrustedCidrs\x12*\n" +
+	"\x11target_deny_cidrs\x18\x13 \x03(\tR\x0ftargetDenyCidrs\x12/\n" +
+	"\x13security_configured\x18\x14 \x01(\bR\x12securityConfigured\"\xcd\x02\n" +
 	"\n" +
 	"DDNSConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1e\n" +
@@ -2070,7 +2105,7 @@ const file_api_control_proto_rawDesc = "" +
 	"\x04ipv6\x18\x04 \x01(\tR\x04ipv6\x12!\n" +
 	"\fchecked_unix\x18\x05 \x01(\x03R\vcheckedUnix\x12!\n" +
 	"\fupdated_unix\x18\x06 \x01(\x03R\vupdatedUnix\x12\x14\n" +
-	"\x05error\x18\a \x01(\tR\x05error\"\xc8\x02\n" +
+	"\x05error\x18\a \x01(\tR\x05error\"\xed\x02\n" +
 	"\x0fTLSClientConfig\x12\x1f\n" +
 	"\vserver_name\x18\x01 \x01(\tR\n" +
 	"serverName\x12 \n" +
@@ -2081,7 +2116,9 @@ const file_api_control_proto_rawDesc = "" +
 	"\x11stream_window_mib\x18\x06 \x01(\x05R\x0fstreamWindowMib\x122\n" +
 	"\x15connection_window_mib\x18\a \x01(\x05R\x13connectionWindowMib\x12\x12\n" +
 	"\x04host\x18\b \x01(\tR\x04host\x124\n" +
-	"\x16require_response_proof\x18\t \x01(\bR\x14requireResponseProof\"\xc3\x03\n" +
+	"\x16require_response_proof\x18\t \x01(\bR\x14requireResponseProof\x12#\n" +
+	"\rsequence_auth\x18\n" +
+	" \x01(\bR\fsequenceAuth\"\xc3\x03\n" +
 	"\x0fTLSServerConfig\x12\x1f\n" +
 	"\vserver_name\x18\x01 \x01(\tR\n" +
 	"serverName\x12 \n" +

@@ -233,6 +233,13 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 		return nil, e
 	}
 	out := &pb.ControlMessage{Node: &pb.NodeConfig{}, AcknowledgedUsage: r.Usage}
+	settings, e := readSystemSettings(ctx, tx)
+	if e != nil {
+		return nil, e
+	}
+	out.Node.SecurityConfigured = true
+	out.Node.ProxyTrustedCidrs = settings.ProxyTrustedCIDRs
+	out.Node.TargetDenyCidrs = settings.TargetDenyCIDRs
 	var interfaces []byte
 	e = tx.QueryRow(ctx, `SELECT id,enabled,listen_host,port_min,port_max,max_connections,dial_timeout_seconds,idle_timeout_seconds,probe_interval_seconds,disk_path,network_interfaces,tunnel_exit_enabled,tunnel_listen_host,tunnel_listen_port,tunnel_protocol FROM nodes WHERE id=$1`, nodeID).Scan(&out.Node.NodeId, &out.Node.Enabled, &out.Node.ListenHost, &out.Node.PortMin, &out.Node.PortMax, &out.Node.MaxConnections, &out.Node.DialTimeoutSeconds, &out.Node.IdleTimeoutSeconds, &out.Node.ProbeIntervalSeconds, &out.Node.DiskPath, &interfaces, &out.Node.TunnelExitEnabled, &out.Node.TunnelListenHost, &out.Node.TunnelListenPort, &out.Node.TunnelProtocol)
 	if e != nil {
@@ -294,6 +301,10 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 		if e = json.Unmarshal(trusted, &v.ProxyTrustedCidrs); e != nil {
 			rows.Close()
 			return nil, e
+		}
+		v.ProxyTrustedCidrs = settings.ProxyTrustedCIDRs
+		if v.ProxyAccept != "off" && len(settings.ProxyTrustedCIDRs) == 0 {
+			v.Enabled = false
 		}
 		v.IngressNodeId = nodeID
 		// Older Agents cannot detect both PROXY header versions. Keep other rules
@@ -365,6 +376,12 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 				}
 				tlsVersions[rule.EgressNodeId] = version
 			}
+			if rule.Tls != nil {
+				rule.Tls.SequenceAuth = r.ProtocolVersion >= 14 && version >= 14
+			}
+			if len(settings.TargetDenyCIDRs) > 0 && version < 14 {
+				rule.Enabled = false
+			}
 			if r.ProtocolVersion < int32(tunnel.MinimumVersion(rule.TunnelProtocol)) || version < tunnel.MinimumVersion(rule.TunnelProtocol) {
 				rule.Enabled = false
 			}
@@ -374,6 +391,16 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 		out.Node.TunnelExitEnabled = false
 		out.TunnelLinks = nil
 		out.EgressRules = nil
+	}
+	// Older agents cannot enforce target ACLs; retain probe/update control, fail forwarding closed.
+	if len(settings.TargetDenyCIDRs) > 0 && r.ProtocolVersion < 14 {
+		out.Node.Enabled = false
+		out.Node.TunnelExitEnabled = false
+		for _, rule := range out.Rules {
+			rule.Enabled = false
+		}
+		out.EgressRules = nil
+		out.TunnelLinks = nil
 	}
 	if e = appendDDNSControl(ctx, tx, nodeID, out); e != nil {
 		return nil, e

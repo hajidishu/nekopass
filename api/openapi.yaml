@@ -1,14 +1,80 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.14.6
-  description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Admin-created accounts. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
+  version: 0.15.2
+  description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
 security:
   - session: []
   - httpSession: []
 paths:
+  /registration:
+    get:
+      security: []
+      summary: Public registration availability and CAPTCHA mode; never returns SMTP credentials
+      responses:
+        '200': {description: 'enabled, captcha_mode, email_verification'}
+  /registration/captcha:
+    get:
+      security: []
+      summary: Create a single-use graphical CAPTCHA bound to the requesting IP
+      responses:
+        '200': {description: 'id and PNG image data URL; answer is never returned'}
+        '403': {description: Registration disabled}
+        '429': {description: Rate limited}
+  /registration/email-code:
+    post:
+      security: []
+      summary: Send a registration email verification code after CAPTCHA validation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: {type: string, format: email, maxLength: 254}
+                captcha_id: {type: string}
+                captcha: {type: string}
+      responses:
+        '200': {description: 'verification_id and retry_after; code is sent only by email'}
+        '400': {description: Invalid email or CAPTCHA}
+        '403': {description: Registration disabled}
+        '429': {description: Resend cooldown or rate limit}
+        '503': {description: SMTP unavailable}
+  /register:
+    post:
+      security: []
+      summary: Create a non-administrator account with a verified email username
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password, confirm_password, verification_id, email_code]
+              properties:
+                email: {type: string, format: email, maxLength: 254}
+                password: {type: string, description: '12–72 bytes'}
+                confirm_password: {type: string}
+                verification_id: {type: string}
+                email_code: {type: string, minLength: 6, maxLength: 6}
+                invite_code: {type: string, maxLength: 128, description: Unknown codes are ignored}
+      responses:
+        '201': {description: Account created; log in separately}
+        '400': {description: Invalid input or expired/used code}
+        '403': {description: Registration disabled}
+        '409': {description: Email already registered}
+        '429': {description: Rate limited}
+  /referrals:
+    get:
+      summary: Read own invitation code, effective rebate settings and totals
+      responses:
+        '200': {description: Disabled message or code, mode, rate, invited_count and earned_cents}
   /admin/updates/panel:
     get:
       summary: Read panel update support and task status (admin only)
@@ -972,6 +1038,24 @@ components:
       type: object
       additionalProperties: false
       properties:
+        registration_enabled: {type: boolean, default: false}
+        captcha_mode: {type: string, enum: ['off', image], default: image}
+        smtp:
+          type: object
+          additionalProperties: false
+          properties:
+            host: {type: string}
+            port: {type: integer, minimum: 1, maximum: 65535, default: 587}
+            security: {type: string, enum: [starttls, tls, plain], default: starttls}
+            username: {type: string}
+            password: {type: string}
+            from: {type: string, format: email}
+            from_name: {type: string}
+        referral_enabled: {type: boolean, default: false}
+        referral_mode: {type: string, enum: [first, recurring], default: first}
+        referral_rate: {type: string, default: '15', description: Percent 0–100 with up to two decimal places}
+        proxy_trusted_cidrs: {type: array, maxItems: 64, items: {type: string}, description: Administrator-only PROXY receiver trust boundary}
+        target_deny_cidrs: {type: array, maxItems: 256, items: {type: string}, description: Block actual resolved final target IPs; explicit empty array allows all targets}
         site_name: {type: string, minLength: 1, maxLength: 64}
         panel_url: {type: string, description: HTTP or HTTPS origin without subpath; may include port}
         agent_host: {type: string, description: Hostname or IP without scheme or port}
@@ -986,7 +1070,14 @@ components:
       required: [username, enabled, plan_id]
       additionalProperties: false
       properties:
-        username: {type: string, maxLength: 64}
+        username: {type: string, maxLength: 254}
+        referral:
+          type: object
+          description: Administrator-only inviter settings; omitting preserves current values
+          properties:
+            enabled: {type: boolean, nullable: true, description: Null inherits the system switch}
+            mode: {type: string, enum: [inherit, first, recurring]}
+            rate: {type: string, nullable: true, description: Empty/null inherits the system percentage}
         password: {type: string, description: '12–72 bytes on creation; empty on edit preserves password'}
         enabled: {type: boolean}
         plan_id: {type: integer, format: int64, description: '0 unassigns plan; switching plan preserves consumption'}
