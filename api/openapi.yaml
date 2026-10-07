@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.15.2
+  version: 0.16.0
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -9,6 +9,150 @@ security:
   - session: []
   - httpSession: []
 paths:
+  /admin/orders:
+    get:
+      summary: Administrator-only read-only order search across all users
+      parameters:
+        - {name: order_no, in: query, schema: {type: string, maxLength: 128}, description: Case-insensitive literal substring}
+        - {name: email, in: query, schema: {type: string, maxLength: 254}, description: User email or legacy username substring}
+        - {name: user_id, in: query, schema: {type: integer, format: int64, minimum: 1}, description: Exact user ID; stable after account renaming}
+        - {name: kind, in: query, schema: {type: string, enum: [purchase, renewal, recharge, rebate]}}
+        - {name: status, in: query, schema: {type: string, enum: [paid, pending, cancelled]}}
+        - {name: time_field, in: query, schema: {type: string, enum: [created, paid], default: created}}
+        - {name: from, in: query, schema: {type: string, format: date-time}, description: Inclusive beginning of time range}
+        - {name: to, in: query, schema: {type: string, format: date-time}, description: Inclusive end of time range}
+        - {name: gateway_trade_no, in: query, schema: {type: string, maxLength: 256}, description: Payment provider transaction substring}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, maximum: 100000, default: 1}}
+      responses:
+        '200': {description: 'items, total and page; no provider credentials or signed checkout data'}
+        '400': {description: Invalid filter or time range}
+        '403': {description: Administrator privileges required}
+  /admin/orders/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    get:
+      summary: Administrator-only order details with user, provider transaction and public order snapshot
+      responses:
+        '200': {description: Order detail; excludes payment_attempts config, create_context and checkout}
+        '403': {description: Administrator privileges required}
+        '404': {description: Order does not exist}
+  /tickets/config:
+    get:
+      summary: Read shared CAPTCHA mode for authenticated ticket creation
+      responses:
+        '200': {description: captcha_mode}
+  /tickets/captcha:
+    get:
+      summary: Issue a one-use ticket CAPTCHA bound to the user and requesting IP
+      responses:
+        '200': {description: PNG image and challenge ID, or off mode}
+  /tickets:
+    get:
+      summary: List only the current user's tickets, including administrators using the user interface
+      responses:
+        '200': {description: Paginated items, total and page}
+    post:
+      summary: Create a private plain-text support ticket after configured CAPTCHA verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [title, content, priority]
+              properties:
+                title: {type: string, minLength: 1, maxLength: 128}
+                content: {type: string, minLength: 1, maxLength: 5000}
+                priority: {type: string, enum: [low, medium, high]}
+                captcha_id: {type: string}
+                captcha: {type: string}
+      responses:
+        '201': {description: Created ticket ID}
+        '400': {description: Invalid content, priority or CAPTCHA}
+  /tickets/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    get:
+      summary: Read own ticket and paginated plain-text messages
+      responses:
+        '200': {description: Ticket metadata and up to 100 messages per page}
+        '404': {description: Ticket does not exist or belongs to another user}
+  /tickets/{id}/messages:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    post:
+      summary: Reply to own open ticket; sender identity and user role come from the session
+      responses:
+        '200': {description: status becomes waiting_staff}
+        '409': {description: Ticket closed}
+  /tickets/{id}/status:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    put:
+      summary: Close or reopen own ticket with status closed or open
+      responses:
+        '200': {description: Effective ticket status}
+  /admin/tickets:
+    get:
+      summary: Administrator support queue sorted by high, medium, low priority
+      responses:
+        '200': {description: Paginated items, total and page}
+  /admin/tickets/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    get:
+      summary: Administrator reads a ticket and paginated messages
+      responses:
+        '200': {description: Ticket detail}
+  /admin/tickets/{id}/messages:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    post:
+      summary: Administrator posts a staff reply to an open ticket
+      responses:
+        '200': {description: status becomes waiting_user}
+        '409': {description: Ticket closed}
+  /admin/tickets/{id}/status:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    put:
+      summary: Administrator closes or reopens a ticket with status closed or open
+      responses:
+        '200': {description: Effective ticket status}
+  /announcements:
+    get:
+      summary: Read only published announcements ordered by sort_order and ID
+      responses:
+        '200': {description: Paginated items with at most 240-character previews and truncated flag}
+  /announcements/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    get:
+      summary: Read complete published announcement text
+      responses:
+        '200': {description: ID, title and full content}
+        '404': {description: Announcement unpublished or missing}
+  /admin/announcements:
+    get:
+      summary: Administrator lists announcements including drafts and full text
+      responses:
+        '200': {description: Paginated announcements}
+    post:
+      summary: Administrator creates a notice using title, content, published and sort_order
+      responses:
+        '200': {description: Announcement ID}
+  /admin/announcements/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    put:
+      summary: Administrator edits notice title, content, published and sort_order
+      responses:
+        '200': {description: Announcement ID}
+    delete:
+      summary: Administrator deletes an announcement
+      responses:
+        '200': {description: Deleted}
   /registration:
     get:
       security: []
@@ -39,6 +183,7 @@ paths:
                 email: {type: string, format: email, maxLength: 254}
                 captcha_id: {type: string}
                 captcha: {type: string}
+                invite_code: {type: string, maxLength: 128, description: Required and validated when force_invite is enabled}
       responses:
         '200': {description: 'verification_id and retry_after; code is sent only by email'}
         '400': {description: Invalid email or CAPTCHA}
@@ -63,7 +208,7 @@ paths:
                 confirm_password: {type: string}
                 verification_id: {type: string}
                 email_code: {type: string, minLength: 6, maxLength: 6}
-                invite_code: {type: string, maxLength: 128, description: Unknown codes are ignored}
+                invite_code: {type: string, maxLength: 128, description: Unknown codes are ignored unless force_invite is enabled}
       responses:
         '201': {description: Account created; log in separately}
         '400': {description: Invalid input or expired/used code}
@@ -1039,6 +1184,9 @@ components:
       additionalProperties: false
       properties:
         registration_enabled: {type: boolean, default: false}
+        force_invite: {type: boolean, default: false, description: Requires referral_enabled; validated on email code requests and final registration}
+        terms_url: {type: string, description: Optional HTTP/HTTPS terms link; consent is checked only in frontend}
+        privacy_url: {type: string, description: Optional HTTP/HTTPS privacy link; consent is checked only in frontend}
         captcha_mode: {type: string, enum: ['off', image], default: image}
         smtp:
           type: object

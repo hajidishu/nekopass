@@ -2,7 +2,6 @@ package control
 
 import (
 	"crypto/subtle"
-	"encoding/base64"
 	"errors"
 	"net/http"
 	"strconv"
@@ -22,7 +21,7 @@ func (s *Server) registrationConfig(w http.ResponseWriter, r *http.Request) {
 		s.dbError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"enabled": v.RegistrationEnabled, "captcha_mode": v.CaptchaMode, "email_verification": true})
+	writeJSON(w, 200, map[string]any{"enabled": v.RegistrationEnabled, "captcha_mode": v.CaptchaMode, "email_verification": true, "force_invite": v.ForceInvite && v.ReferralEnabled, "terms_url": v.TermsURL, "privacy_url": v.PrivacyURL})
 }
 
 func (s *Server) registrationSettings(w http.ResponseWriter, r *http.Request) (SystemSettings, bool) {
@@ -43,31 +42,7 @@ func (s *Server) captcha(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if v.CaptchaMode != "image" {
-		writeJSON(w, 200, map[string]any{"mode": "off"})
-		return
-	}
-	if !s.allowLogin("captcha:"+s.clientIP(r), time.Now(), 10) {
-		fail(w, 429, "验证码请求过于频繁")
-		return
-	}
-	code, err := registration.Digits(6)
-	if err != nil {
-		fail(w, 503, "验证码暂不可用")
-		return
-	}
-	png, err := registration.Image(code)
-	if err != nil {
-		fail(w, 503, "验证码暂不可用")
-		return
-	}
-	id := Secret()
-	if _, err = s.Pool.Exec(r.Context(), "INSERT INTO registration_captchas(id,answer_hash,remote_key,expires_at) VALUES($1,$2,$3,now()+interval '5 minutes')", Hash(id), Hash(id+code), Hash(s.clientIP(r))); err != nil {
-		s.dbError(w, err)
-		return
-	}
-	_, _ = s.Pool.Exec(r.Context(), "DELETE FROM registration_captchas WHERE expires_at<now()")
-	writeJSON(w, 200, map[string]string{"id": id, "image": "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)})
+	s.issueCaptcha(w, r, v, "registration", 0)
 }
 
 func (s *Server) sendRegistrationCode(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +54,7 @@ func (s *Server) sendRegistrationCode(w http.ResponseWriter, r *http.Request) {
 		Email     string `json:"email"`
 		CaptchaID string `json:"captcha_id"`
 		Captcha   string `json:"captcha"`
+		Invite    string `json:"invite_code"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -92,6 +68,21 @@ func (s *Server) sendRegistrationCode(w http.ResponseWriter, r *http.Request) {
 		fail(w, 429, "发送请求过于频繁")
 		return
 	}
+	if len(in.Invite) > 128 {
+		fail(w, 400, "邀请码过长")
+		return
+	}
+	if v.ForceInvite && v.ReferralEnabled {
+		var valid bool
+		if err = s.Pool.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM users WHERE invite_code=$1 AND enabled)", strings.TrimSpace(in.Invite)).Scan(&valid); err != nil {
+			s.dbError(w, err)
+			return
+		}
+		if !valid {
+			fail(w, 400, "本站仅允许邀请注册，请填写有效邀请码")
+			return
+		}
+	}
 	select {
 	case s.mailWorkers <- struct{}{}:
 		defer func() { <-s.mailWorkers }()
@@ -103,13 +94,8 @@ func (s *Server) sendRegistrationCode(w http.ResponseWriter, r *http.Request) {
 		fail(w, 503, "邮件服务未配置，请联系管理员")
 		return
 	}
-	if v.CaptchaMode == "image" {
-		var hash string
-		err = s.Pool.QueryRow(r.Context(), "DELETE FROM registration_captchas WHERE id=$1 AND remote_key=$2 AND expires_at>now() RETURNING answer_hash", Hash(in.CaptchaID), Hash(s.clientIP(r))).Scan(&hash)
-		if err != nil || len(in.Captcha) != 6 || subtle.ConstantTimeCompare([]byte(hash), []byte(Hash(in.CaptchaID+in.Captcha))) != 1 {
-			fail(w, 400, "图形验证码错误或已过期，请刷新")
-			return
-		}
+	if !s.verifyCaptcha(w, r, v, "registration", 0, in.CaptchaID, in.Captcha) {
+		return
 	}
 	token := Secret()
 	code, err := registration.Digits(6)
@@ -228,6 +214,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		fail(w, 403, "此站点未开放注册")
 		return
 	}
+
 	if _, err = tx.Exec(r.Context(), "SELECT pg_advisory_xact_lock(hashtextextended($1,734296))", email); err != nil {
 		s.dbError(w, err)
 		return
@@ -262,11 +249,16 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if settings.ForceInvite && settings.ReferralEnabled && inviter == nil {
+		fail(w, 400, "本站仅允许邀请注册，请填写有效邀请码")
+		return
+	}
 	var uid int64
 	if err = tx.QueryRow(r.Context(), "INSERT INTO users(username,password_hash,email_verified_at,invite_code,inviter_id) VALUES($1,$2,now(),$3,$4) RETURNING id", email, string(password), Secret()[:16], inviter).Scan(&uid); err != nil {
 		s.dbError(w, err)
 		return
 	}
+
 	if err = tx.Commit(r.Context()); err != nil {
 		s.dbError(w, err)
 		return

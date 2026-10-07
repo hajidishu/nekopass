@@ -21,6 +21,9 @@ import (
 )
 
 type SystemSettings struct {
+	ForceInvite         bool              `json:"force_invite"`
+	TermsURL            string            `json:"terms_url"`
+	PrivacyURL          string            `json:"privacy_url"`
 	RegistrationEnabled bool              `json:"registration_enabled"`
 	CaptchaMode         string            `json:"captcha_mode"`
 	SMTP                registration.SMTP `json:"smtp"`
@@ -73,6 +76,14 @@ func httpsURL(raw string, originOnly bool) bool {
 var releaseVersion = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 func validateSettings(v SystemSettings) error {
+	if v.ForceInvite && !v.ReferralEnabled {
+		return errors.New("开启强制邀请前须启用邀请返利")
+	}
+	for _, raw := range []string{v.TermsURL, v.PrivacyURL} {
+		if raw != "" && !legalURL(raw) {
+			return errors.New("条款地址须为有效 HTTP 或 HTTPS URL")
+		}
+	}
 	if v.CaptchaMode != "off" && v.CaptchaMode != "image" {
 		return errors.New("人机验证方式无效")
 	}
@@ -166,6 +177,8 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &v) {
 		return
 	}
+	v.TermsURL = strings.TrimSpace(v.TermsURL)
+	v.PrivacyURL = strings.TrimSpace(v.PrivacyURL)
 	v.SiteName = strings.TrimSpace(v.SiteName)
 	v.PanelURL = strings.TrimRight(v.PanelURL, "/")
 	v.ReleaseBaseURL = strings.TrimRight(v.ReleaseBaseURL, "/")

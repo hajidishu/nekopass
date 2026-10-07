@@ -8,7 +8,7 @@ import (
 
 func (s *Server) announcement(w http.ResponseWriter, r *http.Request) {
 	var content string
-	if e := s.Pool.QueryRow(r.Context(), "SELECT announcement FROM site_settings WHERE id=1").Scan(&content); e != nil {
+	if e := s.Pool.QueryRow(r.Context(), "SELECT COALESCE((SELECT content FROM announcements WHERE published ORDER BY sort_order,id DESC LIMIT 1),'')").Scan(&content); e != nil {
 		s.dbError(w, e)
 		return
 	}
@@ -28,7 +28,7 @@ func (s *Server) saveAnnouncement(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "公告最多 20000 字节")
 		return
 	}
-	if _, e := s.Pool.Exec(r.Context(), "UPDATE site_settings SET announcement=$1,updated_at=now() WHERE id=1", in.Content); e != nil {
+	if _, e := s.Pool.Exec(r.Context(), "INSERT INTO announcements(title,content,published,legacy) VALUES('站点公告',$1,$2,true) ON CONFLICT (legacy) WHERE legacy DO UPDATE SET content=$1,published=$2,updated_at=now()", in.Content, strings.TrimSpace(in.Content) != ""); e != nil {
 		s.dbError(w, e)
 		return
 	}

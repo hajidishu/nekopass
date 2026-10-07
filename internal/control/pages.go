@@ -22,7 +22,7 @@ type pageRoute struct {
 
 func resolvePage(path string) (pageRoute, bool) {
 	pages := map[string]pageRoute{
-		"/register": {file: "register"}, "/referrals": {file: "referrals"}, "/shop": {file: "shop"}, "/orders": {file: "orders"}, "/admin/payment_gateways": {file: "admin_payment_gateways", admin: true},
+		"/admin/orders": {file: "admin_orders", admin: true}, "/tickets": {file: "tickets"}, "/admin/tickets": {file: "admin_tickets", admin: true}, "/register": {file: "register"}, "/referrals": {file: "referrals"}, "/shop": {file: "shop"}, "/orders": {file: "orders"}, "/admin/payment_gateways": {file: "admin_payment_gateways", admin: true},
 		"/admin/settings": {file: "admin_settings", admin: true},
 		"/":               {file: "home"}, "/login": {file: "login"}, "/profile": {file: "profile"}, "/forward_rules": {file: "forward_rules"}, "/node_status": {file: "node_status"},
 		"/admin": {file: "admin", admin: true}, "/admin/announcements": {file: "admin_announcements", admin: true}, "/admin/users": {file: "admin_users", admin: true}, "/admin/plans": {file: "admin_plans", admin: true}, "/admin/nodes": {file: "admin_nodes", admin: true}, "/admin/node_groups": {file: "admin_node_groups", admin: true},

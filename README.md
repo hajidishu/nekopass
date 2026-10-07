@@ -104,7 +104,7 @@ pwsh -File scripts/package-panel.ps1  # 面板和节点完整发布包
 pwsh -File scripts/package-agent.ps1  # 仅节点发布文件
 ```
 
-产物位于 `dist/oss/nekopass/`，可用 `-Version v0.15.2` 指定版本号。
+产物位于 `dist/oss/nekopass/`，可用 `-Version v0.16.0` 指定版本号。
 
 ## 如何贡献？
 

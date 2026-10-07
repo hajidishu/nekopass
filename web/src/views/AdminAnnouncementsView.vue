@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import {ref} from 'vue'
-import {ElMessage} from 'element-plus'
+import {reactive,ref} from 'vue'
+import {ElMessage,ElMessageBox} from 'element-plus'
 import PageShell from '../PageShell.vue'
 import {usePage} from '../page'
 import {api} from '../api'
-const draft=ref('')
-const {me,loading,error,busy,run}=usePage(async()=>{draft.value=(await api<{content:string}>('admin/announcement')).content},{admin:true})
-async function save(){await run(async()=>{await api('admin/announcement','PUT',{content:draft.value});ElMessage.success('公告已发布')})}
+type Notice={id:number;title:string;content:string;published:boolean;sort_order:number}
+const notices=ref<Notice[]>([]),page=ref(1),total=ref(0),dialog=ref(false),id=ref(0),form=reactive({title:'',content:'',published:true,sort_order:0})
+const {me,loading,error,busy,run,refresh}=usePage(async()=>{const data=await api<{items:Notice[];total:number}>('admin/announcements?page='+page.value);notices.value=data.items;total.value=data.total},{admin:true})
+function edit(n?:Notice){id.value=n?.id||0;Object.assign(form,n?{title:n.title,content:n.content,published:n.published,sort_order:n.sort_order}:{title:'',content:'',published:true,sort_order:0});dialog.value=true}
+async function save(){await run(async()=>{await api('admin/announcements'+(id.value?'/'+id.value:''),id.value?'PUT':'POST',form);dialog.value=false;await refresh();ElMessage.success('公告已保存')})}
+async function remove(n:Notice){try{await ElMessageBox.confirm('删除公告“'+n.title+'”？','删除公告',{confirmButtonText:'删除',cancelButtonText:'取消'});await run(async()=>{await api('admin/announcements/'+n.id,'DELETE',{});await refresh()})}catch{/* cancelled */}}
 </script>
-<template><PageShell :me="me" :loading="loading" :error="error" active="announcements" admin><section class="surface"><div class="section-header"><strong>公告管理</strong><a class="text-link" href="/" target="_blank" rel="noopener">查看用户主页 ↗</a></div><div class="section-body announcement-editor"><el-form label-position="top" @submit.prevent="save"><el-form-item label="站点公告"><el-input v-model="draft" type="textarea" :rows="14" placeholder="输入公告内容，支持换行" /></el-form-item><el-button type="primary" native-type="submit" :loading="busy">发布公告</el-button></el-form></div></section></PageShell></template>
+<template><PageShell :me="me" :loading="loading" :error="error" active="announcements" admin><section class="surface"><div class="section-header"><strong>公告管理</strong><div><el-button type="primary" @click="edit()">添加公告</el-button><a class="text-link" href="/" target="_blank" rel="noopener">查看主页 ↗</a></div></div><div class="section-body"><el-table :data="notices"><el-table-column prop="title" label="标题" min-width="220"/><el-table-column label="状态" width="100"><template #default="{row}">{{row.published?'已发布':'草稿'}}</template></el-table-column><el-table-column prop="sort_order" label="排序" width="90"/><el-table-column label="操作" width="160"><template #default="{row}"><el-button link type="primary" @click="edit(row)">编辑</el-button><el-button link type="danger" @click="remove(row)">删除</el-button></template></el-table-column></el-table><el-pagination v-model:current-page="page" :page-size="20" :total="total" layout="prev,pager,next,total" @current-change="refresh" class="user-pagination"/></div></section><el-dialog v-model="dialog" :title="id?'编辑公告':'添加公告'" width="700px" class="managed-form-dialog"><el-form label-position="top"><el-form-item label="标题"><el-input v-model="form.title" maxlength="128"/></el-form-item><el-form-item label="正文"><el-input v-model="form.content" type="textarea" :rows="12" placeholder="纯文本，支持换行"/></el-form-item><el-form-item label="排序"><el-input-number v-model="form.sort_order" :min="-1000000" :max="1000000"/><span class="field-tip">数值越小越靠前</span></el-form-item><el-form-item label="发布公告"><el-switch v-model="form.published"/></el-form-item></el-form><template #footer><el-button @click="dialog=false">取消</el-button><el-button type="primary" :loading="busy" @click="save">保存公告</el-button></template></el-dialog></PageShell></template>

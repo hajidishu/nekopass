@@ -11,6 +11,12 @@ import (
 )
 
 func TestPageRoutesAndSafeReturns(t *testing.T) {
+	if route, ok := resolvePage("/admin/orders"); !ok || route.file != "admin_orders" || !route.admin {
+		t.Fatal("administrator order page route invalid")
+	}
+	if safeNext("/admin/orders?user_id=5", false) != "/" || safeNext("/admin/orders?user_id=5", true) != "/admin/orders?user_id=5" {
+		t.Fatal("administrator order return scope invalid")
+	}
 	if route, ok := resolvePage("/admin/nodes/123/protocols"); !ok || route.file != "admin_node_protocols" || !route.admin || route.nodeID != 123 {
 		t.Fatal("protocol page route invalid")
 	}
