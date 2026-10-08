@@ -11,4 +11,4 @@
 | 公网隧道端口 | NAT / TCP 透传时入口连接的公网端口；0 使用监听端口。 |
 | 允许哪些入口使用此出口 | 允许接入的入口节点；用户当前个人设置还需获得两端的节点组权限。 |
 
-选择 TLS 时显示 [TLS 设置](./tls.md)。raw(tcp) 不使用 HTTP Host、Path、HTTP/2 连接池或网页 Fallback。
+安全性选择见 [不加密](../security/none.md) 和 [TLS](../security/tls.md)。raw(tcp) 不使用 HTTP Host、Path、HTTP/2 连接池或网页 Fallback。

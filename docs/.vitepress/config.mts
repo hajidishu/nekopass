@@ -20,6 +20,7 @@ export default defineConfig({
     nav: [
       { text: '使用文档', link: '/guide/panel' },
       { text: '传输协议', link: '/protocols/' },
+      { text: '安全性', link: '/security/' },
       ...(repository ? [{ text: '源码', link: `https://github.com/${repository}` }] : [])
     ],
     sidebar: [
@@ -36,8 +37,15 @@ export default defineConfig({
           { text: '协议选择', link: '/protocols/' },
           { text: 'TCP 直转', link: '/protocols/tcp' },
           { text: 'raw(tcp)', link: '/protocols/plain-tcp' },
-          { text: 'h2', link: '/protocols/h2' },
-          { text: 'TLS 安全设置', link: '/protocols/tls' }
+          { text: 'h2', link: '/protocols/h2' }
+        ]
+      },
+      {
+        text: '安全性',
+        items: [
+          { text: '安全性选择', link: '/security/' },
+          { text: '不加密', link: '/security/none' },
+          { text: 'TLS', link: '/security/tls' }
         ]
       },
       {

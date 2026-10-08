@@ -7,7 +7,7 @@ on:
       version:
         description: 'Stable version tag (vX.Y.Z)'
         required: true
-        default: v0.16.3
+        default: v0.16.4
 permissions:
   contents: read
 concurrency:

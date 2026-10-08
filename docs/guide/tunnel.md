@@ -22,23 +22,4 @@ raw(tcp) + TLS 和 h2 + 不加密需要两端升级至 v0.15.0 或以上。当�
 
 ## TLS 证书
 
-证书域名 / SNI 必须与证书一致。公网隧道端口为 `0` 时使用监听端口，可另填 NAT 对外端口。
-
-| 模式 | 填写内容 |
-| --- | --- |
-| 自签名 | 自动生成，并向入口下发信任 |
-| 手动导入 | 证书链、匹配私钥；私有 CA 可填公开根证书 |
-| HTTP 自动申请 | 域名、ACME 邮箱；出口公网 `80` 可达 |
-| DNS 自动申请 | 域名、ACME 邮箱、服务商和 DNS 凭据 |
-
-DNS 凭据填写 JSON，键名如下：
-
-| 服务商 | 凭据字段 |
-| --- | --- |
-| Cloudflare | `api_token`，可选 `zone_token` |
-| 阿里 DNS | `access_key_id`、`access_key_secret` |
-| DNSPod | `login_token` |
-
-自动申请模式会自动续期。HTTP 验证使用其他本地端口时，需要将公网 `80` 转发到该端口。
-
-出口的 TLS 配置可选择 Chrome / Firefox 指纹及 SNI 覆盖；连接池与流控窗口通常保持默认即可。
+证书模式、DNS 凭据、自动续期、SNI 和 uTLS 统一见 [安全性 → TLS](../security/tls.md)。
