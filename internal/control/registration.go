@@ -21,7 +21,7 @@ func (s *Server) registrationConfig(w http.ResponseWriter, r *http.Request) {
 		s.dbError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"enabled": v.RegistrationEnabled, "captcha_mode": v.CaptchaMode, "email_verification": true, "force_invite": v.ForceInvite && v.ReferralEnabled, "terms_url": v.TermsURL, "privacy_url": v.PrivacyURL})
+	writeJSON(w, 200, map[string]any{"enabled": v.RegistrationEnabled, "captcha_mode": v.CaptchaMode, "email_verification": v.RegistrationEmailVerification, "force_invite": v.ForceInvite && v.ReferralEnabled, "terms_url": v.TermsURL, "privacy_url": v.PrivacyURL})
 }
 
 func (s *Server) registrationSettings(w http.ResponseWriter, r *http.Request) (SystemSettings, bool) {
@@ -48,6 +48,10 @@ func (s *Server) captcha(w http.ResponseWriter, r *http.Request) {
 func (s *Server) sendRegistrationCode(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.registrationSettings(w, r)
 	if !ok {
+		return
+	}
+	if !v.RegistrationEmailVerification {
+		fail(w, 403, "本站已关闭注册邮件验证")
 		return
 	}
 	var in struct {
@@ -148,16 +152,19 @@ func (s *Server) sendRegistrationCode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.registrationSettings(w, r); !ok {
+	v, ok := s.registrationSettings(w, r)
+	if !ok {
 		return
 	}
 	var in struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Confirm  string `json:"confirm_password"`
-		ID       string `json:"verification_id"`
-		Code     string `json:"email_code"`
-		Invite   string `json:"invite_code"`
+		Email     string `json:"email"`
+		Password  string `json:"password"`
+		Confirm   string `json:"confirm_password"`
+		ID        string `json:"verification_id"`
+		Code      string `json:"email_code"`
+		Invite    string `json:"invite_code"`
+		CaptchaID string `json:"captcha_id"`
+		Captcha   string `json:"captcha"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -171,7 +178,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "密码须为 12–72 字节且两次输入相同")
 		return
 	}
-	if !hashOK(in.ID) || len(in.Code) != 6 || len(in.Invite) > 128 {
+	if (v.RegistrationEmailVerification && (!hashOK(in.ID) || len(in.Code) != 6)) || len(in.Invite) > 128 {
 		fail(w, 400, "邮箱验证码或邀请码格式无效")
 		return
 	}
@@ -179,12 +186,18 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		fail(w, 429, "注册请求过于频繁")
 		return
 	}
-	// Commit failed attempts before password work. A correct code remains
-	// consumed atomically with account creation, preventing concurrent reuse.
-	var hash string
-	err = s.Pool.QueryRow(r.Context(), "UPDATE registration_codes SET attempts=attempts+1 WHERE id=$1 AND email=$2 AND sent AND expires_at>now() AND attempts<5 RETURNING code_hash", Hash(in.ID), email).Scan(&hash)
-	if err != nil || subtle.ConstantTimeCompare([]byte(hash), []byte(Hash(in.ID+in.Code))) != 1 {
-		fail(w, 400, "邮箱验证码错误、已过期或尝试次数过多")
+	emailVerified := false
+	if v.RegistrationEmailVerification {
+		// Commit failed attempts before password work. A correct code remains
+		// consumed atomically with account creation, preventing concurrent reuse.
+		var hash string
+		err = s.Pool.QueryRow(r.Context(), "UPDATE registration_codes SET attempts=attempts+1 WHERE id=$1 AND email=$2 AND sent AND expires_at>now() AND attempts<5 RETURNING code_hash", Hash(in.ID), email).Scan(&hash)
+		if err != nil || subtle.ConstantTimeCompare([]byte(hash), []byte(Hash(in.ID+in.Code))) != 1 {
+			fail(w, 400, "邮箱验证码错误、已过期或尝试次数过多")
+			return
+		}
+		emailVerified = true
+	} else if !s.verifyCaptcha(w, r, v, "registration", 0, in.CaptchaID, in.Captcha) {
 		return
 	}
 	select {
@@ -214,6 +227,10 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		fail(w, 403, "此站点未开放注册")
 		return
 	}
+	if settings.RegistrationEmailVerification != v.RegistrationEmailVerification || (!settings.RegistrationEmailVerification && settings.CaptchaMode != v.CaptchaMode) {
+		fail(w, 409, "注册验证设置已变更，请刷新后重试")
+		return
+	}
 
 	if _, err = tx.Exec(r.Context(), "SELECT pg_advisory_xact_lock(hashtextextended($1,734296))", email); err != nil {
 		s.dbError(w, err)
@@ -228,15 +245,17 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "此邮箱已注册")
 		return
 	}
-	var consumed string
-	err = tx.QueryRow(r.Context(), "DELETE FROM registration_codes WHERE id=$1 AND email=$2 AND code_hash=$3 AND sent AND expires_at>now() RETURNING id", Hash(in.ID), email, Hash(in.ID+in.Code)).Scan(&consumed)
-	if errors.Is(err, pgx.ErrNoRows) {
-		fail(w, 400, "邮箱验证码已失效")
-		return
-	}
-	if err != nil {
-		s.dbError(w, err)
-		return
+	if emailVerified {
+		var consumed string
+		err = tx.QueryRow(r.Context(), "DELETE FROM registration_codes WHERE id=$1 AND email=$2 AND code_hash=$3 AND sent AND expires_at>now() RETURNING id", Hash(in.ID), email, Hash(in.ID+in.Code)).Scan(&consumed)
+		if errors.Is(err, pgx.ErrNoRows) {
+			fail(w, 400, "邮箱验证码已失效")
+			return
+		}
+		if err != nil {
+			s.dbError(w, err)
+			return
+		}
 	}
 	var inviter *int64
 	if strings.TrimSpace(in.Invite) != "" {
@@ -254,7 +273,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var uid int64
-	if err = tx.QueryRow(r.Context(), "INSERT INTO users(username,password_hash,email_verified_at,invite_code,inviter_id) VALUES($1,$2,now(),$3,$4) RETURNING id", email, string(password), Secret()[:16], inviter).Scan(&uid); err != nil {
+	if err = tx.QueryRow(r.Context(), "INSERT INTO users(username,password_hash,email_verified_at,invite_code,inviter_id) VALUES($1,$2,CASE WHEN $5::boolean THEN now() ELSE NULL END,$3,$4) RETURNING id", email, string(password), Secret()[:16], inviter, emailVerified).Scan(&uid); err != nil {
 		s.dbError(w, err)
 		return
 	}

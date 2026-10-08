@@ -6,7 +6,7 @@
 
 在后台「节点管理」创建节点，复制该节点的「安装命令」，以 root 在节点服务器执行。
 
-命令使用 `wget … -O nekopass-install-agent.sh && bash nekopass-install-agent.sh …`，参数直接包含主控 gRPC 地址与端口、节点密钥、版本和下载源。节点地址使用 `https://`（公共 CA 可信证书）或测试用 `http://`（明文 HTTP/2），不附带 CA 参数。命令可重复使用。
+命令使用 `wget … -O nekopass-install-agent.sh && bash nekopass-install-agent.sh …`，参数直接包含主控 gRPC 地址与端口、节点密钥、版本和下载源。节点地址使用 `https://`（公共 CA 可信证书）或测试用 `http://`（明文 HTTP/2），不附带 CA 参数。命令可重复使用，自动判断首次安装或覆盖安装；传入的连接参数会覆盖配置文件，已有状态文件保留。
 
 节点显示「在线 / 已同步」后即可使用。端口范围、入口出口和探针设置均在后台修改。
 
@@ -46,7 +46,15 @@ sudo nekopassctl agent update
 
 默认目标 IP 限制需要节点 v0.15.2 或以上；旧节点可能在线但转发暂停。主控与节点都较旧时，优先升级节点，再升级主控。
 
-保留 `/etc/nekopass/agent.env` 和 `/var/lib/nekopass-agent/state.db`；新服务器创建新节点。
+保留 `/etc/nekopass/agent.env` 和 `/var/lib/nekopass-agent/state.db`。新增独立服务器时创建新节点。
+
+## 抢占实例重建
+
+同一节点的服务器完全重建后，可重新执行原安装命令，不需要 `--upgrade`。主控与节点均需升级至 v0.16.1 或以上；旧服务器应已离线，同一节点不能同时连接两台服务器。
+
+状态文件丢失时，节点使用原密钥获取主控保存的计数后恢复上线。历史已上报流量保留；旧节点尚未结算的有限流量授权按已消耗处理，避免重建后重复使用额度。通常应保留状态文件，仅在整机重建时依赖恢复。
+
+重新安装时，传入参数覆盖连接配置。更换密钥或主控地址会归档原状态为 `state.db.before-reconfigure-*`，避免混用旧配置和计数；仅切换同一地址的 HTTP / HTTPS 会保留状态。
 
 ## 主控暂时离线
 

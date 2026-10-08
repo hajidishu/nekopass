@@ -21,30 +21,31 @@ import (
 )
 
 type SystemSettings struct {
-	ForceInvite         bool              `json:"force_invite"`
-	TermsURL            string            `json:"terms_url"`
-	PrivacyURL          string            `json:"privacy_url"`
-	RegistrationEnabled bool              `json:"registration_enabled"`
-	CaptchaMode         string            `json:"captcha_mode"`
-	SMTP                registration.SMTP `json:"smtp"`
-	ReferralEnabled     bool              `json:"referral_enabled"`
-	ReferralMode        string            `json:"referral_mode"`
-	ReferralRate        string            `json:"referral_rate"`
-	ProxyTrustedCIDRs   []string          `json:"proxy_trusted_cidrs"`
-	TargetDenyCIDRs     []string          `json:"target_deny_cidrs"`
-	SiteName            string            `json:"site_name"`
-	PanelURL            string            `json:"panel_url"`
-	AgentHost           string            `json:"agent_host"`
-	AgentPort           int               `json:"agent_port"`
-	AgentTransport      string            `json:"agent_transport"`
-	InstallerURL        string            `json:"installer_url"`
-	ReleaseBaseURL      string            `json:"release_base_url"`
-	AgentVersion        string            `json:"agent_version"`
-	InstallTokenMinutes int               `json:"install_token_minutes"`
+	ForceInvite                   bool              `json:"force_invite"`
+	TermsURL                      string            `json:"terms_url"`
+	PrivacyURL                    string            `json:"privacy_url"`
+	RegistrationEmailVerification bool              `json:"registration_email_verification"`
+	RegistrationEnabled           bool              `json:"registration_enabled"`
+	CaptchaMode                   string            `json:"captcha_mode"`
+	SMTP                          registration.SMTP `json:"smtp"`
+	ReferralEnabled               bool              `json:"referral_enabled"`
+	ReferralMode                  string            `json:"referral_mode"`
+	ReferralRate                  string            `json:"referral_rate"`
+	ProxyTrustedCIDRs             []string          `json:"proxy_trusted_cidrs"`
+	TargetDenyCIDRs               []string          `json:"target_deny_cidrs"`
+	SiteName                      string            `json:"site_name"`
+	PanelURL                      string            `json:"panel_url"`
+	AgentHost                     string            `json:"agent_host"`
+	AgentPort                     int               `json:"agent_port"`
+	AgentTransport                string            `json:"agent_transport"`
+	InstallerURL                  string            `json:"installer_url"`
+	ReleaseBaseURL                string            `json:"release_base_url"`
+	AgentVersion                  string            `json:"agent_version"`
+	InstallTokenMinutes           int               `json:"install_token_minutes"`
 }
 
 func defaultSettings() SystemSettings {
-	return SystemSettings{CaptchaMode: "image", SMTP: registration.SMTP{Port: 587, Security: "starttls"}, ReferralMode: "first", ReferralRate: "15", ProxyTrustedCIDRs: []string{}, TargetDenyCIDRs: networkpolicy.Defaults(), SiteName: "Nekopass", AgentPort: 9443, AgentTransport: "tls", AgentVersion: "latest", InstallerURL: release.LatestBase + "/install-agent.sh", ReleaseBaseURL: release.DownloadBase, InstallTokenMinutes: 30}
+	return SystemSettings{RegistrationEmailVerification: true, CaptchaMode: "image", SMTP: registration.SMTP{Port: 587, Security: "starttls"}, ReferralMode: "first", ReferralRate: "15", ProxyTrustedCIDRs: []string{}, TargetDenyCIDRs: networkpolicy.Defaults(), SiteName: "Nekopass", AgentPort: 9443, AgentTransport: "tls", AgentVersion: "latest", InstallerURL: release.LatestBase + "/install-agent.sh", ReleaseBaseURL: release.DownloadBase, InstallTokenMinutes: 30}
 }
 func (s *Server) readSettings(ctx context.Context) (SystemSettings, error) {
 	return readSystemSettings(ctx, s.Pool)
@@ -93,7 +94,7 @@ func validateSettings(v SystemSettings) error {
 	if _, err := referralRate(v.ReferralRate); err != nil {
 		return err
 	}
-	if err := v.SMTP.Validate(v.RegistrationEnabled); err != nil {
+	if err := v.SMTP.Validate(v.RegistrationEnabled && v.RegistrationEmailVerification); err != nil {
 		return err
 	}
 	if _, err := networkpolicy.Normalize(v.ProxyTrustedCIDRs, 64); err != nil {
@@ -343,11 +344,8 @@ func controlInstallServer(v SystemSettings) string {
 	}
 	return scheme + net.JoinHostPort(v.AgentHost, strconv.Itoa(v.AgentPort))
 }
-func installCommand(v SystemSettings, token string, bound bool) string {
+func installCommand(v SystemSettings, token string, _ bool) string {
 	args := []string{"--server", controlInstallServer(v), "--token", token, "--download-base", v.ReleaseBaseURL, "--version", v.AgentVersion}
-	if bound {
-		args = append(args, "--upgrade")
-	}
 	quoted := []string{}
 	for i, a := range args {
 		if i%2 == 0 {

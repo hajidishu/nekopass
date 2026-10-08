@@ -120,8 +120,18 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 			return nil, errors.New("upgrade this Agent to protocol v7 before using TLS HTTP/2 tunnels")
 		}
 	}
+	if e = validateStateRestore(r, expectedHash); e != nil {
+		return nil, e
+	}
 	if instance != "" && instance != r.InstanceId {
-		return nil, errors.New("node state identity changed; create a new node instead of deleting or cloning agent state")
+		if !r.RestoreState {
+			return nil, errors.New("node state identity changed; create a new node instead of deleting or cloning agent state")
+		}
+	}
+	if r.RestoreState {
+		if e = settleLostNodeState(ctx, tx, nodeID); e != nil {
+			return nil, e
+		}
 	}
 	_, e = tx.Exec(ctx, "UPDATE nodes SET instance_id=$2,last_seen=now(),applied_revision=$3,sync_error=$4,active_connections=$5,protocol_version=$6,acme_ack=$7 WHERE id=$1", nodeID, r.InstanceId, r.AppliedRevision, truncate(r.Error, 4000), r.ActiveConnections, r.ProtocolVersion, r.AcmeAck)
 	if e != nil {
@@ -409,6 +419,9 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 		return nil, e
 	}
 	if e = updateControl(ctx, tx, nodeID, r, out); e != nil {
+		return nil, e
+	}
+	if e = appendStateRestore(ctx, tx, nodeID, r, out); e != nil {
 		return nil, e
 	}
 	if e = tx.Commit(ctx); e != nil {

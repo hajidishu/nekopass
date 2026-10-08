@@ -193,7 +193,7 @@ paths:
   /register:
     post:
       security: []
-      summary: Create a non-administrator account with a verified email username
+      summary: Create a non-administrator account with email username and configured verification policy
       requestBody:
         required: true
         content:
@@ -201,13 +201,15 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [email, password, confirm_password, verification_id, email_code]
+              required: [email, password, confirm_password]
               properties:
                 email: {type: string, format: email, maxLength: 254}
                 password: {type: string, description: '12–72 bytes'}
                 confirm_password: {type: string}
-                verification_id: {type: string}
-                email_code: {type: string, minLength: 6, maxLength: 6}
+                verification_id: {type: string, description: Required when registration email verification is enabled}
+                email_code: {type: string, description: Six digits required when registration email verification is enabled}
+                captcha_id: {type: string, description: Required for graphical CAPTCHA when email verification is disabled}
+                captcha: {type: string, description: CAPTCHA answer for direct registration without email verification}
                 invite_code: {type: string, maxLength: 128, description: Unknown codes are ignored unless force_invite is enabled}
       responses:
         '201': {description: Account created; log in separately}
@@ -1184,6 +1186,7 @@ components:
       additionalProperties: false
       properties:
         registration_enabled: {type: boolean, default: false}
+        registration_email_verification: {type: boolean, default: true, description: When disabled, signup needs no email code or SMTP; configured CAPTCHA and invitation checks remain}
         force_invite: {type: boolean, default: false, description: Requires referral_enabled; validated on email code requests and final registration}
         terms_url: {type: string, description: Optional HTTP/HTTPS terms link; consent is checked only in frontend}
         privacy_url: {type: string, description: Optional HTTP/HTTPS privacy link; consent is checked only in frontend}

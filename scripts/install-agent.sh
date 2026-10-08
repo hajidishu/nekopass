@@ -11,16 +11,16 @@ write_updater_payload() { return 1; }
 
 SERVER=''; TOKEN=''; TOKEN_FILE=''; PANEL_URL=''; INSTALL_TOKEN=''
 DOWNLOAD_BASE='https://github.com/hajidishu/nekopass/releases/download'
-VERSION='v0.16.0'; ARCH='auto'; BINARY_URL=''
+VERSION='v0.16.1'; ARCH='auto'; BINARY_URL=''
 SERVICE='nekopass-agent'
-UPGRADE=0; NO_START=0; DRY_RUN=0; WORK=''; CHANGED=0; WAS_ACTIVE=0; WAS_ENABLED=0
+NO_START=0; DRY_RUN=0; WORK=''; CHANGED=0; WAS_ACTIVE=0; WAS_ENABLED=0; STATE_BACKUP=''; RESET_STATE=0
 usage() {
  cat <<'HELP'
 Nekopass Agent installer (Linux + systemd, run as root)
 
 Direct mode:
   bash install-agent.sh -s https://panel.example.com:9443 -t NODE_TOKEN \
-    -d https://github.com/hajidishu/nekopass/releases/download -v v0.16.0
+    -d https://github.com/hajidishu/nekopass/releases/download -v v0.16.1
 
 Legacy installation credential (compatibility only):
   bash install-agent.sh -p https://panel.example.com -i INSTALL_TOKEN
@@ -31,17 +31,17 @@ Legacy installation credential (compatibility only):
   -p, --panel-url URL          Legacy install-token API root; unused with --server/--token
   -i, --install-token TOKEN    One-time node-specific installation credential
   -d, --download-base URL      HTTPS release directory
-  -v, --version VERSION        Release directory name; default v0.16.0
+  -v, --version VERSION        Release directory name; default v0.16.1
   -a, --arch ARCH              auto, amd64 or arm64
       --binary-url URL        Override architecture binary download URL
       --service-name NAME     Default nekopass-agent; isolated suffix allowed
-      --upgrade               Require an existing installation, preserve identity
       --no-start              Install files only; do not enable/start the service
       --dry-run               Print non-secret plan; no downloads or changes
   -h, --help                  Show this help
 
-Existing installations preserve state and credentials. Changing a node token
-on an installed service is refused. No bandwidth/port/resource flags are needed:
+New hosts install normally; existing services overwrite the binary and agent.env.
+Supplied --server/--token values replace old connection settings. Local accounting
+state is retained when using the same credentials. No bandwidth/port/resource flags are needed:
 those settings are delivered by the control panel.
 The release installer also installs the service menu: nekopassctl
 HELP
@@ -62,7 +62,7 @@ while (($#)); do
   -a|--arch) need_value "$@"; ARCH=$2; shift 2;;
   --binary-url) need_value "$@"; BINARY_URL=$2; shift 2;;
   --service-name) need_value "$@"; SERVICE=$2; shift 2;;
-  --upgrade) UPGRADE=1; shift;;
+  --upgrade) shift;; # Compatibility with old copied commands; installation is automatic.
   --no-start) NO_START=1; shift;;
   --dry-run) DRY_RUN=1; shift;;
   *) die "Unknown option: $1 (use --help)";;
@@ -98,8 +98,6 @@ for target in "$(dirname "$BIN")" "$CONFIG_DIR" "$STATE_DIR" /etc/systemd/system
  [[ "$(realpath -m "$target")" == "$target" ]] || die "Refusing symlinked installation directory: $target"
 done
 for target in "$BIN" "$ENV_FILE" "$UNIT"; do [[ ! -L "$target" ]] || die "Refusing symlink: $target"; done
-if ((UPGRADE)); then [[ -f "$ENV_FILE" ]] || die 'Existing configuration missing; use a new node for a new host'; fi
-if [[ ! -f "$ENV_FILE" && -d "$STATE_DIR" ]] && find "$STATE_DIR" -maxdepth 1 -name '*.db' -print -quit | grep -q .; then die 'State exists without configuration. Restore the original agent.env; state will not be reset.'; fi
 WORK=$(mktemp -d /tmp/nekopass-install.XXXXXXXX)
 [[ "$WORK" == /tmp/nekopass-install.* ]] || die 'Invalid temporary directory'
 MANAGER_SOURCE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/nekopassctl.sh"
@@ -130,6 +128,12 @@ cleanup() {
    rm -rf -- "$WORK"
    exit "$status"
   fi
+  if [[ -n "$STATE_BACKUP" && -f "$STATE_BACKUP" ]]; then
+   if [[ -f "$STATE_DIR/state.db" ]]; then
+    mv -- "$STATE_DIR/state.db" "$STATE_DIR/state.db.failed-install-$(date +%Y%m%d%H%M%S)-$$"
+   fi
+   mv -- "$STATE_BACKUP" "$STATE_DIR/state.db"
+  fi
   log 'Restoring previous installation files'
   for key in binary env unit; do
    case "$key" in binary) dest=$BIN;; env) dest=$ENV_FILE;; unit) dest=$UNIT;; esac
@@ -156,7 +160,6 @@ if p.exists():
 PY
 }
 OLD_TOKEN=$(read_env NEKOPASS_NODE_TOKEN); OLD_SERVER=$(read_env NEKOPASS_SERVER)
-[[ ! -f "$ENV_FILE" || -n "$OLD_TOKEN" ]] || die 'Existing node token missing; refusing to overwrite identity'
 if [[ -n "$TOKEN_FILE" ]]; then [[ -f "$TOKEN_FILE" ]] || die 'Token file missing'; TOKEN=$(cat "$TOKEN_FILE"); fi
 [[ -n "$TOKEN" ]] || TOKEN=$OLD_TOKEN
 [[ -n "$SERVER" ]] || SERVER=$OLD_SERVER
@@ -200,7 +203,6 @@ PY
 
 fi
 [[ "$TOKEN" =~ ^[A-Za-z0-9_-]{8,128}$ ]] || die 'A valid node token is required'
-[[ -z "$OLD_TOKEN" || "$TOKEN" == "$OLD_TOKEN" ]] || die 'Refusing to replace an existing node identity; use its original token or a new host'
 python3 - "$SERVER" <<'PY'
 import re,sys,urllib.parse
 raw=sys.argv[1]
@@ -215,6 +217,21 @@ if [[ -z "$BINARY_URL" ]]; then
  [[ -n "$DOWNLOAD_BASE" ]] || die 'Configure --download-base or the panel download settings'
  check_url "$DOWNLOAD_BASE"
  [[ "$DOWNLOAD_BASE" != *YOUR-OSS.example.com* ]] || die 'Configure a real download URL via --download-base or panel settings'
+fi
+# A different key/controller must not use cached policies or accounting from
+# the previous connection. Archive its state and let the controller restore it.
+if [[ -f "$STATE_DIR/state.db" ]]; then
+ if [[ -z "$OLD_TOKEN" || "$TOKEN" != "$OLD_TOKEN" ]]; then RESET_STATE=1
+ elif [[ "$SERVER" != "$OLD_SERVER" ]]; then
+  if ! python3 - "$OLD_SERVER" "$SERVER" <<'PY_COMPARE_ENDPOINTS'
+import sys,urllib.parse
+def authority(raw):
+ u=urllib.parse.urlsplit(raw if '://' in raw else '//'+raw)
+ return (u.hostname,u.port)
+sys.exit(0 if authority(sys.argv[1])==authority(sys.argv[2]) else 1)
+PY_COMPARE_ENDPOINTS
+  then RESET_STATE=1; fi
+ fi
 fi
 FILE="nekopass-agent-linux-$ARCH"
 if [[ -z "$BINARY_URL" ]]; then
@@ -241,6 +258,11 @@ if systemctl is-active --quiet "$SERVICE"; then WAS_ACTIVE=1; fi
 if systemctl is-enabled --quiet "$SERVICE" 2>/dev/null; then WAS_ENABLED=1; fi
 CHANGED=1
 systemctl stop "$SERVICE" 2>/dev/null || true
+if ((RESET_STATE)); then
+ STATE_BACKUP="$STATE_DIR/state.db.before-reconfigure-$(date +%Y%m%d%H%M%S)-$$"
+ mv -- "$STATE_DIR/state.db" "$STATE_BACKUP"
+ log 'Connection settings changed; previous accounting state archived for recovery.'
+fi
 install -m 755 "$WORK/agent" "$BIN"
 printf 'NEKOPASS_SERVER=%s\nNEKOPASS_NODE_TOKEN=%s\n' "$SERVER" "$TOKEN" > "$WORK/agent.env"
 install -m 600 "$WORK/agent.env" "$ENV_FILE"

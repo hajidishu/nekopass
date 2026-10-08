@@ -29,6 +29,7 @@ message AgentMessage {
   string agent_version = 12;
   UpdateStatus update_status = 13;
   bool update_supported = 14;
+  bool restore_state = 15;
 }
 message UserPolicy {
   int64 id = 1;
@@ -88,6 +89,22 @@ message ControlMessage {
   repeated EgressRule egress_rules = 7;
   UpdateRequest update = 8;
   string control_endpoint = 9;
+  StateRestore state_restore = 10;
+}
+
+message UserStateBaseline {
+ int64 user_id = 1;
+ int64 quota_epoch = 2;
+ int64 issued = 3;
+ int64 spent = 4;
+ int64 released = 5;
+ int64 traffic = 6;
+ int64 unlimited_spent = 7;
+}
+message StateRestore {
+ string instance_id = 1;
+ repeated UserStateBaseline users = 2;
+ repeated RuleUsage rules = 3;
 }
 
 message UpdateRequest { int64 generation = 1; string version = 2; }

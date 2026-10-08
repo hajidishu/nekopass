@@ -47,7 +47,7 @@ def main():
                 '--token', 'cli-fixture-not-real-key', '--binary-url', url,
                 '--panel-url', 'http://127.0.0.1:1']
         try:
-            result = subprocess.run([*args, '--no-start'], capture_output=True, text=True, timeout=180, env={**os.environ,'CURL_CA_BUNDLE':CA})
+            result = subprocess.run([*args, '--upgrade', '--no-start'], capture_output=True, text=True, timeout=180, env={**os.environ,'CURL_CA_BUNDLE':CA})
             assert result.returncode == 0, result.stdout + result.stderr
             cli = pathlib.Path('/usr/local/bin/nekopassctl')
             payload = installer.read_text().split("cat <<'NEKOPASS_MANAGER_PAYLOAD'\n", 1)[1].split('\nNEKOPASS_MANAGER_PAYLOAD\n', 1)[0] + '\n'
@@ -69,7 +69,23 @@ def main():
             assert subprocess.check_output(['systemctl', 'is-active', SERVICE+'-update.path'], text=True).strip() == 'active'
             assert (BIN_DIR/'bin/nekopass-update').is_file()
             assert subprocess.check_output(['systemctl', 'show', 'nekopass.service', '-p', 'MainPID', '--value']) == before
-            print('PASS embedded CLI installation without companion download, no-start, native service enable/start and upgrade preservation')
+            assert not list(STATE_DIR.glob('state.db.before-reconfigure-*'))
+            subprocess.run(['systemctl', 'stop', SERVICE], check=True)
+            original_state = (STATE_DIR/'state.db').read_bytes()
+            # New credentials/controller must not reuse old cached policies.
+            # Archive the old database and create fresh recoverable state.
+            modified = [*args, '--server', 'http://127.0.0.1:2', '--token', 'fixture-replacement-node-key']
+            result = subprocess.run(modified, capture_output=True, text=True, timeout=180, env={**os.environ,'CURL_CA_BUNDLE':CA})
+            assert result.returncode == 0, result.stdout + result.stderr
+            updated = (CONFIG_DIR/'agent.env').read_text()
+            assert 'NEKOPASS_SERVER=http://127.0.0.1:2' in updated
+            assert 'NEKOPASS_NODE_TOKEN=fixture-replacement-node-key' in updated
+            assert 'NEKOPASS_PANEL_URL=' not in updated and 'NEKOPASS_CA=' not in updated
+            assert (STATE_DIR/'state.db').exists()
+            backups = list(STATE_DIR.glob('state.db.before-reconfigure-*'))
+            assert len(backups) == 1 and backups[0].read_bytes() == original_state
+            assert (STATE_DIR/'state.db').read_bytes() != original_state
+            print('PASS automatic fresh/reinstall, legacy upgrade compatibility, config overwrite, archived old state and native service startup')
         finally:
             server.shutdown()
             server.server_close()

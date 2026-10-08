@@ -33,8 +33,8 @@ func TestInstallSettingsValidation(t *testing.T) {
 	if strings.Contains(command, "sha256") {
 		t.Fatal("installation still requires checksum")
 	}
-	if !strings.Contains(command, shellQuote(v.InstallerURL)) || !strings.Contains(command, "--upgrade") {
-		t.Fatal("unsafe command quoting or missing upgrade flag")
+	if !strings.Contains(command, shellQuote(v.InstallerURL)) || strings.Contains(command, "--upgrade") {
+		t.Fatal("unsafe command quoting or obsolete upgrade flag")
 	}
 	for _, value := range []string{"wget ", " && bash ", "--server 'https://panel.example.test:9443'", "--token 'fixture-node-key'", shellQuote(v.ReleaseBaseURL), "--version"} {
 		if !strings.Contains(command, value) {

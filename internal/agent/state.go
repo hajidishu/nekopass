@@ -42,7 +42,13 @@ func OpenState(path string) (*State, error) {
 		s.Instance = string(b.Get([]byte("instance")))
 		if s.Instance == "" {
 			s.Instance = control.Secret()
+			if e := b.Put([]byte("restore_pending"), []byte("1")); e != nil {
+				return e
+			}
 			return b.Put([]byte("instance"), []byte(s.Instance))
+		}
+		if b.Get([]byte("config")) == nil && tx.Bucket([]byte("users")).Stats().KeyN == 0 && tx.Bucket([]byte("rules")).Stats().KeyN == 0 && tx.Bucket([]byte("retired_users")).Stats().KeyN == 0 {
+			return b.Put([]byte("restore_pending"), []byte("1"))
 		}
 		return nil
 	})
@@ -65,11 +71,21 @@ func (s *State) Config() (*pb.ControlMessage, error) {
 	return c, e
 }
 func (s *State) SaveConfig(c *pb.ControlMessage) error {
-	data, e := proto.Marshal(c)
+	saved := proto.Clone(c).(*pb.ControlMessage)
+	saved.StateRestore = nil
+	data, e := proto.Marshal(saved)
 	if e != nil {
 		return e
 	}
-	return s.db.Update(func(tx *bolt.Tx) error { return tx.Bucket([]byte("meta")).Put([]byte("config"), data) })
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("meta"))
+		if c.Node != nil || len(c.Users) > 0 || len(c.Rules) > 0 {
+			if err := b.Delete([]byte("restore_pending")); err != nil {
+				return err
+			}
+		}
+		return b.Put([]byte("config"), data)
+	})
 }
 func (s *State) LoadUsers() (map[int64]DiskUser, error) {
 	out := map[int64]DiskUser{}

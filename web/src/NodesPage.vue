@@ -45,7 +45,7 @@ async function remove(kind: 'nodes' | 'node-groups', id: number) { try { await E
  
 <el-dialog v-model="installDialog" title="节点一键安装命令" width="780px" @closed="installCommand=''">
  <p>在节点服务器上以 root 运行。命令已包含面板地址、主控端口、此节点密钥和连接方式。</p>
- <p v-if="installExisting" class="field-tip">此节点已绑定服务器，命令仅用于原机器升级，会验证并保留原密钥与状态文件。新服务器请新建节点。</p>
+ <p v-if="installExisting" class="field-tip">重复执行会覆盖程序和连接配置，连接信息不变时保留原状态。服务器完全重建后，可使用原密钥恢复此节点；旧服务器应已离线，主控与节点均需支持状态恢复。无法确认用量的旧流量授权会按已消耗处理。</p>
  <p v-else class="field-tip">wget 下载脚本后由 bash 执行；命令可重复使用，更换节点密钥后重新复制。</p>
  <el-input :model-value="installCommand" type="textarea" :rows="6" readonly class="install-command" />
  <p class="field-tip">下载源、版本、主控地址和连接方式来自 <a class="text-link" href="/admin/settings">系统设置</a>。管理 API 密钥不会下发到节点。</p>

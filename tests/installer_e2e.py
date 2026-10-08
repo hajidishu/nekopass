@@ -60,9 +60,15 @@ def main():
   wait(lambda:info()['online'] and not info()['sync_error'])
   assert (ROOT/'agent.env').read_bytes()==original_env
   assert subprocess.check_output(['systemctl','show','nekopass-agent','-p','MainPID','--value'],text=True).strip()==primary_pid
-  command('--server','http://127.0.0.1:19443','--token','a'*64,'--download-base',BASE+'/releases','--upgrade',ok=False)
+  assert '--upgrade' not in upgrade
+  command('--server','http://127.0.0.1:19443','--token','a'*64,'--download-base',BASE+'/releases','--version',cfg['agent_version'],'--no-start')
+  assert 'NEKOPASS_NODE_TOKEN='+'a'*64 in (ROOT/'agent.env').read_text()
+  assert list(STATE.parent.glob('state.db.before-reconfigure-*'))
+  command(*upgrade)
+  wait(lambda:info()['online'] and not info()['sync_error'])
   assert (ROOT/'agent.env').read_bytes()==original_env
-  print('PASS upgrade preserves identity/state and rebinding rejected; primary Agent untouched',flush=True)
+  assert subprocess.check_output(['systemctl','show','nekopass-agent','-p','MainPID','--value'],text=True).strip()==primary_pid
+  print('PASS repeated installation preserves state, configuration overrides and rebuilt enrollment; primary Agent untouched',flush=True)
  finally:
   if node:
    n=next(n for n in api('admin/nodes') if n['id']==node)

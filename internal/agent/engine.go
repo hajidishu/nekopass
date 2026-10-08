@@ -114,6 +114,9 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 		}
 		e.targetPolicy.Store(policy)
 	}
+	if err := e.restoreState(c); err != nil {
+		return err
+	}
 	for _, ack := range c.AcknowledgedUsage {
 		key := epochKey(ack.UserId, ack.QuotaEpoch)
 		a := e.retired[key]
@@ -411,7 +414,17 @@ func (e *Engine) Report() (*pb.AgentMessage, error) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 	}
-	r := &pb.AgentMessage{ProtocolVersion: 14, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load()}
+	r := &pb.AgentMessage{ProtocolVersion: 15, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load()}
+	pending, err := e.state.RestorePending()
+	if err != nil {
+		return nil, err
+	}
+	if pending {
+		r.RestoreState = true
+		r.AppliedRevision = 0
+		r.ActiveConnections = 0
+		return r, nil
+	}
 	users := map[int64]DiskUser{}
 	for _, a := range e.users {
 		u, wanted, err := a.report()
