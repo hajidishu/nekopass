@@ -118,12 +118,17 @@ func (s *Server) pages(static http.Handler) http.Handler {
 		}
 		var user *store.User
 		if cookie, e := r.Cookie(s.sessionCookieName(r)); e == nil {
-			u, err := s.query.FindSession(r.Context(), Hash(cookie.Value))
+			session, err := s.query.FindSession(r.Context(), Hash(cookie.Value))
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				pageError(w, r, 503, "暂时无法验证登录状态，请稍后重试。")
 				return
 			}
+			u := session.User
 			if err == nil && u.Enabled {
+				if err = s.renewSessionCookie(w, r, cookie.Value, session.CookieRenewedAt); err != nil {
+					pageError(w, r, 503, "暂时无法续期登录状态，请稍后重试。")
+					return
+				}
 				user = &u
 			}
 		}

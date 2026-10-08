@@ -5,8 +5,14 @@ SELECT * FROM users WHERE username = $1;
 SELECT * FROM users WHERE id = $1;
 
 -- name: FindSession :one
-SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id
-WHERE s.token_hash=$1 AND s.expires_at>now();
+SELECT sqlc.embed(u),s.cookie_renewed_at FROM users u JOIN sessions s ON s.user_id=u.id
+WHERE s.token_hash=$1 AND (s.expires_at IS NULL OR s.expires_at>now());
+
+-- name: RenewSessionCookie :execrows
+UPDATE sessions SET expires_at=NULL,cookie_renewed_at=now()
+WHERE token_hash=$1 AND (expires_at IS NULL OR expires_at>now())
+AND (expires_at IS NOT NULL OR cookie_renewed_at<=now()-interval '24 hours')
+AND EXISTS(SELECT 1 FROM users WHERE users.id=sessions.user_id AND users.enabled);
 
 -- name: DeleteSession :exec
 DELETE FROM sessions WHERE token_hash=$1;

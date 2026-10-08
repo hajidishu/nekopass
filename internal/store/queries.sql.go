@@ -7,6 +7,8 @@ package store
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const bumpRevision = `-- name: BumpRevision :exec
@@ -83,39 +85,45 @@ func (q *Queries) FindNodeByToken(ctx context.Context, tokenHash string) (Node, 
 }
 
 const findSession = `-- name: FindSession :one
-SELECT u.id, u.username, u.password_hash, u.is_admin, u.enabled, u.created_at, u.plan_id, u.plan_started_at, u.subscription_managed, u.subscription_expires_at, u.next_reset_at, u.reset_anchor_at, u.reset_index, u.quota_epoch, u.speed_bps, u.quota_bytes, u.max_rules, u.max_connections, u.ip_limit, u.rule_speed_bps, u.rule_ip_limit, u.rule_connection_limit, u.resource_expires_at, u.traffic_base_bytes, u.resources_revision FROM users u JOIN sessions s ON s.user_id=u.id
-WHERE s.token_hash=$1 AND s.expires_at>now()
+SELECT u.id, u.username, u.password_hash, u.is_admin, u.enabled, u.created_at, u.plan_id, u.plan_started_at, u.subscription_managed, u.subscription_expires_at, u.next_reset_at, u.reset_anchor_at, u.reset_index, u.quota_epoch, u.speed_bps, u.quota_bytes, u.max_rules, u.max_connections, u.ip_limit, u.rule_speed_bps, u.rule_ip_limit, u.rule_connection_limit, u.resource_expires_at, u.traffic_base_bytes, u.resources_revision,s.cookie_renewed_at FROM users u JOIN sessions s ON s.user_id=u.id
+WHERE s.token_hash=$1 AND (s.expires_at IS NULL OR s.expires_at>now())
 `
 
-func (q *Queries) FindSession(ctx context.Context, tokenHash string) (User, error) {
+type FindSessionRow struct {
+	User            User               `json:"user"`
+	CookieRenewedAt pgtype.Timestamptz `json:"cookie_renewed_at"`
+}
+
+func (q *Queries) FindSession(ctx context.Context, tokenHash string) (FindSessionRow, error) {
 	row := q.db.QueryRow(ctx, findSession, tokenHash)
-	var i User
+	var i FindSessionRow
 	err := row.Scan(
-		&i.ID,
-		&i.Username,
-		&i.PasswordHash,
-		&i.IsAdmin,
-		&i.Enabled,
-		&i.CreatedAt,
-		&i.PlanID,
-		&i.PlanStartedAt,
-		&i.SubscriptionManaged,
-		&i.SubscriptionExpiresAt,
-		&i.NextResetAt,
-		&i.ResetAnchorAt,
-		&i.ResetIndex,
-		&i.QuotaEpoch,
-		&i.SpeedBps,
-		&i.QuotaBytes,
-		&i.MaxRules,
-		&i.MaxConnections,
-		&i.IpLimit,
-		&i.RuleSpeedBps,
-		&i.RuleIpLimit,
-		&i.RuleConnectionLimit,
-		&i.ResourceExpiresAt,
-		&i.TrafficBaseBytes,
-		&i.ResourcesRevision,
+		&i.User.ID,
+		&i.User.Username,
+		&i.User.PasswordHash,
+		&i.User.IsAdmin,
+		&i.User.Enabled,
+		&i.User.CreatedAt,
+		&i.User.PlanID,
+		&i.User.PlanStartedAt,
+		&i.User.SubscriptionManaged,
+		&i.User.SubscriptionExpiresAt,
+		&i.User.NextResetAt,
+		&i.User.ResetAnchorAt,
+		&i.User.ResetIndex,
+		&i.User.QuotaEpoch,
+		&i.User.SpeedBps,
+		&i.User.QuotaBytes,
+		&i.User.MaxRules,
+		&i.User.MaxConnections,
+		&i.User.IpLimit,
+		&i.User.RuleSpeedBps,
+		&i.User.RuleIpLimit,
+		&i.User.RuleConnectionLimit,
+		&i.User.ResourceExpiresAt,
+		&i.User.TrafficBaseBytes,
+		&i.User.ResourcesRevision,
+		&i.CookieRenewedAt,
 	)
 	return i, err
 }
@@ -192,4 +200,19 @@ func (q *Queries) FindUserByName(ctx context.Context, username string) (User, er
 		&i.ResourcesRevision,
 	)
 	return i, err
+}
+
+const renewSessionCookie = `-- name: RenewSessionCookie :execrows
+UPDATE sessions SET expires_at=NULL,cookie_renewed_at=now()
+WHERE token_hash=$1 AND (expires_at IS NULL OR expires_at>now())
+AND (expires_at IS NOT NULL OR cookie_renewed_at<=now()-interval '24 hours')
+AND EXISTS(SELECT 1 FROM users WHERE users.id=sessions.user_id AND users.enabled)
+`
+
+func (q *Queries) RenewSessionCookie(ctx context.Context, tokenHash string) (int64, error) {
+	result, err := q.db.Exec(ctx, renewSessionCookie, tokenHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

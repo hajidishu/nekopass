@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nekopass/nekopass/internal/payment"
 	"github.com/nekopass/nekopass/internal/payment/epay"
@@ -120,6 +121,7 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 		writeJSON(w, 200, map[string]any{"id": u.ID, "username": u.Username, "is_admin": u.IsAdmin})
 	})
 	api.HandleFunc("POST /api/v1/logout", s.logout)
+	api.HandleFunc("POST /api/v1/admin/users/{id}/logout", s.logoutUser)
 	api.HandleFunc("GET /api/v1/admin/settings", s.getSettings)
 	api.HandleFunc("GET /api/v1/admin/updates", s.checkUpdates)
 	api.HandleFunc("GET /api/v1/admin/updates/panel", s.panelUpdateStatus)
@@ -279,11 +281,24 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if c, e := r.Cookie(s.sessionCookieName(r)); e == nil {
-			u, err := s.query.FindSession(r.Context(), Hash(c.Value))
+			session, err := s.query.FindSession(r.Context(), Hash(c.Value))
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				slog.Error("session lookup unavailable", "error", err)
+				fail(w, 503, "暂时无法验证登录状态，请稍后重试")
+				return
+			}
+			u := session.User
 			if err == nil && u.Enabled {
 				if strings.HasPrefix(r.URL.Path, "/api/v1/admin/") && !u.IsAdmin {
 					fail(w, 403, "需要管理员权限")
 					return
+				}
+				if !strings.HasSuffix(r.URL.Path, "/logout") {
+					if err = s.renewSessionCookie(w, r, c.Value, session.CookieRenewedAt); err != nil {
+						slog.Error("session renewal unavailable", "error", err)
+						fail(w, 503, "暂时无法续期登录状态，请稍后重试")
+						return
+					}
 				}
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, u)))
 				return
@@ -347,7 +362,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := Secret()
-	e = s.createLoginSession(r.Context(), u, token, time.Now().Add(12*time.Hour))
+	e = s.createLoginSession(r.Context(), u, token)
 	if errors.Is(e, errLoginChanged) {
 		fail(w, 401, "账号或密码错误")
 		return
@@ -357,7 +372,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = s.Pool.Exec(r.Context(), "DELETE FROM sessions WHERE expires_at<now()")
-	http.SetCookie(w, &http.Cookie{Name: s.sessionCookieName(r), Value: token, Path: "/", HttpOnly: true, Secure: s.requestHTTPS(r), SameSite: http.SameSiteStrictMode, MaxAge: 43200})
+	s.setSessionCookie(w, r, token)
 	writeJSON(w, 200, map[string]any{"id": u.ID, "username": u.Username, "is_admin": u.IsAdmin})
 }
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {

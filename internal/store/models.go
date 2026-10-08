@@ -245,9 +245,10 @@ type SchemaVersion struct {
 }
 
 type Session struct {
-	TokenHash string             `json:"token_hash"`
-	UserID    int64              `json:"user_id"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	TokenHash       string             `json:"token_hash"`
+	UserID          int64              `json:"user_id"`
+	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
+	CookieRenewedAt pgtype.Timestamptz `json:"cookie_renewed_at"`
 }
 
 type ShopOrder struct {

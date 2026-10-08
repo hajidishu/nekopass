@@ -25,7 +25,7 @@ func TestWalletPurchaseIdempotencyAndCycleIsolation(t *testing.T) {
 	tokens := map[int64]string{}
 	for _, id := range []int64{aid, uid, other} {
 		tokens[id] = Secret()
-		if _, e := p.Exec(ctx, "INSERT INTO sessions VALUES($1,$2,now()+interval '1 hour')", Hash(tokens[id]), id); e != nil {
+		if _, e := p.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour')", Hash(tokens[id]), id); e != nil {
 			t.Fatal(e)
 		}
 	}

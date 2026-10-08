@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.16.0
+  version: 0.16.5
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -669,10 +669,25 @@ paths:
       requestBody: {$ref: '#/components/requestBodies/User'}
       responses:
         '200': {description: Updated user ID}
+  /admin/users/{id}/logout:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    post:
+      summary: Administrator revokes all browser sessions of one user without disabling the account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+      responses:
+        '200': {description: All existing browser sessions revoked; fresh login is allowed}
+        '403': {description: Administrator privileges required}
+        '404': {description: User does not exist}
   /login:
     post:
       security: []
       summary: Login and set an HttpOnly session cookie; Secure follows the trusted request protocol
+      description: Server sessions have no fixed expiry. Persistent cookies last 365 days and renew at most once daily on authenticated access. Logout, password changes and account disabling revoke sessions.
       requestBody:
         required: true
         content:
@@ -697,6 +712,8 @@ paths:
       summary: Current account
       responses:
         '200': {description: 'id, username, is_admin'}
+        '401': {description: Missing, revoked or expired legacy session}
+        '503': {description: Session storage temporarily unavailable; login is not revoked}
   /users:
     get:
       summary: All accounts for admin, own account otherwise

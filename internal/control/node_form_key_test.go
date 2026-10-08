@@ -19,7 +19,7 @@ func TestNodeEditKeyEmptyGeneratesAndKeepsInstance(t *testing.T) {
 	sessions := map[int64]string{}
 	for _, id := range []int64{adminID, ordinaryID} {
 		sessions[id] = Secret()
-		p.Exec(ctx, "INSERT INTO sessions VALUES($1,$2,now()+interval '1 hour')", Hash(sessions[id]), id)
+		p.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour')", Hash(sessions[id]), id)
 	}
 	s := New(p)
 	h := s.Handler(http.NotFoundHandler())

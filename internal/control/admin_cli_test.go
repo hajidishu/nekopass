@@ -24,7 +24,7 @@ func TestLocalAdministratorResetScopeAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []int64{a, b} {
-		if _, err := p.Exec(ctx, "INSERT INTO sessions VALUES($1,$2,now()+interval '1 hour')", Hash(Secret()), id); err != nil {
+		if _, err := p.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour')", Hash(Secret()), id); err != nil {
 			t.Fatal(err)
 		}
 	}

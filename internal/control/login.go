@@ -48,7 +48,7 @@ func (s *Server) allowLogin(key string, now time.Time, burst int) bool {
 	return bucket.limiter.AllowN(now, 1)
 }
 
-func (s *Server) createLoginSession(ctx context.Context, user store.User, token string, expires time.Time) error {
+func (s *Server) createLoginSession(ctx context.Context, user store.User, token string) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -65,7 +65,7 @@ func (s *Server) createLoginSession(ctx context.Context, user store.User, token 
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,$3)", Hash(token), id, expires); err != nil {
+	if _, err = tx.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,expires_at,cookie_renewed_at) VALUES($1,$2,NULL,now())", Hash(token), id); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

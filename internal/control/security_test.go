@@ -38,7 +38,7 @@ func newSecurityFixture(t *testing.T) *securityFixture {
 	f.other, f.otherPlan = testUser(t, p, 1<<20, 20, false)
 	for _, id := range []int64{f.admin, f.user, f.other} {
 		f.tokens[id] = Secret()
-		if _, err := p.Exec(context.Background(), "INSERT INTO sessions VALUES($1,$2,now()+interval '1 hour')", Hash(f.tokens[id]), id); err != nil {
+		if _, err := p.Exec(context.Background(), "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour')", Hash(f.tokens[id]), id); err != nil {
 			t.Fatal(err)
 		}
 	}
