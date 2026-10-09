@@ -18,8 +18,8 @@ features:
   - title: 一键安装
     details: 自动配置数据库、服务和管理员账号。
     link: /guide/panel
-  - title: TCP 转发
-    details: 直转与中转，raw(tcp)、h2 可独立搭配明文或 TLS。
+  - title: TCP / UDP 转发
+    details: 直转与中转，raw(tcp)、h2 支持明文或 TLS，原生 raw(udp) 支持明文或 DTLS。
     link: /protocols/
   - title: 用户功能
     details: 邮箱注册、余额购买、邀请返利、工单和订单查询。

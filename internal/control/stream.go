@@ -250,6 +250,9 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 	out.Node.SecurityConfigured = true
 	out.Node.ProxyTrustedCidrs = settings.ProxyTrustedCIDRs
 	out.Node.TargetDenyCidrs = settings.TargetDenyCIDRs
+	if e = tx.QueryRow(ctx, "SELECT udp_idle_timeout_seconds FROM nodes WHERE id=$1", nodeID).Scan(&out.Node.UdpIdleTimeoutSeconds); e != nil {
+		return nil, e
+	}
 	var interfaces []byte
 	e = tx.QueryRow(ctx, `SELECT id,enabled,listen_host,port_min,port_max,max_connections,dial_timeout_seconds,idle_timeout_seconds,probe_interval_seconds,disk_path,network_interfaces,tunnel_exit_enabled,tunnel_listen_host,tunnel_listen_port,tunnel_protocol FROM nodes WHERE id=$1`, nodeID).Scan(&out.Node.NodeId, &out.Node.Enabled, &out.Node.ListenHost, &out.Node.PortMin, &out.Node.PortMax, &out.Node.MaxConnections, &out.Node.DialTimeoutSeconds, &out.Node.IdleTimeoutSeconds, &out.Node.ProbeIntervalSeconds, &out.Node.DiskPath, &interfaces, &out.Node.TunnelExitEnabled, &out.Node.TunnelListenHost, &out.Node.TunnelListenPort, &out.Node.TunnelProtocol)
 	if e != nil {
@@ -293,14 +296,14 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 	rows, e = tx.Query(ctx, `SELECT r.id,r.user_id,nn.listen_host,r.listen_port,r.target_host,r.target_port,r.enabled,r.targets,r.balance,
  COALESCE(LEAST(NULLIF(r.speed_mbps*125000,0),NULLIF(u.rule_speed_bps,0)),0),
  COALESCE(LEAST(NULLIF(r.ip_limit,0),NULLIF(u.rule_ip_limit,0)),0),
-	 COALESCE(LEAST(NULLIF(r.connection_limit,0),NULLIF(u.rule_connection_limit,0)),0),r.proxy_accept,r.proxy_send,r.proxy_trusted_cidrs,COALESCE(r.egress_node_id,0),COALESCE(en.tunnel_public_host,''),COALESCE(en.tunnel_listen_port,0),COALESCE(l.token,''),COALESCE(en.tunnel_protocol,''),u.quota_epoch FROM rules r JOIN nodes nn ON nn.id=r.node_id JOIN user_entitlements u ON u.id=r.user_id JOIN user_nodes n ON n.user_id=r.user_id AND n.node_id=r.node_id LEFT JOIN nodes en ON en.id=r.egress_node_id AND en.enabled AND en.tunnel_exit_enabled LEFT JOIN node_tunnel_links l ON l.ingress_node_id=r.node_id AND l.egress_node_id=r.egress_node_id WHERE r.node_id=$1 AND nn.ingress_enabled ORDER BY r.id`, nodeID)
+	 COALESCE(LEAST(NULLIF(r.connection_limit,0),NULLIF(u.rule_connection_limit,0)),0),r.proxy_accept,r.proxy_send,r.proxy_trusted_cidrs,COALESCE(r.egress_node_id,0),COALESCE(en.tunnel_public_host,''),COALESCE(en.tunnel_listen_port,0),COALESCE(l.token,''),COALESCE(en.tunnel_protocol,''),u.quota_epoch,r.protocol FROM rules r JOIN nodes nn ON nn.id=r.node_id JOIN user_entitlements u ON u.id=r.user_id JOIN user_nodes n ON n.user_id=r.user_id AND n.node_id=r.node_id LEFT JOIN nodes en ON en.id=r.egress_node_id AND en.enabled AND en.tunnel_exit_enabled LEFT JOIN node_tunnel_links l ON l.ingress_node_id=r.node_id AND l.egress_node_id=r.egress_node_id WHERE r.node_id=$1 AND nn.ingress_enabled ORDER BY r.id`, nodeID)
 	if e != nil {
 		return nil, e
 	}
 	for rows.Next() {
 		v := &pb.Rule{}
 		var targets, trusted []byte
-		if e = rows.Scan(&v.Id, &v.UserId, &v.ListenHost, &v.ListenPort, &v.TargetHost, &v.TargetPort, &v.Enabled, &targets, &v.Balance, &v.SpeedBps, &v.IpLimit, &v.ConnectionLimit, &v.ProxyAccept, &v.ProxySend, &trusted, &v.EgressNodeId, &v.TunnelHost, &v.TunnelPort, &v.TunnelToken, &v.TunnelProtocol, &v.QuotaEpoch); e != nil {
+		if e = rows.Scan(&v.Id, &v.UserId, &v.ListenHost, &v.ListenPort, &v.TargetHost, &v.TargetPort, &v.Enabled, &targets, &v.Balance, &v.SpeedBps, &v.IpLimit, &v.ConnectionLimit, &v.ProxyAccept, &v.ProxySend, &trusted, &v.EgressNodeId, &v.TunnelHost, &v.TunnelPort, &v.TunnelToken, &v.TunnelProtocol, &v.QuotaEpoch, &v.Protocol); e != nil {
 			rows.Close()
 			return nil, e
 		}
@@ -323,6 +326,9 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 			v.Enabled = false
 		}
 		if v.EgressNodeId != 0 && (v.TunnelHost == "" || v.TunnelToken == "" || v.TunnelPort == 0) {
+			v.Enabled = false
+		}
+		if v.Protocol != "tcp" && r.ProtocolVersion < 16 {
 			v.Enabled = false
 		}
 		out.Rules = append(out.Rules, v)
@@ -350,20 +356,23 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 		if e != nil {
 			return nil, e
 		}
-		rows, e = tx.Query(ctx, `SELECT r.id,r.node_id,r.targets,r.user_id,u.quota_epoch,COALESCE(extract(epoch FROM LEAST(u.expires_at,u.next_reset_at))::bigint,0) FROM rules r JOIN user_entitlements u ON u.id=r.user_id JOIN user_nodes ingress ON ingress.user_id=r.user_id AND ingress.node_id=r.node_id JOIN user_nodes exit_auth ON exit_auth.user_id=r.user_id AND exit_auth.node_id=r.egress_node_id JOIN node_tunnel_links l ON l.ingress_node_id=r.node_id AND l.egress_node_id=r.egress_node_id WHERE r.egress_node_id=$1 AND EXISTS(SELECT 1 FROM nodes source WHERE source.id=r.node_id AND source.ingress_enabled) AND r.enabled AND u.enabled AND (u.expires_at IS NULL OR u.expires_at>now()) ORDER BY r.id`, nodeID)
+		rows, e = tx.Query(ctx, `SELECT r.id,r.node_id,r.targets,r.user_id,u.quota_epoch,COALESCE(extract(epoch FROM LEAST(u.expires_at,u.next_reset_at))::bigint,0),r.protocol FROM rules r JOIN user_entitlements u ON u.id=r.user_id JOIN user_nodes ingress ON ingress.user_id=r.user_id AND ingress.node_id=r.node_id JOIN user_nodes exit_auth ON exit_auth.user_id=r.user_id AND exit_auth.node_id=r.egress_node_id JOIN node_tunnel_links l ON l.ingress_node_id=r.node_id AND l.egress_node_id=r.egress_node_id WHERE r.egress_node_id=$1 AND EXISTS(SELECT 1 FROM nodes source WHERE source.id=r.node_id AND source.ingress_enabled) AND r.enabled AND u.enabled AND (u.expires_at IS NULL OR u.expires_at>now()) ORDER BY r.id`, nodeID)
 		if e != nil {
 			return nil, e
 		}
 		for rows.Next() {
 			v := &pb.EgressRule{}
 			var targets []byte
-			if e = rows.Scan(&v.RuleId, &v.IngressNodeId, &targets, &v.UserId, &v.QuotaEpoch, &v.ExpiresUnix); e != nil {
+			if e = rows.Scan(&v.RuleId, &v.IngressNodeId, &targets, &v.UserId, &v.QuotaEpoch, &v.ExpiresUnix, &v.Protocol); e != nil {
 				rows.Close()
 				return nil, e
 			}
 			if e = json.Unmarshal(targets, &v.Targets); e != nil {
 				rows.Close()
 				return nil, e
+			}
+			if v.Protocol != "tcp" && r.ProtocolVersion < 16 {
+				continue
 			}
 			out.EgressRules = append(out.EgressRules, v)
 		}
@@ -386,6 +395,9 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 				}
 				tlsVersions[rule.EgressNodeId] = version
 			}
+			if rule.Protocol != "tcp" && version < 16 {
+				rule.Enabled = false
+			}
 			if rule.Tls != nil {
 				rule.Tls.SequenceAuth = r.ProtocolVersion >= 14 && version >= 14
 			}
@@ -396,6 +408,11 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 				rule.Enabled = false
 			}
 		}
+	}
+	if out.Node.TunnelExitEnabled && tunnel.UDP(out.Node.TunnelProtocol) && r.ProtocolVersion < 16 {
+		out.Node.TunnelExitEnabled = false
+		out.TunnelLinks = nil
+		out.EgressRules = nil
 	}
 	if out.Node.TunnelExitEnabled && (out.Node.TunnelProtocol == "tls_tcp" || out.Node.TunnelProtocol == "plain_h2") && r.ProtocolVersion < 13 {
 		out.Node.TunnelExitEnabled = false

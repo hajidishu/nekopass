@@ -24,21 +24,22 @@ type NodeProtocolsInput struct {
 }
 
 type NodeBasicInput struct {
-	Token                *string  `json:"token,omitempty"`
-	Name                 string   `json:"name"`
-	PublicAddress        string   `json:"public_address"`
-	Notes                string   `json:"notes"`
-	Enabled              bool     `json:"enabled"`
-	GroupIDs             []int64  `json:"group_ids"`
-	ListenHost           string   `json:"listen_host"`
-	PortMin              int      `json:"port_min"`
-	PortMax              int      `json:"port_max"`
-	MaxConnections       int64    `json:"max_connections"`
-	DialTimeoutSeconds   int      `json:"dial_timeout_seconds"`
-	IdleTimeoutSeconds   int      `json:"idle_timeout_seconds"`
-	ProbeIntervalSeconds int      `json:"probe_interval_seconds"`
-	DiskPath             string   `json:"disk_path"`
-	NetworkInterfaces    []string `json:"network_interfaces"`
+	UDPIdleTimeoutSeconds int      `json:"udp_idle_timeout_seconds,omitempty"`
+	Token                 *string  `json:"token,omitempty"`
+	Name                  string   `json:"name"`
+	PublicAddress         string   `json:"public_address"`
+	Notes                 string   `json:"notes"`
+	Enabled               bool     `json:"enabled"`
+	GroupIDs              []int64  `json:"group_ids"`
+	ListenHost            string   `json:"listen_host"`
+	PortMin               int      `json:"port_min"`
+	PortMax               int      `json:"port_max"`
+	MaxConnections        int64    `json:"max_connections"`
+	DialTimeoutSeconds    int      `json:"dial_timeout_seconds"`
+	IdleTimeoutSeconds    int      `json:"idle_timeout_seconds"`
+	ProbeIntervalSeconds  int      `json:"probe_interval_seconds"`
+	DiskPath              string   `json:"disk_path"`
+	NetworkInterfaces     []string `json:"network_interfaces"`
 }
 
 func (s *Server) saveNodeBasic(w http.ResponseWriter, r *http.Request) { s.saveNodePart(w, r, "basic") }
@@ -57,6 +58,9 @@ func loadNodeInput(ctx context.Context, db interface {
  COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}')
  FROM nodes n WHERE id=$1`, id).Scan(&v.Name, &v.PublicAddress, &v.Notes, &v.Enabled, &v.ListenHost, &v.PortMin, &v.PortMax, &v.MaxConnections, &v.DialTimeoutSeconds, &v.IdleTimeoutSeconds, &v.ProbeIntervalSeconds, &v.DiskPath, &v.NetworkInterfaces, &v.Token, &hash, &v.IngressEnabled, &v.AllowDirect, &v.TunnelExitEnabled, &v.TunnelProtocol, &v.TunnelListenHost, &v.TunnelListenPort, &v.TunnelPublicHost, &data, &v.GroupIDs, &v.AllowedIngressIDs)
 	if err != nil {
+		return v, hash, err
+	}
+	if err = db.QueryRow(ctx, "SELECT udp_idle_timeout_seconds FROM nodes WHERE id=$1", id).Scan(&v.UDPIdleTimeoutSeconds); err != nil {
 		return v, hash, err
 	}
 	cfg := DefaultTunnelTLS()

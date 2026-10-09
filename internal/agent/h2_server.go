@@ -197,7 +197,11 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dialCtx, cancelDial := context.WithTimeout(r.Context(), policy.dialTimeout)
-	target, err := e.dialTarget(dialCtx, "tcp", open.Target)
+	network := "tcp"
+	if open.Network == "udp" {
+		network = "udp"
+	}
+	target, err := e.dialTarget(dialCtx, network, open.Target)
 	cancelDial()
 	if err != nil {
 		http.Error(w, "Service unavailable", 502)
@@ -219,6 +223,15 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	defer r.Body.Close()
+	if network == "udp" {
+		peer := &framedDatagram{Conn: &httpDatagramConn{r: r.Body, w: w, flush: controller.Flush, cancel: cancel}}
+		e.relayDatagrams(ctx, peer, target, func() bool {
+			n := e.node.Load()
+			p := e.tunnelPolicy.Load()
+			return n != nil && n.Enabled && n.TunnelExitEnabled && p != nil && p.links[open.Ingress] == key && h2RuleAllowed(p, open)
+		})
+		return
+	}
 	go func() {
 		defer target.Close()
 		ticker := time.NewTicker(time.Second)
@@ -282,5 +295,12 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func h2RuleAllowed(policy *tunnelPolicy, open h2Open) bool {
+	network := open.Network
+	if network == "" {
+		network = "tcp"
+	}
+	if policy == nil || policy.rules[open.Rule] == nil || !networkIncludes(policy.rules[open.Rule].Protocol, network) {
+		return false
+	}
 	return tunnelRuleAllowed(policy, open.Rule, open.Ingress, open.User, open.Epoch, open.Target)
 }

@@ -14,12 +14,16 @@ func Split(mode string) (transport, security string) {
 		return "h2", "none"
 	case "tls_h2":
 		return "h2", "tls"
+	case "plain_udp":
+		return "raw_udp", "none"
+	case "dtls_udp":
+		return "raw_udp", "tls"
 	}
 	return "", ""
 }
 
 func Compose(transport, security string) (string, error) {
-	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2"} {
+	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2", "plain_udp", "dtls_udp"} {
 		t, s := Split(mode)
 		if t == transport && s == security {
 			return mode, nil
@@ -32,6 +36,7 @@ func Valid(mode string) bool { t, _ := Split(mode); return t != "" }
 func TLS(mode string) bool   { _, s := Split(mode); return s == "tls" }
 func H2(mode string) bool    { t, _ := Split(mode); return t == "h2" }
 func Raw(mode string) bool   { t, _ := Split(mode); return t == "raw_tcp" }
+func UDP(mode string) bool   { t, _ := Split(mode); return t == "raw_udp" }
 func MinimumVersion(mode string) int {
 	switch mode {
 	case "plain_tcp":
@@ -40,6 +45,8 @@ func MinimumVersion(mode string) int {
 		return 11
 	case "tls_tcp", "plain_h2":
 		return 13
+	case "plain_udp", "dtls_udp":
+		return 16
 	}
 	return 1 << 30
 }

@@ -5,6 +5,7 @@ go 1.26.8
 require (
 	github.com/go-acme/lego/v4 v4.35.2
 	github.com/jackc/pgx/v5 v5.9.2
+	github.com/pion/dtls/v3 v3.1.10
 	github.com/refraction-networking/utls v1.8.2
 	go.etcd.io/bbolt v1.4.3
 	golang.org/x/crypto v0.55.0
@@ -35,6 +36,8 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/nrdcg/dnspod-go v0.4.0 // indirect
+	github.com/pion/logging v0.2.4 // indirect
+	github.com/pion/transport/v5 v5.0.0 // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect

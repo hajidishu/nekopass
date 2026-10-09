@@ -3,6 +3,7 @@
 出口的「安全性」选择「不加密」，无需填写证书、SNI 或 uTLS 配置。
 
 - 搭配 [raw(tcp)](../protocols/plain-tcp.md)：使用明文 TCP 隧道。
+- 搭配 [raw(udp)](../protocols/raw-udp.md)：原生 UDP 中转，业务载荷为明文。
 - 搭配 [h2](../protocols/h2.md)：使用明文 HTTP/2（h2c）。
 
 隧道仍校验身份和规则权限，入口到出口的数据以明文传输。业务本身使用 HTTPS 等加密时，保留其原有加密。

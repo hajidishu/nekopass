@@ -66,6 +66,7 @@ message Rule {
   string tunnel_protocol = 21;
   TLSClientConfig tls = 22;
   int64 quota_epoch = 23;
+  string protocol = 24;
 }
 message TunnelLink {
   int64 ingress_node_id = 1;
@@ -78,6 +79,7 @@ message EgressRule {
   int64 user_id = 4;
   int64 quota_epoch = 5;
   int64 expires_unix = 6;
+  string protocol = 7;
 }
 message ControlMessage {
   int64 revision = 1;
@@ -131,6 +133,7 @@ message NodeConfig {
  repeated string proxy_trusted_cidrs = 18;
  repeated string target_deny_cidrs = 19;
  bool security_configured = 20;
+ int32 udp_idle_timeout_seconds = 21;
 }
 
 message DDNSConfig {

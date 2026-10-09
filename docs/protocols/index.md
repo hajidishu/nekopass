@@ -5,6 +5,7 @@
 | 传输协议 | 不加密 | TLS |
 | --- | --- | --- |
 | [raw(tcp)](./plain-tcp.md) | 每条转发连接使用一条明文 TCP 隧道 | 每条转发连接使用一条 TLS 隧道 |
+| [raw(udp)](./raw-udp.md) | 原生 UDP，只承载 UDP 转发 | 使用 DTLS 加密，只承载 UDP 转发 |
 | [h2](./h2.md) | 明文 HTTP/2（h2c），多条转发连接共用连接池 | HTTP/2 over TLS，多条转发连接共用连接池 |
 
 加密方式见 [安全性](../security/index.md)；证书、SNI、uTLS 等配置统一放在 [TLS](../security/tls.md) 页面。

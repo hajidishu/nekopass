@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -25,9 +26,10 @@ type tunnelListener struct {
 	config *pb.ControlMessage
 }
 type tunnelPolicy struct {
-	links       map[int64]string
-	rules       map[int64]*pb.EgressRule
-	dialTimeout time.Duration
+	nativeRoutes map[[16]byte]nativeLink
+	links        map[int64]string
+	rules        map[int64]*pb.EgressRule
+	dialTimeout  time.Duration
 }
 
 func tunnelRuleAllowed(policy *tunnelPolicy, ruleID, ingress, userID, epoch int64, target string) bool {
@@ -123,11 +125,13 @@ func dialTunnel(ctx context.Context, rule *pb.Rule, target string) (net.Conn, er
 
 func policyOf(c *pb.ControlMessage) *tunnelPolicy {
 	p := &tunnelPolicy{links: map[int64]string{}, rules: map[int64]*pb.EgressRule{}, dialTimeout: 8 * time.Second}
+	p.nativeRoutes = map[[16]byte]nativeLink{}
 	if c.Node != nil && c.Node.DialTimeoutSeconds > 0 {
 		p.dialTimeout = time.Duration(c.Node.DialTimeoutSeconds) * time.Second
 	}
 	for _, link := range c.TunnelLinks {
 		p.links[link.IngressNodeId] = link.Token
+		p.nativeRoutes[nativeRouteTag(link.Token)] = nativeLink{ingress: link.IngressNodeId, key: link.Token}
 	}
 	for _, rule := range c.EgressRules {
 		p.rules[rule.RuleId] = proto.Clone(rule).(*pb.EgressRule)
@@ -136,6 +140,15 @@ func policyOf(c *pb.ControlMessage) *tunnelPolicy {
 }
 
 func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
+	if e.nativeUDP != nil {
+		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && c.Node.TunnelProtocol == e.nativeUDP.node.TunnelProtocol && c.Node.TunnelListenHost == e.nativeUDP.node.TunnelListenHost && c.Node.TunnelListenPort == e.nativeUDP.node.TunnelListenPort {
+			e.tunnelPolicy.Store(policyOf(c))
+			return nil
+		}
+		e.nativeUDP.cancel()
+		e.nativeUDP.conn.Close()
+		e.nativeUDP = nil
+	}
 	if e.tunnel != nil {
 		old := e.tunnel.config
 		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && old.Node != nil && old.Node.TunnelExitEnabled && old.Node.TunnelProtocol == c.Node.TunnelProtocol && old.Node.TunnelListenHost == c.Node.TunnelListenHost && old.Node.TunnelListenPort == c.Node.TunnelListenPort && sameH2Listener(old.Node.Tls, c.Node.Tls) {
@@ -175,6 +188,10 @@ func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
 			return errors.New("TLS certificate not ready")
 		}
 	}
+	if tunnel.UDP(c.Node.TunnelProtocol) {
+		e.tunnelPolicy.Store(policyOf(c))
+		return e.startNativeUDP(c.Node)
+	}
 	ln, err := net.Listen("tcp", address)
 	if err != nil {
 		return err
@@ -195,7 +212,7 @@ func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
 		settings := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return e.h2Certificate.Load(), nil }}
 		pair, _ := tls.X509KeyPair([]byte(c.Node.Tls.Certificate), []byte(c.Node.Tls.PrivateKey))
 		e.h2Certificate.Store(&pair)
-		ln = tls.NewListener(ln, settings)
+		ln = newCamouflageTLSListener(ctx, ln, settings, e)
 	}
 	e.wg.Add(1)
 	go e.acceptTunnel(ctx, ln)
@@ -233,6 +250,12 @@ func (e *Engine) handleTunnel(ctx context.Context, upstream net.Conn) {
 	defer stopUpstream()
 	defer upstream.Close()
 	_ = upstream.SetReadDeadline(time.Now().Add(5 * time.Second))
+	reader := bufio.NewReaderSize(upstream, 8192)
+	if prefix, err := reader.Peek(4); err == nil && [4]byte(prefix) != tunnelMagic {
+		e.handleUDPStream(ctx, upstream, reader)
+		return
+	}
+	upstream = &bufferedConn{Conn: upstream, reader: reader}
 	var header [4 + 8 + 8 + 64 + 2]byte
 	if _, err := io.ReadFull(upstream, header[:]); err != nil {
 		return
@@ -258,7 +281,6 @@ func (e *Engine) handleTunnel(ctx context.Context, upstream net.Conn) {
 	allowed := policy.rules[ruleID]
 	key := string(header[20:84])
 	if allowed == nil || len(policy.links[ingress]) != 64 || policy.links[ingress] != key {
-		_, _ = upstream.Write([]byte{1})
 		return
 	}
 	userID, epoch := allowed.UserId, allowed.QuotaEpoch

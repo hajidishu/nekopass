@@ -454,6 +454,7 @@ type Rule struct {
 	TunnelProtocol    string                 `protobuf:"bytes,21,opt,name=tunnel_protocol,json=tunnelProtocol,proto3" json:"tunnel_protocol,omitempty"`
 	Tls               *TLSClientConfig       `protobuf:"bytes,22,opt,name=tls,proto3" json:"tls,omitempty"`
 	QuotaEpoch        int64                  `protobuf:"varint,23,opt,name=quota_epoch,json=quotaEpoch,proto3" json:"quota_epoch,omitempty"`
+	Protocol          string                 `protobuf:"bytes,24,opt,name=protocol,proto3" json:"protocol,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -649,6 +650,13 @@ func (x *Rule) GetQuotaEpoch() int64 {
 	return 0
 }
 
+func (x *Rule) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
 type TunnelLink struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	IngressNodeId int64                  `protobuf:"varint,1,opt,name=ingress_node_id,json=ingressNodeId,proto3" json:"ingress_node_id,omitempty"`
@@ -709,6 +717,7 @@ type EgressRule struct {
 	UserId        int64                  `protobuf:"varint,4,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	QuotaEpoch    int64                  `protobuf:"varint,5,opt,name=quota_epoch,json=quotaEpoch,proto3" json:"quota_epoch,omitempty"`
 	ExpiresUnix   int64                  `protobuf:"varint,6,opt,name=expires_unix,json=expiresUnix,proto3" json:"expires_unix,omitempty"`
+	Protocol      string                 `protobuf:"bytes,7,opt,name=protocol,proto3" json:"protocol,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -783,6 +792,13 @@ func (x *EgressRule) GetExpiresUnix() int64 {
 		return x.ExpiresUnix
 	}
 	return 0
+}
+
+func (x *EgressRule) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
 }
 
 type ControlMessage struct {
@@ -1174,29 +1190,30 @@ func (x *UpdateStatus) GetError() string {
 }
 
 type NodeConfig struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	Enabled              bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	ListenHost           string                 `protobuf:"bytes,2,opt,name=listen_host,json=listenHost,proto3" json:"listen_host,omitempty"`
-	PortMin              int32                  `protobuf:"varint,3,opt,name=port_min,json=portMin,proto3" json:"port_min,omitempty"`
-	PortMax              int32                  `protobuf:"varint,4,opt,name=port_max,json=portMax,proto3" json:"port_max,omitempty"`
-	MaxConnections       int64                  `protobuf:"varint,5,opt,name=max_connections,json=maxConnections,proto3" json:"max_connections,omitempty"`
-	DialTimeoutSeconds   int32                  `protobuf:"varint,6,opt,name=dial_timeout_seconds,json=dialTimeoutSeconds,proto3" json:"dial_timeout_seconds,omitempty"`
-	IdleTimeoutSeconds   int32                  `protobuf:"varint,7,opt,name=idle_timeout_seconds,json=idleTimeoutSeconds,proto3" json:"idle_timeout_seconds,omitempty"`
-	ProbeIntervalSeconds int32                  `protobuf:"varint,8,opt,name=probe_interval_seconds,json=probeIntervalSeconds,proto3" json:"probe_interval_seconds,omitempty"`
-	DiskPath             string                 `protobuf:"bytes,9,opt,name=disk_path,json=diskPath,proto3" json:"disk_path,omitempty"`
-	NetworkInterfaces    []string               `protobuf:"bytes,10,rep,name=network_interfaces,json=networkInterfaces,proto3" json:"network_interfaces,omitempty"`
-	TunnelExitEnabled    bool                   `protobuf:"varint,11,opt,name=tunnel_exit_enabled,json=tunnelExitEnabled,proto3" json:"tunnel_exit_enabled,omitempty"`
-	TunnelListenHost     string                 `protobuf:"bytes,12,opt,name=tunnel_listen_host,json=tunnelListenHost,proto3" json:"tunnel_listen_host,omitempty"`
-	TunnelListenPort     int32                  `protobuf:"varint,13,opt,name=tunnel_listen_port,json=tunnelListenPort,proto3" json:"tunnel_listen_port,omitempty"`
-	NodeId               int64                  `protobuf:"varint,14,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	TunnelProtocol       string                 `protobuf:"bytes,15,opt,name=tunnel_protocol,json=tunnelProtocol,proto3" json:"tunnel_protocol,omitempty"`
-	Tls                  *TLSServerConfig       `protobuf:"bytes,16,opt,name=tls,proto3" json:"tls,omitempty"`
-	Ddns                 *DDNSConfig            `protobuf:"bytes,17,opt,name=ddns,proto3" json:"ddns,omitempty"`
-	ProxyTrustedCidrs    []string               `protobuf:"bytes,18,rep,name=proxy_trusted_cidrs,json=proxyTrustedCidrs,proto3" json:"proxy_trusted_cidrs,omitempty"`
-	TargetDenyCidrs      []string               `protobuf:"bytes,19,rep,name=target_deny_cidrs,json=targetDenyCidrs,proto3" json:"target_deny_cidrs,omitempty"`
-	SecurityConfigured   bool                   `protobuf:"varint,20,opt,name=security_configured,json=securityConfigured,proto3" json:"security_configured,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	Enabled               bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	ListenHost            string                 `protobuf:"bytes,2,opt,name=listen_host,json=listenHost,proto3" json:"listen_host,omitempty"`
+	PortMin               int32                  `protobuf:"varint,3,opt,name=port_min,json=portMin,proto3" json:"port_min,omitempty"`
+	PortMax               int32                  `protobuf:"varint,4,opt,name=port_max,json=portMax,proto3" json:"port_max,omitempty"`
+	MaxConnections        int64                  `protobuf:"varint,5,opt,name=max_connections,json=maxConnections,proto3" json:"max_connections,omitempty"`
+	DialTimeoutSeconds    int32                  `protobuf:"varint,6,opt,name=dial_timeout_seconds,json=dialTimeoutSeconds,proto3" json:"dial_timeout_seconds,omitempty"`
+	IdleTimeoutSeconds    int32                  `protobuf:"varint,7,opt,name=idle_timeout_seconds,json=idleTimeoutSeconds,proto3" json:"idle_timeout_seconds,omitempty"`
+	ProbeIntervalSeconds  int32                  `protobuf:"varint,8,opt,name=probe_interval_seconds,json=probeIntervalSeconds,proto3" json:"probe_interval_seconds,omitempty"`
+	DiskPath              string                 `protobuf:"bytes,9,opt,name=disk_path,json=diskPath,proto3" json:"disk_path,omitempty"`
+	NetworkInterfaces     []string               `protobuf:"bytes,10,rep,name=network_interfaces,json=networkInterfaces,proto3" json:"network_interfaces,omitempty"`
+	TunnelExitEnabled     bool                   `protobuf:"varint,11,opt,name=tunnel_exit_enabled,json=tunnelExitEnabled,proto3" json:"tunnel_exit_enabled,omitempty"`
+	TunnelListenHost      string                 `protobuf:"bytes,12,opt,name=tunnel_listen_host,json=tunnelListenHost,proto3" json:"tunnel_listen_host,omitempty"`
+	TunnelListenPort      int32                  `protobuf:"varint,13,opt,name=tunnel_listen_port,json=tunnelListenPort,proto3" json:"tunnel_listen_port,omitempty"`
+	NodeId                int64                  `protobuf:"varint,14,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	TunnelProtocol        string                 `protobuf:"bytes,15,opt,name=tunnel_protocol,json=tunnelProtocol,proto3" json:"tunnel_protocol,omitempty"`
+	Tls                   *TLSServerConfig       `protobuf:"bytes,16,opt,name=tls,proto3" json:"tls,omitempty"`
+	Ddns                  *DDNSConfig            `protobuf:"bytes,17,opt,name=ddns,proto3" json:"ddns,omitempty"`
+	ProxyTrustedCidrs     []string               `protobuf:"bytes,18,rep,name=proxy_trusted_cidrs,json=proxyTrustedCidrs,proto3" json:"proxy_trusted_cidrs,omitempty"`
+	TargetDenyCidrs       []string               `protobuf:"bytes,19,rep,name=target_deny_cidrs,json=targetDenyCidrs,proto3" json:"target_deny_cidrs,omitempty"`
+	SecurityConfigured    bool                   `protobuf:"varint,20,opt,name=security_configured,json=securityConfigured,proto3" json:"security_configured,omitempty"`
+	UdpIdleTimeoutSeconds int32                  `protobuf:"varint,21,opt,name=udp_idle_timeout_seconds,json=udpIdleTimeoutSeconds,proto3" json:"udp_idle_timeout_seconds,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *NodeConfig) Reset() {
@@ -1367,6 +1384,13 @@ func (x *NodeConfig) GetSecurityConfigured() bool {
 		return x.SecurityConfigured
 	}
 	return false
+}
+
+func (x *NodeConfig) GetUdpIdleTimeoutSeconds() int32 {
+	if x != nil {
+		return x.UdpIdleTimeoutSeconds
+	}
+	return 0
 }
 
 type DDNSConfig struct {
@@ -2153,7 +2177,7 @@ const file_api_control_proto_rawDesc = "" +
 	"\bip_limit\x18\a \x01(\x05R\aipLimit\x12'\n" +
 	"\x0fquota_unlimited\x18\b \x01(\bR\x0equotaUnlimited\x12\x1f\n" +
 	"\vquota_epoch\x18\t \x01(\x03R\n" +
-	"quotaEpoch\"\x83\x06\n" +
+	"quotaEpoch\"\x9f\x06\n" +
 	"\x04Rule\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x1f\n" +
@@ -2186,11 +2210,12 @@ const file_api_control_proto_rawDesc = "" +
 	"\x0ftunnel_protocol\x18\x15 \x01(\tR\x0etunnelProtocol\x12.\n" +
 	"\x03tls\x18\x16 \x01(\v2\x1c.nekopass.v1.TLSClientConfigR\x03tls\x12\x1f\n" +
 	"\vquota_epoch\x18\x17 \x01(\x03R\n" +
-	"quotaEpoch\"J\n" +
+	"quotaEpoch\x12\x1a\n" +
+	"\bprotocol\x18\x18 \x01(\tR\bprotocol\"J\n" +
 	"\n" +
 	"TunnelLink\x12&\n" +
 	"\x0fingress_node_id\x18\x01 \x01(\x03R\ringressNodeId\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"\xc4\x01\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\xe0\x01\n" +
 	"\n" +
 	"EgressRule\x12\x17\n" +
 	"\arule_id\x18\x01 \x01(\x03R\x06ruleId\x12&\n" +
@@ -2199,7 +2224,8 @@ const file_api_control_proto_rawDesc = "" +
 	"\auser_id\x18\x04 \x01(\x03R\x06userId\x12\x1f\n" +
 	"\vquota_epoch\x18\x05 \x01(\x03R\n" +
 	"quotaEpoch\x12!\n" +
-	"\fexpires_unix\x18\x06 \x01(\x03R\vexpiresUnix\"\x8b\x04\n" +
+	"\fexpires_unix\x18\x06 \x01(\x03R\vexpiresUnix\x12\x1a\n" +
+	"\bprotocol\x18\a \x01(\tR\bprotocol\"\x8b\x04\n" +
 	"\x0eControlMessage\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x03R\brevision\x12-\n" +
 	"\x05users\x18\x02 \x03(\v2\x17.nekopass.v1.UserPolicyR\x05users\x12'\n" +
@@ -2237,7 +2263,7 @@ const file_api_control_proto_rawDesc = "" +
 	"generation\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x14\n" +
 	"\x05state\x18\x03 \x01(\tR\x05state\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\xc4\x06\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"\xfd\x06\n" +
 	"\n" +
 	"NodeConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1f\n" +
@@ -2261,7 +2287,8 @@ const file_api_control_proto_rawDesc = "" +
 	"\x04ddns\x18\x11 \x01(\v2\x17.nekopass.v1.DDNSConfigR\x04ddns\x12.\n" +
 	"\x13proxy_trusted_cidrs\x18\x12 \x03(\tR\x11proxyTrustedCidrs\x12*\n" +
 	"\x11target_deny_cidrs\x18\x13 \x03(\tR\x0ftargetDenyCidrs\x12/\n" +
-	"\x13security_configured\x18\x14 \x01(\bR\x12securityConfigured\"\xcd\x02\n" +
+	"\x13security_configured\x18\x14 \x01(\bR\x12securityConfigured\x127\n" +
+	"\x18udp_idle_timeout_seconds\x18\x15 \x01(\x05R\x15udpIdleTimeoutSeconds\"\xcd\x02\n" +
 	"\n" +
 	"DDNSConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1e\n" +

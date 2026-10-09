@@ -26,7 +26,8 @@ Nekopass是一个开源免费的转发面板，设计参考了nyanpass，但是�
 ### 核心特性
 
 - 开源免费，采用 GPL-3.0 许可证。
-- 传输协议 raw(tcp)、h2 与安全性不加密、TLS 可独立选择、自由搭配。
+- 支持 TCP、UDP 和 TCP + UDP 直转与隧道中转。
+- raw(tcp)、h2 可搭配明文或 TLS；原生 raw(udp) 可搭配明文或 DTLS。
 - uTLS模拟指纹，支持 Chrome、Firefox 等握手指纹。
 - 基于h2的加密隧道，以及未认证访问的伪装网站fallback回退(防止主动探测)。
 - 支持自签名、手动导入和 ACME 自动申请、续期证书。
@@ -104,7 +105,7 @@ pwsh -File scripts/package-panel.ps1  # 面板和节点完整发布包
 pwsh -File scripts/package-agent.ps1  # 仅节点发布文件
 ```
 
-产物位于 `dist/oss/nekopass/`，可用 `-Version v0.16.5` 指定版本号。
+产物位于 `dist/oss/nekopass/`，可用 `-Version v0.17.0` 指定版本号。
 
 ## 如何贡献？
 

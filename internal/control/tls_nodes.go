@@ -189,7 +189,7 @@ func appendTLSControl(ctx context.Context, tx pgx.Tx, nodeID int64, out *pb.Cont
 			}
 		}
 		rule.Tls = settings
-		if !tunnel.TLS(rule.TunnelProtocol) && !tunnel.H2(rule.TunnelProtocol) {
+		if !tunnel.TLS(rule.TunnelProtocol) && !tunnel.H2(rule.TunnelProtocol) && !tunnel.UDP(rule.TunnelProtocol) {
 			rule.Tls = nil
 		}
 	}

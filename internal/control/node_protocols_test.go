@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	pb "github.com/nekopass/nekopass/internal/protocol"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -89,5 +90,49 @@ func TestNodeProtocolAndBasicPagesSaveOnlyTheirOwnConfiguration(t *testing.T) {
 		if actor == f.admin && w.Body.String() != "/pages/admin_node_protocols.html" {
 			t.Fatal("wrong MPA document")
 		}
+	}
+}
+
+func TestDisabledExitKeepsDraftConfigurationWithoutActivatingTunnel(t *testing.T) {
+	f := newSecurityFixture(t)
+	ctx := context.Background()
+	var entry, exit int64
+	for _, id := range []*int64{&entry, &exit} {
+		if err := f.p.QueryRow(ctx, "INSERT INTO nodes(name,token_hash,token) VALUES($1,$2,$3) RETURNING id", Secret(), Hash(Secret()), Secret()).Scan(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { f.p.Exec(ctx, "DELETE FROM nodes WHERE id=ANY($1)", []int64{entry, exit}) })
+	config := NodeProtocolsInput{IngressEnabled: true, AllowDirect: true, TunnelTransport: "h2", TunnelSecurity: "tls", TunnelProtocol: "tls_h2", TunnelListenHost: "0.0.0.0", AllowedIngressIDs: []int64{entry}}
+	tls := DefaultTunnelTLS()
+	tls.CertificateMode = "acme_dns"
+	config.TLS = &tls
+	path := fmt.Sprintf("admin/nodes/%d/protocols", exit)
+	securityStatus(t, f.request(f.admin, path, "PUT", config), 200)
+	loaded, _, err := loadNodeInput(ctx, f.p, exit)
+	if err != nil || loaded.TunnelExitEnabled || len(loaded.AllowedIngressIDs) != 1 || loaded.AllowedIngressIDs[0] != entry || loaded.TLS.CertificateMode != "acme_dns" {
+		t.Fatal("disabled draft lost configuration", err)
+	}
+	var certificate, status string
+	if err = f.p.QueryRow(ctx, "SELECT tls_certificate,tls_status FROM nodes WHERE id=$1", exit).Scan(&certificate, &status); err != nil || certificate != "" || status == "pending" {
+		t.Fatal("disabled exit started certificate issuance", err)
+	}
+	stream := &StreamServer{Server: f.s}
+	policy, err := stream.exchange(ctx, f.p, exit, &pb.AgentMessage{InstanceId: Secret(), ProtocolVersion: 16})
+	if err != nil || policy.Node.TunnelExitEnabled || len(policy.TunnelLinks) != 0 || len(policy.EgressRules) != 0 {
+		t.Fatal("disabled draft became an active exit", err)
+	}
+	config.TunnelExitEnabled = true
+	config.TunnelListenPort = 23451
+	config.TunnelPublicHost = "exit.example.test"
+	securityStatus(t, f.request(f.admin, path, "PUT", config), 400)
+	config.TLS.CertificateMode = "self_signed"
+	config.TLS.ServerName = "exit.example.test"
+	securityStatus(t, f.request(f.admin, path, "PUT", config), 200)
+	config.TunnelExitEnabled = false
+	securityStatus(t, f.request(f.admin, path, "PUT", config), 200)
+	loaded, _, err = loadNodeInput(ctx, f.p, exit)
+	if err != nil || loaded.TunnelExitEnabled || len(loaded.AllowedIngressIDs) != 1 || loaded.TunnelListenPort != 23451 || loaded.TLS.ServerName != "exit.example.test" {
+		t.Fatal("switching off erased saved exit settings", err)
 	}
 }

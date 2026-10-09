@@ -36,7 +36,9 @@ export default defineConfig({
         items: [
           { text: '协议选择', link: '/protocols/' },
           { text: 'TCP 直转', link: '/protocols/tcp' },
+          { text: 'UDP 转发', link: '/protocols/udp' },
           { text: 'raw(tcp)', link: '/protocols/plain-tcp' },
+          { text: 'raw(udp)', link: '/protocols/raw-udp' },
           { text: 'h2', link: '/protocols/h2' }
         ]
       },
@@ -45,7 +47,8 @@ export default defineConfig({
         items: [
           { text: '安全性选择', link: '/security/' },
           { text: '不加密', link: '/security/none' },
-          { text: 'TLS', link: '/security/tls' }
+          { text: 'TLS', link: '/security/tls' },
+          { text: 'DTLS', link: '/security/dtls' }
         ]
       },
       {

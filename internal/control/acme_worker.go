@@ -51,7 +51,7 @@ func (s *Server) RunCertificateClock(ctx context.Context) {
 	delays := map[int64]time.Duration{}
 	seenGen := map[int64]int64{}
 	for {
-		rows, err := s.Pool.Query(ctx, `SELECT id,tls_config,tls_generation FROM nodes WHERE enabled AND tunnel_exit_enabled AND tunnel_protocol IN ('tls_tcp','tls_h2') AND tls_config->>'certificate_mode' IN ('acme_dns','acme_http') AND (tls_status IN ('pending','error') OR tls_not_after<now()+interval '30 days') ORDER BY id LIMIT 100`)
+		rows, err := s.Pool.Query(ctx, `SELECT id,tls_config,tls_generation FROM nodes WHERE enabled AND tunnel_exit_enabled AND tunnel_protocol IN ('tls_tcp','tls_h2','dtls_udp') AND tls_config->>'certificate_mode' IN ('acme_dns','acme_http') AND (tls_status IN ('pending','error') OR tls_not_after<now()+interval '30 days') ORDER BY id LIMIT 100`)
 		if err == nil {
 			type job struct {
 				id, generation int64

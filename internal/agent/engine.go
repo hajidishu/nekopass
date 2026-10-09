@@ -37,6 +37,11 @@ type Engine struct {
 	users           map[int64]*Account
 	retired         map[string]*Account
 	listeners       map[int64]*listener
+	udpListeners    map[int64]*udpListener
+	udpQueued       atomic.Int64
+	udpNonceMu      sync.Mutex
+	udpNonces       map[string]time.Time
+	nativeUDP       *nativeUDPListener
 	counters        map[int64]*atomic.Int64
 	revision        int64
 	syncError       string
@@ -66,6 +71,8 @@ var buffers = sync.Pool{New: func() any { b := make([]byte, BufferSize); return 
 func NewEngine(s *State, maxConnections int64) (*Engine, error) {
 	e := &Engine{state: s, users: map[int64]*Account{}, retired: map[string]*Account{}, listeners: map[int64]*listener{}, counters: map[int64]*atomic.Int64{}}
 	e.h2 = newH2Transport()
+	e.udpListeners = map[int64]*udpListener{}
+	e.udpNonces = map[string]time.Time{}
 	e.ddnsClient = ddns.NewClient
 	e.maxConnections.Store(maxConnections)
 	users, err := s.LoadUsers()
@@ -191,7 +198,7 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 	}
 	wanted := map[int64]*pb.Rule{}
 	for _, r := range c.Rules {
-		if (c.Node == nil && e.maxConnections.Load() > 0 || c.Node != nil && c.Node.Enabled) && r.Enabled && e.users[r.UserId] != nil && e.users[r.UserId].valid() {
+		if networkIncludes(r.Protocol, "tcp") && (c.Node == nil && e.maxConnections.Load() > 0 || c.Node != nil && c.Node.Enabled) && r.Enabled && e.users[r.UserId] != nil && e.users[r.UserId].valid() {
 			wanted[r.Id] = r
 		}
 	}
@@ -236,6 +243,7 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 		e.wg.Add(1)
 		go e.accept(l, a, count)
 	}
+	errs = append(errs, e.configureUDP(c)...)
 	e.syncError = strings.Join(errs, "; ")
 	if len(errs) == 0 {
 		e.revision = c.Revision
@@ -414,7 +422,7 @@ func (e *Engine) Report() (*pb.AgentMessage, error) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 	}
-	r := &pb.AgentMessage{ProtocolVersion: 15, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load()}
+	r := &pb.AgentMessage{ProtocolVersion: 16, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load()}
 	pending, err := e.state.RestorePending()
 	if err != nil {
 		return nil, err
@@ -473,9 +481,18 @@ func (e *Engine) Close() {
 		e.tunnel.ln.Close()
 		e.tunnel = nil
 	}
+	if e.nativeUDP != nil {
+		e.nativeUDP.cancel()
+		e.nativeUDP.conn.Close()
+		e.nativeUDP = nil
+	}
 	for _, l := range e.listeners {
 		l.cancel()
 		l.ln.Close()
+	}
+	for _, l := range e.udpListeners {
+		l.cancel()
+		l.conn.Close()
 	}
 	e.mu.Unlock()
 	e.h2.Close()

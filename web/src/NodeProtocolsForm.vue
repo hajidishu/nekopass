@@ -5,7 +5,6 @@ const props=defineProps<{form:NodeProtocolsInput;nodes:{id:number;name:string;in
 const {form:nodeForm,nodes,nodeID:editID}=toRefs(props)
 const dnsJSON=defineModel<string>('dnsJSON',{required:true})
 defineEmits<{submit:[]}>()
-function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.allowed_ingress_ids=[]}
 </script>
 <template>
 <el-form label-position="top" @submit.prevent="$emit('submit')">
@@ -21,18 +20,19 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
     </el-form-item>
     <div class="form-section-title">出口配置</div>
     <el-form-item label="作为出口节点">
-<el-switch v-model="nodeForm.tunnel_exit_enabled" @change="exitChanged" />
+<el-switch v-model="nodeForm.tunnel_exit_enabled" />
+    <span class="field-tip switch-hint">关闭时仍可编辑并保存下方配置，启用出口后才生效。</span>
     </el-form-item>
     <el-form-item label="出口传输协议">
-    <el-select v-model="nodeForm.tunnel_transport">
+    <el-select v-model="nodeForm.tunnel_transport" @change="nodeForm.tunnel_transport==='raw_udp'&&(nodeForm.tls.fingerprint='off')">
     <el-option label="raw(tcp)" value="raw_tcp" />
-    <el-option label="h2" value="h2" />
+    <el-option label="h2" value="h2" /><el-option label="raw(udp)" value="raw_udp" />
     </el-select>
     <span class="field-tip">节点作为出口时使用此协议；作为入口时按规则所选出口的协议连接。</span>
     </el-form-item>
-    <el-form-item label="安全性"><el-select v-model="nodeForm.tunnel_security"><el-option label="不加密" value="none"/><el-option label="TLS" value="tls"/></el-select><span class="field-tip">与传输协议独立选择；不加密时数据以明文传输。</span></el-form-item>
+    <el-form-item label="安全性"><el-select v-model="nodeForm.tunnel_security"><el-option label="不加密" value="none"/><el-option :label="nodeForm.tunnel_transport==='raw_udp'?'TLS（DTLS）':'TLS'" value="tls"/></el-select><span class="field-tip">与传输协议独立选择；不加密时数据以明文传输。</span></el-form-item>
     <p v-if="nodeForm.tunnel_transport==='raw_tcp'&&nodeForm.tunnel_security==='tls'||nodeForm.tunnel_transport==='h2'&&nodeForm.tunnel_security==='none'" class="field-tip">此组合需要入口和出口均升级至 v0.15.0 或以上；旧版节点升级前不会启用此组合。</p>
-    <template v-if="nodeForm.tunnel_exit_enabled">
+    <p v-if="nodeForm.tunnel_transport==='raw_udp'" class="field-tip">raw(udp) 仅承载 UDP 转发，TLS 使用 DTLS；不使用 uTLS 指纹。未认证数据包不回复，明文仍可被读取，流量不能保证不可识别。</p>
     <div class="form-grid">
     <el-form-item label="隧道对外地址">
     <el-input v-model="nodeForm.tunnel_public_host" placeholder="入口节点可访问的域名或 IP" />
@@ -53,7 +53,7 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
     <p class="field-tip">所有入口连接此出口时使用以下设置。</p>
     <div class="form-grid">
     <el-form-item label="uTLS 指纹">
-    <el-select v-model="nodeForm.tls.fingerprint">
+    <el-select v-model="nodeForm.tls.fingerprint" :disabled="nodeForm.tunnel_transport==='raw_udp'">
     <el-option label="关闭（标准 TLS）" value="off"/>
     <el-option label="Chrome（库内预设）" value="chrome"/>
     <el-option label="Firefox（库内预设）" value="firefox"/>
@@ -106,7 +106,7 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
     </el-form-item>
     </template>
     <template v-if="nodeForm.tls.certificate_mode.startsWith('acme_')">
-    <p class="field-tip">保存自动申请配置即授权向所选 CA 申请证书并接受其服务条款。DNS 密钥只由主控使用，不下发节点。</p>
+    <p class="field-tip">启用出口并保存自动申请配置后，会向所选 CA 申请证书并接受其服务条款。DNS 密钥只由主控使用，不下发节点。</p>
     <div class="form-grid">
     <el-form-item label="ACME 邮箱">
     <el-input v-model="nodeForm.tls.acme_email"/>
@@ -158,7 +158,6 @@ function exitChanged(enabled:boolean|string|number){if(!enabled)nodeForm.value.a
     </el-select>
     <span class="field-tip">用户还需要同时获得入口和出口所属节点组的套餐权限。</span>
     </el-form-item>
-    </template>
 
     </el-form>
 </template>

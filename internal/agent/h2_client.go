@@ -26,6 +26,7 @@ import (
 const exporterLabel = "nekopass/h2/open/v1"
 
 type h2Open struct {
+	Network string `json:"network,omitempty"`
 	Ingress int64  `json:"ingress"`
 	Rule    int64  `json:"rule"`
 	User    int64  `json:"user"`
@@ -156,7 +157,11 @@ func (t *h2Transport) Dial(dialCtx, lifetime context.Context, rule *pb.Rule, tar
 		w.Close()
 		return nil, err
 	}
-	metadata, _ := json.Marshal(h2Open{Ingress: rule.IngressNodeId, Rule: rule.Id, User: rule.UserId, Epoch: rule.QuotaEpoch, Target: target, Nonce: hex.EncodeToString(nonce[:]), Seq: seq})
+	open := h2Open{Ingress: rule.IngressNodeId, Rule: rule.Id, User: rule.UserId, Epoch: rule.QuotaEpoch, Target: target, Nonce: hex.EncodeToString(nonce[:]), Seq: seq}
+	if rule.Protocol == "udp" {
+		open.Network = "udp"
+	}
+	metadata, _ := json.Marshal(open)
 	request.Header.Set("Content-Type", "application/octet-stream")
 	request.Header.Set("User-Agent", "Mozilla/5.0")
 	request.Header.Set("X-Stream", base64.RawURLEncoding.EncodeToString(metadata))

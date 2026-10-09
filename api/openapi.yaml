@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.16.5
+  version: 0.17.0
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -1167,9 +1167,9 @@ components:
         ingress_enabled: {type: boolean}
         allow_direct: {type: boolean}
         tunnel_exit_enabled: {type: boolean}
-        tunnel_transport: {type: string, enum: [raw_tcp, h2], description: Egress transport independent of encryption}
+        tunnel_transport: {type: string, enum: [raw_tcp, h2, raw_udp], description: Egress transport independent of encryption}
         tunnel_security: {type: string, enum: [none, tls], description: Egress security independent of transport}
-        tunnel_protocol: {type: string, enum: [plain_tcp, tls_tcp, plain_h2, tls_h2], description: Legacy combination encoding; prefer tunnel_transport and tunnel_security}
+        tunnel_protocol: {type: string, enum: [plain_tcp, tls_tcp, plain_h2, tls_h2, plain_udp, dtls_udp], description: Legacy combination encoding; prefer tunnel_transport and tunnel_security}
         tunnel_listen_host: {type: string}
         tunnel_listen_port: {type: integer, minimum: 0, maximum: 65535}
         tunnel_public_host: {type: string}
@@ -1265,6 +1265,7 @@ components:
       type: object
       required: [node_id, enabled]
       properties:
+        protocol: {type: string, enum: [tcp, udp, tcp_udp], default: tcp, description: 'Business protocol; UDP requires Agent protocol 16, raw_udp exits require udp only. Proxy Protocol is TCP-only.'}
         user_id: {type: integer, format: int64, description: Ignored; owner is session or admin-managed user}
         node_id: {type: integer, format: int64}
         egress_node_id: {type: integer, format: int64, minimum: 0, default: 0, description: '0 means direct; other IDs must be linked to the ingress and allowed by the user plan'}
@@ -1326,9 +1327,9 @@ components:
         allow_direct: {type: boolean, default: true, description: Whether users may select direct forwarding on this ingress}
         ingress_enabled: {type: boolean, default: true, description: Whether this node may be used as an ingress; false still allows exit functionality}
         tunnel_exit_enabled: {type: boolean, default: false}
-        tunnel_transport: {type: string, enum: [raw_tcp, h2], description: Egress transport independent of encryption}
+        tunnel_transport: {type: string, enum: [raw_tcp, h2, raw_udp], description: Egress transport independent of encryption}
         tunnel_security: {type: string, enum: [none, tls], description: Egress security independent of transport}
-        tunnel_protocol: {type: string, enum: [plain_tcp, tls_tcp, plain_h2, tls_h2], default: plain_tcp, description: Legacy combination encoding; tls_tcp and plain_h2 require Agent protocol 13}
+        tunnel_protocol: {type: string, enum: [plain_tcp, tls_tcp, plain_h2, tls_h2, plain_udp, dtls_udp], default: plain_tcp, description: Legacy combination encoding; tls_tcp and plain_h2 require Agent protocol 13}
         tunnel_listen_host: {type: string, default: '0.0.0.0'}
         tunnel_listen_port: {type: integer, minimum: 0, maximum: 65535, description: Required at 1–65535 when tunnel_exit_enabled; low ports need native service bind capability}
         tls: {$ref: '#/components/schemas/TunnelTLS'}
@@ -1340,6 +1341,7 @@ components:
         max_connections: {type: integer, minimum: 0, maximum: 1000000, default: 10000, description: 0 unlimited}
         dial_timeout_seconds: {type: integer, minimum: 1, maximum: 120, default: 8}
         idle_timeout_seconds: {type: integer, minimum: 10, maximum: 86400, default: 300}
+        udp_idle_timeout_seconds: {type: integer, minimum: 10, maximum: 3600, default: 60}
         probe_interval_seconds: {type: integer, minimum: 2, maximum: 60, default: 5}
         disk_path: {type: string, default: '/'}
         network_interfaces: {type: array, maxItems: 32, items: {type: string}, description: Empty selects default route interface}
