@@ -14,7 +14,7 @@ import (
 func TestIndependentNodeTransportChoicesAndAgentCompatibility(t *testing.T) {
 	f := newSecurityFixture(t)
 	ctx := context.Background()
-	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2"} {
+	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2", "plain_udp", "dtls_udp"} {
 		t.Run(mode, func(t *testing.T) {
 			key := Secret()
 			var id int64
@@ -46,7 +46,7 @@ func TestIndependentNodeTransportChoicesAndAgentCompatibility(t *testing.T) {
 			securityStatus(t, f.request(f.admin, base, "PUT", invalid), 400)
 			instance := Secret()
 			stream := &StreamServer{Server: New(f.p)}
-			for _, version := range []int32{12, 13} {
+			for _, version := range []int32{12, 13, 16, 17} {
 				config, err := stream.exchange(ctx, f.p, id, &pb.AgentMessage{InstanceId: instance, ProtocolVersion: version})
 				if err != nil {
 					t.Fatal(err)

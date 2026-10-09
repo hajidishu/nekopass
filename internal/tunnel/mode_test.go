@@ -18,4 +18,7 @@ func TestChoicesAndLegacyCompatibility(t *testing.T) {
 	if MinimumVersion("tls_tcp") != 13 || MinimumVersion("plain_h2") != 13 || MinimumVersion("plain_tcp") != 6 || MinimumVersion("tls_h2") != 11 {
 		t.Fatal("legacy version compatibility changed")
 	}
+	if MinimumVersion("plain_udp") != 17 || MinimumVersion("dtls_udp") != 17 {
+		t.Fatal("native UDP allows agents with directionless authentication")
+	}
 }

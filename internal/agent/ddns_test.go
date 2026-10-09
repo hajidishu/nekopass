@@ -143,7 +143,7 @@ func TestNodeDDNSLifecycleAndOfflineRestore(t *testing.T) {
 		t.Fatal("disabled DDNS continued fetching addresses")
 	}
 	report, err := e2.Report()
-	if err != nil || report.ProtocolVersion != 16 {
+	if err != nil || report.ProtocolVersion != 17 {
 		t.Fatal("DDNS protocol capability missing")
 	}
 }

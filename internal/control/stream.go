@@ -409,7 +409,7 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 			}
 		}
 	}
-	if out.Node.TunnelExitEnabled && tunnel.UDP(out.Node.TunnelProtocol) && r.ProtocolVersion < 16 {
+	if out.Node.TunnelExitEnabled && tunnel.UDP(out.Node.TunnelProtocol) && r.ProtocolVersion < int32(tunnel.MinimumVersion(out.Node.TunnelProtocol)) {
 		out.Node.TunnelExitEnabled = false
 		out.TunnelLinks = nil
 		out.EgressRules = nil

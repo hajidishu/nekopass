@@ -145,7 +145,7 @@ func (e *Engine) readNativeUDP(l *nativeUDPListener) {
 		if !exists {
 			continue
 		}
-		_, id, seq, kind, msg, index, total, body, valid := decodeNative(buffer[:n], link.key)
+		_, id, seq, kind, msg, index, total, body, valid := decodeNative(buffer[:n], link.key, true)
 		if !valid {
 			continue
 		}
@@ -170,7 +170,7 @@ func (e *Engine) readNativeUDP(l *nativeUDPListener) {
 		if err != nil || open.Network != "udp" || open.Ingress != link.ingress || open.Time < time.Now().Unix()-120 || open.Time > time.Now().Unix()+120 || !h2RuleAllowed(policy, open.h2Open) {
 			continue
 		}
-		temporary := newNativePeer(l.ctx, l.conn, source, link.key, id, &e.udpQueued)
+		temporary := newNativePeer(l.ctx, l.conn, source, link.key, id, &e.udpQueued, false)
 		if !l.validCookie(open.Cookie, source, route, id) {
 			temporary.send(nativeChallenge, l.cookie(source, route, id, time.Now().Unix()/60))
 			temporary.Close()
@@ -265,7 +265,7 @@ func (e *Engine) runNativeUDP(l *nativeUDPListener, peer *nativePeer, open nativ
 	})
 }
 
-func dialNativeDatagram(ctx, lifetime context.Context, r *pb.Rule, target string) (net.Conn, error) {
+func dialNativeDatagram(ctx, lifetime context.Context, r *pb.Rule, target string, queued *atomic.Int64) (net.Conn, error) {
 	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(r.TunnelHost, strconv.Itoa(int(r.TunnelPort))))
 	if err != nil {
 		return nil, err
@@ -283,8 +283,7 @@ func dialNativeDatagram(ctx, lifetime context.Context, r *pb.Rule, target string
 		socket.Close()
 		return nil, err
 	}
-	var queued atomic.Int64
-	peer := newNativePeer(lifetime, socket, addr, r.TunnelToken, id, &queued)
+	peer := newNativePeer(lifetime, socket, addr, r.TunnelToken, id, queued, true)
 	success := false
 	defer func() {
 		if !success {
@@ -305,13 +304,10 @@ func dialNativeDatagram(ctx, lifetime context.Context, r *pb.Rule, target string
 			if from.String() != addr.String() {
 				continue
 			}
-			_, pid, seq, kind, msg, index, total, body, ok := decodeNative(buf[:n], peer.key)
+			_, pid, seq, kind, msg, index, total, body, ok := decodeNative(buf[:n], peer.key, false)
 			if ok && pid == id {
 				if kind == nativeChallenge || kind == nativeAccepted {
-					select {
-					case peer.queue <- nativeMessage{kind: kind, payload: append([]byte{}, body...)}:
-					default:
-					}
+					peer.receiveControl(kind, body)
 				} else {
 					peer.receive(seq, kind, msg, index, total, body)
 				}
@@ -371,7 +367,7 @@ func dialNativeDatagram(ctx, lifetime context.Context, r *pb.Rule, target string
 			}
 			return nil, err
 		}
-		conn = newDTLSDatagram(encrypted, &queued)
+		conn = newDTLSDatagram(encrypted, queued)
 	}
 	success = true
 	return conn, nil

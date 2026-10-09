@@ -34,6 +34,7 @@ type nativePeer struct {
 	route                       [16]byte
 	id                          [16]byte
 	key                         string
+	sendKey                     []byte
 	sequence                    atomic.Uint64
 	message                     atomic.Uint32
 	replay                      h2ServerSession
@@ -59,9 +60,21 @@ func nativeRouteTag(key string) [16]byte {
 	return result
 }
 
-func newNativePeer(ctx context.Context, conn *net.UDPConn, remote *net.UDPAddr, key string, id [16]byte, queued *atomic.Int64) *nativePeer {
+func nativePacketKey(key string, id [16]byte, ingressToExit bool) []byte {
+	mac := hmac.New(sha256.New, []byte(key))
+	mac.Write([]byte("native-udp-v2-packet"))
+	if ingressToExit {
+		mac.Write([]byte{1})
+	} else {
+		mac.Write([]byte{0})
+	}
+	mac.Write(id[:])
+	return mac.Sum(nil)
+}
+
+func newNativePeer(ctx context.Context, conn *net.UDPConn, remote *net.UDPAddr, key string, id [16]byte, queued *atomic.Int64, sendIngressToExit bool) *nativePeer {
 	ctx, cancel := context.WithCancel(ctx)
-	return &nativePeer{ctx: ctx, cancel: cancel, conn: conn, remote: remote, key: key, id: id, route: nativeRouteTag(key), queue: make(chan nativeMessage, 64), parts: map[uint32]*udpParts{}, queued: queued, deadlineChanged: make(chan struct{}, 1)}
+	return &nativePeer{ctx: ctx, cancel: cancel, conn: conn, remote: remote, key: key, id: id, route: nativeRouteTag(key), queue: make(chan nativeMessage, 64), parts: map[uint32]*udpParts{}, queued: queued, deadlineChanged: make(chan struct{}, 1), sendKey: nativePacketKey(key, id, sendIngressToExit)}
 }
 func (p *nativePeer) send(kind byte, body []byte) error {
 	if len(body) > maxDatagram {
@@ -89,7 +102,7 @@ func (p *nativePeer) send(kind byte, body []byte) error {
 		wire[45] = byte(part)
 		wire[46] = byte(total)
 		copy(wire[nativeHeader:], chunk)
-		mac := hmac.New(sha256.New, []byte(p.key))
+		mac := hmac.New(sha256.New, p.sendKey)
 		mac.Write(wire[:len(wire)-nativeMAC])
 		copy(wire[len(wire)-nativeMAC:], mac.Sum(nil))
 		if _, err := p.conn.WriteToUDP(wire, p.remote); err != nil {
@@ -98,17 +111,17 @@ func (p *nativePeer) send(kind byte, body []byte) error {
 	}
 	return nil
 }
-func decodeNative(wire []byte, key string) (route, id [16]byte, seq uint64, kind byte, msg uint32, index, total int, body []byte, ok bool) {
+func decodeNative(wire []byte, key string, ingressToExit bool) (route, id [16]byte, seq uint64, kind byte, msg uint32, index, total int, body []byte, ok bool) {
 	if len(wire) < nativeHeader+nativeMAC || len(wire) > nativeHeader+nativePartSize+nativeMAC {
 		return
 	}
-	mac := hmac.New(sha256.New, []byte(key))
+	copy(id[:], wire[16:32])
+	mac := hmac.New(sha256.New, nativePacketKey(key, id, ingressToExit))
 	mac.Write(wire[:len(wire)-nativeMAC])
 	if !hmac.Equal(mac.Sum(nil), wire[len(wire)-nativeMAC:]) {
 		return
 	}
 	copy(route[:], wire[:16])
-	copy(id[:], wire[16:32])
 	if route != nativeRouteTag(key) {
 		return
 	}
@@ -120,6 +133,28 @@ func decodeNative(wire []byte, key string) (route, id [16]byte, seq uint64, kind
 	ok = seq != 0 && total > 0 && total <= 60 && index < total && kind >= nativeOpen && kind <= nativeClose
 	return
 }
+
+// Caller holds mu; control and data payloads use the same node-wide budget.
+func (p *nativePeer) queueControlLocked(kind byte, body []byte) {
+	if p.queued.Add(int64(len(body))) > maxQueuedUDPBytes {
+		p.queued.Add(-int64(len(body)))
+		return
+	}
+	select {
+	case p.queue <- nativeMessage{kind: kind, payload: append([]byte{}, body...)}:
+	default:
+		p.queued.Add(-int64(len(body)))
+	}
+}
+
+func (p *nativePeer) receiveControl(kind byte, body []byte) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.ctx.Err() == nil {
+		p.queueControlLocked(kind, body)
+	}
+}
+
 func (p *nativePeer) receive(seq uint64, kind byte, msg uint32, index, total int, body []byte) {
 	if p.ctx.Err() != nil || !p.replay.takeSequence(seq) {
 		return
@@ -140,10 +175,7 @@ func (p *nativePeer) receive(seq uint64, kind byte, msg uint32, index, total int
 		if total != 1 {
 			return
 		}
-		select {
-		case p.queue <- nativeMessage{kind: kind, payload: append([]byte{}, body...)}:
-		default:
-		}
+		p.queueControlLocked(kind, body)
 		return
 	}
 	parts := p.parts[msg]
@@ -165,11 +197,18 @@ func (p *nativePeer) receive(seq uint64, kind byte, msg uint32, index, total int
 	parts.bytes += len(body)
 	parts.seen++
 	if parts.seen == total {
+		// Reserve the assembled copy while the fragments are still live.
+		if p.queued.Add(int64(parts.bytes)) > maxQueuedUDPBytes {
+			p.queued.Add(-2 * int64(parts.bytes))
+			delete(p.parts, msg)
+			return
+		}
 		payload := make([]byte, 0, parts.bytes)
 		for _, part := range parts.fragments {
 			payload = append(payload, part...)
 		}
 		delete(p.parts, msg)
+		p.queued.Add(-int64(parts.bytes))
 		select {
 		case p.queue <- nativeMessage{kind: nativeData, payload: payload}:
 		default:
@@ -190,7 +229,9 @@ func (p *nativePeer) next() (nativeMessage, error) {
 		}
 		select {
 		case <-p.ctx.Done():
-			if timer!=nil{timer.Stop()}
+			if timer != nil {
+				timer.Stop()
+			}
 			return nativeMessage{}, net.ErrClosed
 		case <-timerCh:
 			return nativeMessage{}, context.DeadlineExceeded
@@ -200,10 +241,10 @@ func (p *nativePeer) next() (nativeMessage, error) {
 			}
 			continue
 		case m := <-p.queue:
-			if timer!=nil{timer.Stop()}
-			if m.kind == nativeData {
-				p.queued.Add(-int64(len(m.payload)))
+			if timer != nil {
+				timer.Stop()
 			}
+			p.queued.Add(-int64(len(m.payload)))
 			return m, nil
 		}
 	}
@@ -243,9 +284,7 @@ func (p *nativePeer) Close() error {
 	for {
 		select {
 		case m := <-p.queue:
-			if m.kind == nativeData {
-				p.queued.Add(-int64(len(m.payload)))
-			}
+			p.queued.Add(-int64(len(m.payload)))
 		default:
 			return nil
 		}

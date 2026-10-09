@@ -217,7 +217,7 @@ func (e *Engine) readUDP(l *udpListener, a *Account, count *atomic.Int64) {
 	}
 }
 
-func (r *ruleRuntime) dialDatagram(ctx context.Context) (net.Conn, func(), error) {
+func (r *ruleRuntime) dialDatagram(ctx context.Context, queued *atomic.Int64) (net.Conn, func(), error) {
 	tried := map[int]bool{}
 	for len(tried) < len(r.targets) {
 		i := r.selectTarget(tried)
@@ -228,7 +228,7 @@ func (r *ruleRuntime) dialDatagram(ctx context.Context) (net.Conn, func(), error
 		if r.policy.EgressNodeId == 0 {
 			conn, err = r.dialTarget(dialCtx, "udp", r.targets[i])
 		} else {
-			conn, err = dialDatagramTunnel(dialCtx, ctx, r.policy, r.targets[i], r.h2)
+			conn, err = dialDatagramTunnel(dialCtx, ctx, r.policy, r.targets[i], r.h2, queued)
 		}
 		cancel()
 		if err == nil {
@@ -261,7 +261,7 @@ func (e *Engine) runUDP(s *udpAssociation, a *Account, count *atomic.Int64) {
 			}
 		}
 	}()
-	target, release, err := l.runtime.dialDatagram(s.ctx)
+	target, release, err := l.runtime.dialDatagram(s.ctx, &e.udpQueued)
 	if err != nil {
 		return
 	}

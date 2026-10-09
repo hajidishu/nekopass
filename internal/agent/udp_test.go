@@ -96,9 +96,9 @@ func TestNativeUDPAuthenticationReassemblyAndReplay(t *testing.T) {
 	var queued atomic.Int64
 	id, _ := randomNativeID()
 	key := "fixture-native-auth-key"
-	sender := newNativePeer(context.Background(), source, target.LocalAddr().(*net.UDPAddr), key, id, &queued)
+	sender := newNativePeer(context.Background(), source, target.LocalAddr().(*net.UDPAddr), key, id, &queued, true)
 	defer sender.Close()
-	receiver := newNativePeer(context.Background(), target, source.LocalAddr().(*net.UDPAddr), key, id, &queued)
+	receiver := newNativePeer(context.Background(), target, source.LocalAddr().(*net.UDPAddr), key, id, &queued, false)
 	defer receiver.Close()
 	payload := bytes.Repeat([]byte("payload"), 700)
 	if err = sender.send(nativeData, payload); err != nil {
@@ -116,11 +116,11 @@ func TestNativeUDPAuthenticationReassemblyAndReplay(t *testing.T) {
 	}
 	bad := append([]byte{}, packets[0]...)
 	bad[len(bad)-1] ^= 1
-	if _, _, _, _, _, _, _, _, ok := decodeNative(bad, key); ok {
+	if _, _, _, _, _, _, _, _, ok := decodeNative(bad, key, true); ok {
 		t.Fatal("forged packet accepted")
 	}
 	for i := len(packets) - 1; i >= 0; i-- {
-		_, _, seq, kind, msg, index, total, body, ok := decodeNative(packets[i], key)
+		_, _, seq, kind, msg, index, total, body, ok := decodeNative(packets[i], key, true)
 		if !ok {
 			t.Fatal("valid MAC rejected")
 		}
@@ -133,7 +133,7 @@ func TestNativeUDPAuthenticationReassemblyAndReplay(t *testing.T) {
 		t.Fatal("out-of-order fragments corrupted", err)
 	}
 	for _, p := range packets {
-		_, _, seq, kind, msg, index, total, body, _ := decodeNative(p, key)
+		_, _, seq, kind, msg, index, total, body, _ := decodeNative(p, key, true)
 		receiver.receive(seq, kind, msg, index, total, body)
 	}
 	if len(receiver.queue) != 0 || queued.Load() != 0 {
@@ -147,6 +147,9 @@ func TestNativeUDPUnknownProbeIsSilent(t *testing.T) {
 	config.EgressRules[0].Protocol = "udp"
 	if err := engine.Apply(config); err != nil {
 		t.Fatal(err)
+	}
+	if engine.syncError != "" {
+		t.Fatal(engine.syncError)
 	}
 	conn, err := net.DialUDP("udp", nil, engine.nativeUDP.conn.LocalAddr().(*net.UDPAddr))
 	if err != nil {
@@ -191,11 +194,14 @@ func TestUDPStreamTunnelTransportCombinations(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 			defer cancel()
-			c, err := dialDatagramTunnel(ctx, ctx, rule, echo.LocalAddr().String(), transport)
+			c, err := dialDatagramTunnel(ctx, ctx, rule, echo.LocalAddr().String(), transport, &engine.udpQueued)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer c.Close()
+			if mode == "plain_udp" && c.(*nativePeer).queued != &engine.udpQueued {
+				t.Fatal("native ingress created a per-session receive budget")
+			}
 			for _, p := range [][]byte{{}, []byte("udp packet"), bytes.Repeat([]byte("x"), 45000)} {
 				c.SetDeadline(time.Now().Add(3 * time.Second))
 				if _, err = c.Write(p); err != nil {

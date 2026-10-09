@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/tunnel"
@@ -46,11 +47,11 @@ func (c *framedDatagram) Write(p []byte) (int, error) {
 	n, err := io.Copy(c.Conn, bytes.NewReader(p))
 	return int(n), err
 }
-func dialDatagramTunnel(dialCtx, lifetime context.Context, r *pb.Rule, target string, h2 *h2Transport) (net.Conn, error) {
+func dialDatagramTunnel(dialCtx, lifetime context.Context, r *pb.Rule, target string, h2 *h2Transport, queued *atomic.Int64) (net.Conn, error) {
 	r = proto.Clone(r).(*pb.Rule)
 	r.Protocol = "udp"
 	if tunnel.UDP(r.TunnelProtocol) {
-		return dialNativeDatagram(dialCtx, lifetime, r, target)
+		return dialNativeDatagram(dialCtx, lifetime, r, target, queued)
 	}
 	if tunnel.H2(r.TunnelProtocol) {
 		if h2 == nil {

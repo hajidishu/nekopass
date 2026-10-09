@@ -38,11 +38,11 @@ sudo nekopassctl panel check-update
 sudo nekopassctl panel update
 ```
 
-更新前备份数据库和 `/etc/nekopass/`。节点升级见 [安装节点](./node.md#升级)。保留 `state.db`，不要复制给其他节点。
+节点升级见 [安装节点](./node.md#升级)。
 
 面板可在「管理后台 → 系统设置 → 立即更新」升级，页面会显示进度。后台与命令行共用 `nekopassctl panel update`；更新组件由安装和升级流程自动部署，无需额外配置。
 
-若数据库迁移已开始而更新中断，更新器不会启动不兼容的旧程序；再次执行同版本或更新版本的更新命令可继续修复。
+更新中断后，再次执行同版本或更新版本的更新命令即可继续。
 
 ## 功能入口
 

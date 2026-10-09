@@ -38,6 +38,7 @@ type Server struct {
 	loginMu        sync.Mutex
 	loginBuckets   map[string]*loginBucket
 	loginPruned    time.Time
+	loginBucketKey [32]byte
 	loginWorkers   chan struct{}
 	trustedProxies []*net.IPNet
 	releaseMu      sync.Mutex
@@ -58,6 +59,9 @@ type userKey struct{}
 
 func New(p *pgxpool.Pool) *Server {
 	s := &Server{Pool: p, query: store.New(p), loginBuckets: map[string]*loginBucket{}, loginWorkers: make(chan struct{}, 4)}
+	if _, err := rand.Read(s.loginBucketKey[:]); err != nil {
+		panic(err)
+	}
 	s.mailWorkers = make(chan struct{}, 4)
 	s.sendMail = registration.SendCode
 	s.releaseClient = release.NewClient()

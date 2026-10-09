@@ -31,4 +31,4 @@ DNS 凭据填写 JSON，键名如下：
 
 自动续期适用于 HTTP / DNS 自动申请模式；手动导入证书到期后需自行替换。
 
-h2 的 Host、Path、Fallback 和流控设置见 [h2](../protocols/h2.md)。HTTPS Fallback 可接管部分握手早期失败的连接；TLS 握手已经发出失败告警后不能再返回网页。
+h2 的 Host、Path、Fallback 和流控设置见 [h2](../protocols/h2.md)。

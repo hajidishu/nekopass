@@ -46,7 +46,7 @@ func MinimumVersion(mode string) int {
 	case "tls_tcp", "plain_h2":
 		return 13
 	case "plain_udp", "dtls_udp":
-		return 16
+		return 17
 	}
 	return 1 << 30
 }

@@ -2,7 +2,12 @@ package control
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -25,7 +30,22 @@ var dummyLoginHash = func() []byte {
 
 const maxLoginBuckets = 8192
 
+// Keyed fixed slots bound storage without refusing every new source at capacity.
+// IP and account limits occupy separate halves. Collisions share a limit, so
+// rotating names cannot evict or reset the limiter for an existing account.
+func (s *Server) loginSlot(key string) string {
+	group := "account:"
+	if strings.HasPrefix(key, "ip:") {
+		group = "ip:"
+	}
+	mac := hmac.New(sha256.New, s.loginBucketKey[:])
+	mac.Write([]byte(key))
+	slot := binary.BigEndian.Uint16(mac.Sum(nil)[:2]) % (maxLoginBuckets / 2)
+	return group + strconv.Itoa(int(slot))
+}
+
 func (s *Server) allowLogin(key string, now time.Time, burst int) bool {
+	key = s.loginSlot(key)
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
 	if now.Sub(s.loginPruned) >= time.Minute {
@@ -38,9 +58,6 @@ func (s *Server) allowLogin(key string, now time.Time, burst int) bool {
 	}
 	bucket := s.loginBuckets[key]
 	if bucket == nil {
-		if len(s.loginBuckets) >= maxLoginBuckets {
-			return false
-		}
 		bucket = &loginBucket{limiter: rate.NewLimiter(rate.Every(12*time.Second), burst)}
 		s.loginBuckets[key] = bucket
 	}
