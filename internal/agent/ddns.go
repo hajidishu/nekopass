@@ -67,6 +67,7 @@ func (e *Engine) runDDNS(ctx context.Context, config *pb.DDNSConfig) {
 		now := time.Now()
 		status.CheckedUnix = now.Unix()
 		status.Error = ""
+		status.ObservedIpv4, status.ObservedIpv6 = "", ""
 		if status.UpdatedUnix > status.CheckedUnix {
 			status.UpdatedUnix = status.CheckedUnix
 		}
@@ -89,6 +90,11 @@ func (e *Engine) runDDNS(ctx context.Context, config *pb.DDNSConfig) {
 				continue
 			}
 			last, reconciled := lastIPv4, reconciled4
+			if family.v6 {
+				status.ObservedIpv6 = ip
+			} else {
+				status.ObservedIpv4 = ip
+			}
 			if family.v6 {
 				last, reconciled = lastIPv6, reconciled6
 			}

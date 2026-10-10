@@ -55,4 +55,5 @@ sudo nekopassctl panel update
 | 工单和客服对话 | [工单](./tickets.md) |
 | 首页多公告 | [站点公告](./announcements.md) |
 | 用户与管理员订单 | [订单查询](./orders.md) |
+| Telegram 管理与 IP / DDNS 通知 | [Telegram Bot](./telegram.md) |
 | 目标 IP 限制、PROXY 来源和管理密钥 | [转发安全](./security.md) |

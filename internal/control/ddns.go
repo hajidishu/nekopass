@@ -181,7 +181,7 @@ func acceptDDNSReport(ctx context.Context, tx pgx.Tx, node int64, r *pb.DDNSStat
 	for _, value := range []struct {
 		address string
 		v6      bool
-	}{{r.Ipv4, false}, {r.Ipv6, true}} {
+	}{{r.Ipv4, false}, {r.Ipv6, true}, {r.ObservedIpv4, false}, {r.ObservedIpv6, true}} {
 		if value.address != "" {
 			a, err := netip.ParseAddr(value.address)
 			if err != nil || a.Zone() != "" || a.Is6() != value.v6 || !a.IsGlobalUnicast() || a.IsPrivate() {
@@ -189,8 +189,48 @@ func acceptDDNSReport(ctx context.Context, tx pgx.Tx, node int64, r *pb.DDNSStat
 			}
 		}
 	}
-	report := map[string]any{"generation": r.Generation, "state": r.State, "ipv4": r.Ipv4, "ipv6": r.Ipv6, "checked_unix": r.CheckedUnix, "updated_unix": r.UpdatedUnix, "error": truncate(strings.TrimSpace(r.Error), 500)}
+	var generation int64
+	var config []byte
+	var previous []byte
+	err := tx.QueryRow(ctx, "SELECT generation,config,status FROM node_ddns WHERE node_id=$1 FOR UPDATE", node).Scan(&generation, &config, &previous)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && generation != r.Generation {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var last struct {
+		Checked int64 `json:"checked_unix"`
+	}
+	if json.Unmarshal(previous, &last) == nil && r.CheckedUnix < last.Checked {
+		return nil
+	}
+	var cfg ddns.Config
+	if err = json.Unmarshal(config, &cfg); err != nil {
+		return err
+	}
+	report := map[string]any{"generation": r.Generation, "state": r.State, "ipv4": r.Ipv4, "ipv6": r.Ipv6, "observed_ipv4": r.ObservedIpv4, "observed_ipv6": r.ObservedIpv6, "checked_unix": r.CheckedUnix, "updated_unix": r.UpdatedUnix, "error": truncate(strings.TrimSpace(r.Error), 500)}
 	data, _ := json.Marshal(report)
-	_, err := tx.Exec(ctx, "UPDATE node_ddns SET status=$3,status_received_at=now() WHERE node_id=$1 AND generation=$2", node, r.Generation, data)
-	return err
+	if _, err = tx.Exec(ctx, "UPDATE node_ddns SET status=$3,status_received_at=now() WHERE node_id=$1 AND generation=$2", node, r.Generation, data); err != nil {
+		return err
+	}
+	if !cfg.Enabled {
+		return nil
+	}
+	settings, err := readSystemSettings(ctx, tx)
+	if err != nil {
+		return err
+	}
+	v4, v6 := r.ObservedIpv4, r.ObservedIpv6
+	if v4 == "" {
+		v4 = r.Ipv4
+	}
+	if v6 == "" {
+		v6 = r.Ipv6
+	}
+	state := r.State
+	if state == "ok" && (v4 != "" && v4 != r.Ipv4 || v6 != "" && v6 != r.Ipv6) {
+		state = "partial"
+	}
+	return recordNodeIPs(ctx, tx, node, generation, r.CheckedUnix, v4, v6, state, cfg.RecordName, settings)
 }

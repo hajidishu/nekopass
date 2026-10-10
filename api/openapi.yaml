@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.17.2
+  version: 0.17.3
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -1202,6 +1202,14 @@ components:
       type: object
       additionalProperties: false
       properties:
+        telegram:
+          type: object
+          additionalProperties: false
+          properties:
+            token: {type: string, description: 'Administrator-only BotFather token; empty stops the bot'}
+            admin_ids: {type: array, maxItems: 100, items: {type: integer, format: int64, minimum: 1}, description: 'Numeric Telegram user IDs; management requires a private chat with matching sender and chat IDs'}
+            notification_chat_ids: {type: array, maxItems: 100, items: {type: integer, format: int64}, description: 'Explicit notification recipients, independent of administrator authorization'}
+            statistics_days: {type: integer, minimum: 1, maximum: 90, default: 7}
         registration_enabled: {type: boolean, default: false}
         registration_email_verification: {type: boolean, default: true, description: When disabled, signup needs no email code or SMTP; configured CAPTCHA and invitation checks remain}
         force_invite: {type: boolean, default: false, description: Requires referral_enabled; validated on email code requests and final registration}

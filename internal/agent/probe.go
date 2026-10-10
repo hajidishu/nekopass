@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"github.com/nekopass/nekopass/internal/probe"
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"google.golang.org/protobuf/proto"
 	"time"
@@ -17,10 +18,10 @@ func (e *Engine) nodeConfiguration() *pb.NodeConfig {
 	return defaultNodeConfig()
 }
 func (e *Engine) collectProbe(ctx context.Context) {
-	sampler := newProbeSampler()
+	sampler := probe.NewSampler()
 	for {
 		c := e.nodeConfiguration()
-		if p := sampler.sample(c); p != nil {
+		if p := sampler.Sample(c); p != nil {
 			e.probe.Store(p)
 		}
 		interval := max(int32(2), c.ProbeIntervalSeconds)

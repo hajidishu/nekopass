@@ -76,6 +76,7 @@ export default defineConfig({
           { text: '节点与节点组 / DDNS', link: '/guide/nodes' },
           { text: '节点中转', link: '/guide/tunnel' },
           { text: '支付方式', link: '/guide/payments' },
+          { text: 'Telegram Bot', link: '/guide/telegram' },
           { text: '转发安全', link: '/guide/security' },
           { text: '日常管理', link: '/guide/manage' },
           { text: '反向代理', link: '/guide/proxy' },

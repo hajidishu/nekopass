@@ -84,7 +84,7 @@ func TestCombinedRuleMigrationPreservesConfigurationAndUsage(t *testing.T) {
 	if err = conn.QueryRow(ctx, "SELECT count(*) FROM rule_ports WHERE node_id=$1 AND listen_port=24001", node).Scan(&ports); err != nil || ports != 2 {
 		t.Fatal("same-port reservations not preserved", err, ports)
 	}
-	if err = conn.QueryRow(ctx, "SELECT max(version) FROM schema_version").Scan(&version); err != nil || version != CurrentSchemaVersion {
+	if err = conn.QueryRow(ctx, "SELECT max(version) FROM schema_version").Scan(&version); err != nil || version != 22 {
 		t.Fatal(err, version)
 	}
 	if err = conn.QueryRow(ctx, "SELECT quota_epoch,traffic_base_bytes,(SELECT balance_cents FROM wallet_accounts WHERE user_id=$1) FROM users WHERE id=$1", user).Scan(&epoch, &base, &balance); err != nil || epoch != 7 || base != 100 || balance != 12345 {

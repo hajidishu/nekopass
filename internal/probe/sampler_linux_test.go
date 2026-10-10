@@ -1,8 +1,9 @@
 //go:build linux
 
-package agent
+package probe
 
 import (
+	pb "github.com/nekopass/nekopass/internal/protocol"
 	"testing"
 	"time"
 )
@@ -25,11 +26,11 @@ func TestProbeParsers(t *testing.T) {
 	}
 }
 func TestLiveProbe(t *testing.T) {
-	s := newProbeSampler()
-	c := defaultNodeConfig()
-	s.sample(c)
+	s := NewSampler()
+	c := &pb.NodeConfig{DiskPath: "/"}
+	s.Sample(c)
 	time.Sleep(30 * time.Millisecond)
-	p := s.sample(c)
+	p := s.Sample(c)
 	if !p.CpuReady || !p.MemoryReady || !p.DiskReady || !p.NetworkReady || !p.LoadReady || !p.ConnectionsReady || p.MemoryTotal <= 0 || p.DiskTotal <= 0 {
 		t.Fatalf("incomplete native Linux probe: %v", p)
 	}

@@ -1,6 +1,6 @@
 //go:build linux
 
-package agent
+package probe
 
 import (
 	"bufio"
@@ -13,14 +13,14 @@ import (
 )
 
 type netBytes struct{ rx, tx uint64 }
-type probeSampler struct {
+type Sampler struct {
 	total, idle uint64
 	last        time.Time
 	network     map[string]netBytes
 	cpuSeen     bool
 }
 
-func newProbeSampler() *probeSampler { return &probeSampler{} }
+func NewSampler() *Sampler { return &Sampler{} }
 func cpuTicks(data string) (uint64, uint64, bool) {
 	line := strings.SplitN(data, "\n", 2)[0]
 	f := strings.Fields(line)
@@ -112,7 +112,7 @@ func countSockets(path string, tcp bool) (int64, bool) {
 	}
 	return n, scanner.Err() == nil
 }
-func (s *probeSampler) sample(c *pb.NodeConfig) *pb.Probe {
+func (s *Sampler) Sample(c *pb.NodeConfig) *pb.Probe {
 	now := time.Now()
 	p := &pb.Probe{SampledAt: now.Unix()}
 	if data, e := os.ReadFile("/proc/stat"); e == nil {

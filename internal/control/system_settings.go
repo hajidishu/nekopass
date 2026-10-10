@@ -18,9 +18,11 @@ import (
 	"github.com/nekopass/nekopass/internal/registration"
 	"github.com/nekopass/nekopass/internal/release"
 	"github.com/nekopass/nekopass/internal/store"
+	"github.com/nekopass/nekopass/internal/telegram"
 )
 
 type SystemSettings struct {
+	Telegram                      telegram.Config   `json:"telegram"`
 	ForceInvite                   bool              `json:"force_invite"`
 	TermsURL                      string            `json:"terms_url"`
 	PrivacyURL                    string            `json:"privacy_url"`
@@ -45,7 +47,7 @@ type SystemSettings struct {
 }
 
 func defaultSettings() SystemSettings {
-	return SystemSettings{RegistrationEmailVerification: true, CaptchaMode: "image", SMTP: registration.SMTP{Port: 587, Security: "starttls"}, ReferralMode: "first", ReferralRate: "15", ProxyTrustedCIDRs: []string{}, TargetDenyCIDRs: networkpolicy.Defaults(), SiteName: "Nekopass", AgentPort: 9443, AgentTransport: "tls", AgentVersion: "latest", InstallerURL: release.LatestBase + "/install-agent.sh", ReleaseBaseURL: release.DownloadBase, InstallTokenMinutes: 30}
+	return SystemSettings{Telegram: telegram.DefaultConfig(), RegistrationEmailVerification: true, CaptchaMode: "image", SMTP: registration.SMTP{Port: 587, Security: "starttls"}, ReferralMode: "first", ReferralRate: "15", ProxyTrustedCIDRs: []string{}, TargetDenyCIDRs: networkpolicy.Defaults(), SiteName: "Nekopass", AgentPort: 9443, AgentTransport: "tls", AgentVersion: "latest", InstallerURL: release.LatestBase + "/install-agent.sh", ReleaseBaseURL: release.DownloadBase, InstallTokenMinutes: 30}
 }
 func (s *Server) readSettings(ctx context.Context) (SystemSettings, error) {
 	return readSystemSettings(ctx, s.Pool)
@@ -77,6 +79,9 @@ func httpsURL(raw string, originOnly bool) bool {
 var releaseVersion = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 func validateSettings(v SystemSettings) error {
+	if err := v.Telegram.Normalize(); err != nil {
+		return err
+	}
 	if v.ForceInvite && !v.ReferralEnabled {
 		return errors.New("开启强制邀请前须启用邀请返利")
 	}
@@ -168,7 +173,7 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 		s.dbError(w, e)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"settings": v, "api_key_configured": has, "agent_listener": s.agentListenerStatus()})
+	writeJSON(w, 200, map[string]any{"settings": v, "api_key_configured": has, "agent_listener": s.agentListenerStatus(), "telegram_status": s.telegramInfo()})
 }
 func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
@@ -179,6 +184,10 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v.TermsURL = strings.TrimSpace(v.TermsURL)
+	if err := v.Telegram.Normalize(); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
 	v.PrivacyURL = strings.TrimSpace(v.PrivacyURL)
 	v.SiteName = strings.TrimSpace(v.SiteName)
 	v.PanelURL = strings.TrimRight(v.PanelURL, "/")

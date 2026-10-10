@@ -61,6 +61,8 @@ type Engine struct {
 	ddnsConfig      *pb.DDNSConfig
 	ddnsCancel      context.CancelFunc
 	ddnsStatus      atomic.Pointer[pb.DDNSStatus]
+	publicIP        atomic.Pointer[pb.PublicIPStatus]
+	publicIPCancel  context.CancelFunc
 	ddnsClient      func() *ddns.Client
 	updateDirectory string
 	updateStatus    *pb.UpdateStatus
@@ -153,8 +155,10 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 		e.node.Store(proto.Clone(c.Node).(*pb.NodeConfig))
 		e.maxConnections.Store(c.Node.MaxConnections)
 		e.configureDDNS(c.Node.Ddns)
+		e.configurePublicIP(c.Node.ReportPublicIp && (c.Node.Ddns == nil || !c.Node.Ddns.Enabled))
 	} else {
 		e.configureDDNS(nil)
+		e.configurePublicIP(false)
 	}
 
 	wantedUsers := map[int64]bool{}
@@ -422,7 +426,7 @@ func (e *Engine) Report() (*pb.AgentMessage, error) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 	}
-	r := &pb.AgentMessage{ProtocolVersion: 17, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load()}
+	r := &pb.AgentMessage{ProtocolVersion: 18, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load(), PublicIp: e.publicIP.Load()}
 	pending, err := e.state.RestorePending()
 	if err != nil {
 		return nil, err
@@ -472,6 +476,10 @@ func (e *Engine) Report() (*pb.AgentMessage, error) {
 func (e *Engine) Close() {
 	e.mu.Lock()
 	e.closed = true
+	if e.publicIPCancel != nil {
+		e.publicIPCancel()
+		e.publicIPCancel = nil
+	}
 	if e.ddnsCancel != nil {
 		e.ddnsCancel()
 		e.ddnsCancel = nil

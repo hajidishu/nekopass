@@ -107,6 +107,7 @@ func run() error {
 	server.SetPanelUpdateDirectory(updateDir)
 	go server.RunSubscriptionClock(ctx)
 	go server.RunCertificateClock(ctx)
+	go server.RunTelegramBot(ctx)
 	if trusted, exists := os.LookupEnv("NEKOPASS_TRUSTED_PROXIES"); exists {
 		if err = server.SetTrustedProxies(trusted); err != nil {
 			return err

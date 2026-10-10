@@ -16,40 +16,46 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nekopass/nekopass/internal/payment"
 	"github.com/nekopass/nekopass/internal/payment/epay"
+	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/registration"
 	"github.com/nekopass/nekopass/internal/release"
 	"github.com/nekopass/nekopass/internal/store"
+	"github.com/nekopass/nekopass/internal/telegram"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/time/rate"
 )
 
 type Server struct {
-	mailWorkers    chan struct{}
-	sendMail       func(context.Context, registration.SMTP, string, string, string) error
-	payments       *payment.Registry
-	Pool           *pgxpool.Pool
-	query          *store.Queries
-	loginMu        sync.Mutex
-	loginBuckets   map[string]*loginBucket
-	loginPruned    time.Time
-	loginBucketKey [32]byte
-	loginWorkers   chan struct{}
-	trustedProxies []*net.IPNet
-	releaseMu      sync.Mutex
-	releaseClient  *release.Client
-	releaseChecked time.Time
-	releaseInfo    release.Info
-	releaseError   error
-	panelUpdateMu  sync.Mutex
-	panelUpdateDir string
-	settingsMu     sync.Mutex
-	agentListener  *agentListener
+	telegramFactory func(string) telegram.API
+	telegramStatus  atomic.Pointer[telegramStatus]
+	panelProbe      atomic.Pointer[pb.Probe]
+	mailWorkers     chan struct{}
+	sendMail        func(context.Context, registration.SMTP, string, string, string) error
+	payments        *payment.Registry
+	Pool            *pgxpool.Pool
+	query           *store.Queries
+	loginMu         sync.Mutex
+	loginBuckets    map[string]*loginBucket
+	loginPruned     time.Time
+	loginBucketKey  [32]byte
+	loginWorkers    chan struct{}
+	trustedProxies  []*net.IPNet
+	releaseMu       sync.Mutex
+	releaseClient   *release.Client
+	releaseChecked  time.Time
+	releaseInfo     release.Info
+	releaseError    error
+	panelUpdateMu   sync.Mutex
+	panelUpdateDir  string
+	settingsMu      sync.Mutex
+	agentListener   *agentListener
 }
 type loginBucket struct {
 	limiter *rate.Limiter
@@ -62,6 +68,7 @@ func New(p *pgxpool.Pool) *Server {
 	if _, err := rand.Read(s.loginBucketKey[:]); err != nil {
 		panic(err)
 	}
+	s.telegramFactory = telegram.NewClient
 	s.mailWorkers = make(chan struct{}, 4)
 	s.sendMail = registration.SendCode
 	s.releaseClient = release.NewClient()
