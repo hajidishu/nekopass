@@ -42,7 +42,10 @@ func (in *RuleInput) normalize() error {
 	if in.Protocol == "" {
 		in.Protocol = "tcp"
 	}
-	if in.Protocol != "tcp" && in.Protocol != "udp" && in.Protocol != "tcp_udp" {
+	if in.Protocol == "tcp_udp" {
+		return errors.New("请分别创建 TCP 和 UDP 规则，可使用同一个监听端口")
+	}
+	if in.Protocol != "tcp" && in.Protocol != "udp" {
 		return errors.New("转发类型无效")
 	}
 	if in.Protocol != "tcp" && (in.ProxyAccept != "" && in.ProxyAccept != "off" || in.ProxySend != "" && in.ProxySend != "off") {
@@ -452,12 +455,31 @@ func (s *Server) importRules(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(ctx)
 	ids := []int64{}
 	for i, v := range in.Rules {
-		id, err := putRule(ctx, tx, ruleActor(r), 0, v)
-		if err != nil {
-			fail(w, 400, fmt.Sprintf("第 %d 条：%s；本次导入未保存", i+1, publicOperationError(err)))
+		protocols := []string{v.Protocol}
+		if v.Protocol == "tcp_udp" {
+			protocols = []string{"tcp", "udp"}
+			if v.ListenPort == 0 {
+				// Pick a common port while holding the rule transaction lock.
+				err := tx.QueryRow(ctx, `SELECT p FROM nodes n CROSS JOIN LATERAL generate_series(n.port_min,n.port_max) p WHERE n.id=$1 AND NOT EXISTS(SELECT 1 FROM rule_ports rp WHERE rp.node_id=n.id AND rp.listen_port=p) ORDER BY random() LIMIT 1`, v.NodeID).Scan(&v.ListenPort)
+				if err != nil {
+					fail(w, 400, fmt.Sprintf("第 %d 条：没有可分配的共同端口；本次导入未保存", i+1))
+					return
+				}
+			}
+		}
+		if len(ids)+len(protocols) > 500 {
+			fail(w, 400, "拆分后每次最多导入 500 条规则；本次导入未保存")
 			return
 		}
-		ids = append(ids, id)
+		for _, protocol := range protocols {
+			v.Protocol = protocol
+			id, err := putRule(ctx, tx, ruleActor(r), 0, v)
+			if err != nil {
+				fail(w, 400, fmt.Sprintf("第 %d 条：%s；本次导入未保存", i+1, publicOperationError(err)))
+				return
+			}
+			ids = append(ids, id)
+		}
 	}
 	if e = finishRules(ctx, tx); e != nil {
 		s.dbError(w, e)

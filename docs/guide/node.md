@@ -68,7 +68,7 @@ sudo nekopassctl agent update
 
 在「节点管理 → 编辑」中，点击「传输协议」旁的「编辑传输协议」，打开子窗口。关闭子窗口会返回节点编辑，保留未保存的基础信息。
 
-入口和出口可同时启用。入口设置是否允许作为入口和是否允许直转。出口分别选择传输协议和安全性：raw(tcp)、h2 可搭配明文或 TLS；raw(udp) 仅用于 UDP，可搭配明文或 DTLS。uTLS 仅适用于 TLS，原生 UDP 不支持。Host、Path、Fallback 和流控仅用于 h2；入口统一使用所选出口的配置。UDP 配置见 [UDP 转发](../protocols/udp.md)。
+入口和出口可同时启用。入口设置是否允许作为入口和是否允许直转。出口分别选择传输协议和安全性：raw(tcp)、h2、raw(udp) 均可搭配明文或 TLS；raw(udp) 仅用于 UDP。uTLS 用于 raw(tcp)、h2 的 TLS 模式。Host、Path、Fallback 和流控仅用于 h2；入口统一使用所选出口的配置。UDP 配置见 [UDP 转发](../protocols/udp.md)。
 
 出口配置始终显示。关闭「作为出口节点」时仍可编辑、保存参数和关联入口，但不开放隧道监听、不启动证书申请；启用后才生效。开关切换不会清空已填配置。
 

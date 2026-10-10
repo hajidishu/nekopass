@@ -50,7 +50,7 @@ test('native backup preserves advanced options and pins owner to current managed
   for (const value of [[native], { rules: [native] }]) {
     const data = parseRuleImport(JSON.stringify(value))
     assert.equal(data.format, 'nekopass')
-    assert.deepEqual(prepareRuleImport(data, destination), [{ ...native, user_id: 7 }])
+    assert.deepEqual(prepareRuleImport(data, destination), [{ ...native, protocol: 'tcp', user_id: 7 }])
   }
 })
 
@@ -60,6 +60,25 @@ test('optional random ports and direct forwarding use selected destination', () 
   assert.equal(rule.listen_port, 0)
   assert.equal(rule.egress_node_id, 0)
   assert.throws(() => prepareRuleImport(data, { ...destination, nodeID: 0 }), /入口节点/)
+})
+
+test('legacy combined backup splits into same-port TCP and UDP without changing owner or pause state', () => {
+  const combined = { ...convert(JSON.stringify(example))[0], protocol: 'tcp_udp', proxy_send: 'off', user_id: 99, enabled: false }
+  const rows = convert(JSON.stringify({ rules: [combined] }))
+  assert.equal(rows.length, 2)
+  assert.deepEqual(rows.map(r => r.protocol), ['tcp', 'udp'])
+  for (const row of rows) {
+    assert.equal(row.user_id, destination.userID)
+    assert.equal(row.listen_port, combined.listen_port)
+    assert.equal(row.node_id, combined.node_id)
+    assert.equal(row.egress_node_id, combined.egress_node_id)
+    assert.equal(row.enabled, false)
+    assert.deepEqual(row.targets, combined.targets)
+  }
+  rows[0].targets.push('other.example:443')
+  assert.deepEqual(rows[1].targets, combined.targets)
+  assert.throws(() => convert(JSON.stringify({ rules: Array.from({ length: 251 }, () => combined) })), /拆分后/)
+  assert.throws(() => convert(JSON.stringify({ rules: [{ ...combined, listen_port: 0 }] })), /共同监听端口/)
 })
 
 test('malformed data and unsupported fields fail before any submission', () => {

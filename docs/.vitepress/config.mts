@@ -19,6 +19,7 @@ export default defineConfig({
     logo: '/logo-mark.svg',
     nav: [
       { text: '使用文档', link: '/guide/panel' },
+      { text: '使用示例', link: '/examples/' },
       { text: '传输协议', link: '/protocols/' },
       { text: '安全性', link: '/security/' },
       ...(repository ? [{ text: '源码', link: `https://github.com/${repository}` }] : [])
@@ -29,6 +30,13 @@ export default defineConfig({
         items: [
           { text: '安装面板', link: '/guide/panel' },
           { text: '安装节点', link: '/guide/node' }
+        ]
+      },
+      {
+        text: '使用示例',
+        items: [
+          { text: '示例目录', link: '/examples/' },
+          { text: 'Shadowsocks TCP / UDP', link: '/examples/shadowsocks' }
         ]
       },
       {
@@ -47,8 +55,7 @@ export default defineConfig({
         items: [
           { text: '安全性选择', link: '/security/' },
           { text: '不加密', link: '/security/none' },
-          { text: 'TLS', link: '/security/tls' },
-          { text: 'DTLS', link: '/security/dtls' }
+          { text: 'TLS', link: '/security/tls' }
         ]
       },
       {

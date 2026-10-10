@@ -35,7 +35,9 @@ func TestUDPPortReservationAndTenantIsolation(t *testing.T) {
 	if w := f.request(f.user, "rules", "POST", makeRule("tcp_udp", 24001)); w.Code == 200 {
 		t.Fatal("combined rule bypassed conflict")
 	}
-	securityStatus(t, f.request(f.user, "rules", "POST", makeRule("tcp_udp", 24002)), 200)
+	securityStatus(t, f.request(f.user, "rules", "POST", makeRule("tcp_udp", 24002)), 400)
+	securityStatus(t, f.request(f.user, "rules", "POST", makeRule("tcp", 24002)), 200)
+	securityStatus(t, f.request(f.user, "rules", "POST", makeRule("udp", 24002)), 200)
 	udp.Protocol = "tcp"
 	if w := f.request(f.user, fmt.Sprintf("rules/%d", created.ID), "PUT", udp); w.Code == 200 {
 		t.Fatal("protocol change bypassed occupied port")

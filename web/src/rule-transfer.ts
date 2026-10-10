@@ -1,7 +1,8 @@
 import type { RuleInput } from './api'
 
 export type NyanpassRule = { dest: string[]; listen_port: number; name: string; proxy_protocol?: number; accept_proxy_protocol?: number }
-export type RuleImport = { format: 'nyanpass'; rules: NyanpassRule[] } | { format: 'nekopass'; rules: RuleInput[] }
+type LegacyRuleInput = Omit<RuleInput, 'protocol'> & { protocol?: RuleInput['protocol'] | 'tcp_udp' }
+export type RuleImport = { format: 'nyanpass'; rules: NyanpassRule[] } | { format: 'nekopass'; rules: LegacyRuleInput[] }
 export type ImportDestination = { userID: number; nodeID: number; egressNodeID: number; groupID: number; trustedCIDRs: string[]; randomPorts: boolean }
 
 // Values are verified against Nyanpass exports; unknown modes must never be guessed.
@@ -32,7 +33,8 @@ export function parseRuleImport(text: string): RuleImport {
   const nyanpass = rows.some(v => Object.hasOwn(v, 'dest'))
   if (!nyanpass) {
     if (rows.some(v => !Array.isArray(v.targets))) throw new Error('请输入 nyanpass 逐行 JSON，或 Nekopass 规则备份')
-    return { format: 'nekopass', rules: rows as RuleInput[] }
+    if (rows.some(v => v.protocol !== undefined && !['tcp', 'udp', 'tcp_udp'].includes(v.protocol as string))) throw new Error('转发类型只支持 TCP 或 UDP')
+    return { format: 'nekopass', rules: rows as LegacyRuleInput[] }
   }
   rows.forEach((v, index) => {
     const fail = (message: string): never => { throw new Error(`第 ${index + 1} 条：${message}`) }
@@ -48,7 +50,15 @@ export function parseRuleImport(text: string): RuleImport {
 }
 
 export function prepareRuleImport(data: RuleImport, destination: ImportDestination): RuleInput[] {
-  if (data.format === 'nekopass') return data.rules.map(r => ({ ...r, user_id: destination.userID }))
+  if (data.format === 'nekopass') {
+    const rules = data.rules.flatMap(r => {
+      if (r.protocol === 'tcp_udp' && !r.listen_port) throw new Error('旧合并规则请填写共同监听端口')
+      const protocols: ('tcp' | 'udp')[] = r.protocol === 'tcp_udp' ? ['tcp', 'udp'] : [r.protocol || 'tcp']
+      return protocols.map(protocol => ({ ...r, protocol, user_id: destination.userID, targets: [...r.targets] }))
+    })
+    if (rules.length > 500) throw new Error('拆分后每次最多导入 500 条规则')
+    return rules
+  }
   if (!destination.nodeID) throw new Error('请选择导入规则的入口节点')
   return data.rules.map(r => {
     const accept = r.accept_proxy_protocol === 1 ? 'auto' : 'off'

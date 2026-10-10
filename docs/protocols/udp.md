@@ -1,13 +1,15 @@
 # UDP 转发
 
-添加规则时选择 **UDP** 或 **TCP+UDP**。旧规则和未指定类型的旧备份默认 TCP。TCP 和 UDP 可使用同一个数字端口；TCP+UDP 同时占用两种协议的端口。
+添加规则时选择 **UDP**。同时转发 TCP 和 UDP 时，分别创建两条规则，选择同一个入口和相同的监听端口。未指定类型的旧备份默认 TCP。
+
+具体配置见 [Shadowsocks TCP / 原生 UDP 示例](../examples/shadowsocks.md)。
 
 | 出口选择 | 数据路径 |
 | --- | --- |
 | 不使用隧道，直接转发 | 客户端 → 入口 → UDP 目标 |
 | raw(tcp) | 将 UDP 数据报封装进 TCP；可选明文或 TLS |
 | h2 | 将 UDP 数据报封装进 HTTP/2 双向流；可选明文或 TLS |
-| raw(udp) | 原生 UDP 隧道；可选明文或 DTLS |
+| raw(udp) | 原生 UDP 隧道；可选明文或 TLS |
 
 UDP 直转及 raw(tcp)、h2 中转使用 v0.17.0 或以上。启用 raw(udp) 时，将面板及入口、出口节点更新到 v0.17.1 或以上，并选择 UDP 类型的规则。
 

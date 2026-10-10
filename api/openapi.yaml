@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.17.1
+  version: 0.17.2
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -1265,7 +1265,7 @@ components:
       type: object
       required: [node_id, enabled]
       properties:
-        protocol: {type: string, enum: [tcp, udp, tcp_udp], default: tcp, description: 'Business protocol; UDP requires Agent protocol 16, raw_udp exits require udp only. Proxy Protocol is TCP-only.'}
+        protocol: {type: string, enum: [tcp, udp], default: tcp, description: 'Business protocol; UDP requires Agent protocol 16, raw_udp exits require udp only. Proxy Protocol is TCP-only.'}
         user_id: {type: integer, format: int64, description: Ignored; owner is session or admin-managed user}
         node_id: {type: integer, format: int64}
         egress_node_id: {type: integer, format: int64, minimum: 0, default: 0, description: '0 means direct; other IDs must be linked to the ingress and allowed by the user plan'}

@@ -30,9 +30,9 @@ defineEmits<{submit:[]}>()
     </el-select>
     <span class="field-tip">节点作为出口时使用此协议；作为入口时按规则所选出口的协议连接。</span>
     </el-form-item>
-    <el-form-item label="安全性"><el-select v-model="nodeForm.tunnel_security"><el-option label="不加密" value="none"/><el-option :label="nodeForm.tunnel_transport==='raw_udp'?'TLS（DTLS）':'TLS'" value="tls"/></el-select><span class="field-tip">与传输协议独立选择；不加密时数据以明文传输。</span></el-form-item>
+    <el-form-item label="安全性"><el-select v-model="nodeForm.tunnel_security"><el-option label="不加密" value="none"/><el-option label="TLS" value="tls"/></el-select><span class="field-tip">与传输协议独立选择；不加密时数据以明文传输。</span></el-form-item>
     <p v-if="nodeForm.tunnel_transport==='raw_tcp'&&nodeForm.tunnel_security==='tls'||nodeForm.tunnel_transport==='h2'&&nodeForm.tunnel_security==='none'" class="field-tip">此组合需要入口和出口均升级至 v0.15.0 或以上；旧版节点升级前不会启用此组合。</p>
-    <p v-if="nodeForm.tunnel_transport==='raw_udp'" class="field-tip">raw(udp) 仅承载 UDP 转发，TLS 使用 DTLS；不使用 uTLS 指纹。未认证数据包不回复，明文仍可被读取，流量不能保证不可识别。</p>
+    <p v-if="nodeForm.tunnel_transport==='raw_udp'" class="field-tip">raw(udp) 仅承载 UDP 转发。</p>
     <div class="form-grid">
     <el-form-item label="隧道对外地址">
     <el-input v-model="nodeForm.tunnel_public_host" placeholder="入口节点可访问的域名或 IP" />
