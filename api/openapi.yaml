@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.17.3
+  version: 0.17.4
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -556,6 +556,42 @@ paths:
       responses:
         '200': {description: Saved settings}
         '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/settings/telegram/test:
+    post:
+      tags: [Admin]
+      summary: Send a Telegram test using saved or supplied administrator configuration
+      description: Works while the bot is disabled; does not save settings. Messages contain only destination Chat ID, chat type and test time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                telegram: {$ref: '#/components/schemas/SystemSettings/properties/telegram'}
+      responses:
+        '200':
+          description: Per-target test results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent: {type: integer}
+                  failed: {type: integer}
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        chat_id: {type: integer, format: int64}
+                        current_chat_id: {type: integer, format: int64}
+                        chat_type: {type: string}
+                        sent: {type: boolean}
+                        error: {type: string}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
   /admin/settings/api-key:
     post:
@@ -1206,7 +1242,8 @@ components:
           type: object
           additionalProperties: false
           properties:
-            token: {type: string, description: 'Administrator-only BotFather token; empty stops the bot'}
+            enabled: {type: boolean, default: false, description: 'Explicit switch for background bot queries and notifications; disabling retains configuration'}
+            token: {type: string, description: 'Administrator-only BotFather token; required when enabled'}
             admin_ids: {type: array, maxItems: 100, items: {type: integer, format: int64, minimum: 1}, description: 'Numeric Telegram user IDs; management requires a private chat with matching sender and chat IDs'}
             notification_chat_ids: {type: array, maxItems: 100, items: {type: integer, format: int64}, description: 'Explicit notification recipients, independent of administrator authorization'}
             statistics_days: {type: integer, minimum: 1, maximum: 90, default: 7}

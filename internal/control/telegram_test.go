@@ -24,6 +24,13 @@ type fakeTelegram struct {
 func (f *fakeTelegram) Me(context.Context) (telegram.User, error) {
 	return telegram.User{ID: 12345, IsBot: true}, nil
 }
+func (f *fakeTelegram) Chat(_ context.Context, id int64) (telegram.Chat, error) {
+	kind := "private"
+	if id < 0 {
+		kind = "supergroup"
+	}
+	return telegram.Chat{ID: id, Type: kind}, nil
+}
 func (f *fakeTelegram) Prepare(context.Context) error                             { return nil }
 func (f *fakeTelegram) Updates(context.Context, int64) ([]telegram.Update, error) { return nil, nil }
 func (f *fakeTelegram) Send(_ context.Context, chat int64, text string, k *telegram.Keyboard) error {
@@ -44,6 +51,7 @@ func (f *fakeTelegram) Answer(_ context.Context, _ string, text string) error {
 }
 func telegramFixtureConfig() telegram.Config {
 	c := telegram.DefaultConfig()
+	c.Enabled = true
 	c.Token = "12345:" + strings.Repeat("x", 35)
 	c.AdminIDs = []int64{42}
 	c.NotificationChatIDs = []int64{43, -100123}
@@ -64,7 +72,11 @@ func saveTelegramFixture(t *testing.T, f *securityFixture) SystemSettings {
 	if _, err := f.p.Exec(ctx, "UPDATE site_settings SET config=$1 WHERE id=1", b); err != nil {
 		t.Fatal(err)
 	}
-	return v
+	saved, err := f.s.readSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return saved
 }
 
 func TestTelegramPrivateAuthPaginationAndSettingsSecrecy(t *testing.T) {

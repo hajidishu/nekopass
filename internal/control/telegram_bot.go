@@ -51,7 +51,6 @@ func telegramWait(ctx context.Context, d time.Duration) bool {
 }
 
 func (s *Server) RunTelegramBot(ctx context.Context) {
-	go s.samplePanelProbe(ctx)
 	var running telegram.Config
 	var stop context.CancelFunc
 	var done chan struct{}
@@ -79,14 +78,24 @@ func (s *Server) RunTelegramBot(ctx context.Context) {
 			stop = nil
 		}
 		if stop == nil {
-			if cfg.Token == "" {
+			if !cfg.Enabled {
+				s.telegramStatus.Store(&telegramStatus{State: "disabled"})
+			} else if cfg.Token == "" {
 				s.telegramStatus.Store(&telegramStatus{State: "not_configured"})
 			} else {
 				running = cfg
 				session, cancel := context.WithCancel(ctx)
 				stop = cancel
 				done = make(chan struct{})
-				go func() { defer close(done); s.telegramSession(session, cfg) }()
+				go func(done chan struct{}) {
+					defer close(done)
+					var samplers sync.WaitGroup
+					samplers.Add(1)
+					go func() { defer samplers.Done(); s.samplePanelProbe(session) }()
+					s.telegramSession(session, cfg)
+					cancel()
+					samplers.Wait()
+				}(done)
 			}
 		}
 		if !telegramWait(ctx, 2*time.Second) {
@@ -199,6 +208,13 @@ func (s *Server) telegramNotificationLoop(ctx context.Context, api telegram.API,
 }
 
 func (s *Server) handleTelegramUpdate(ctx context.Context, api telegram.API, token string, bot telegram.User, u telegram.Update, denied *rate.Limiter) error {
+	settings, err := s.readSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if !settings.Telegram.Enabled || settings.Telegram.Token != token {
+		return nil
+	}
 	var from telegram.User
 	var message *telegram.Message
 	action := "home"
@@ -219,13 +235,6 @@ func (s *Server) handleTelegramUpdate(ctx context.Context, api telegram.API, tok
 		}
 		from = *message.From
 	} else {
-		return nil
-	}
-	settings, err := s.readSettings(ctx)
-	if err != nil {
-		return err
-	}
-	if settings.Telegram.Token != token {
 		return nil
 	}
 	allowed := settings.Telegram.Allows(from, message.Chat) && message.SenderChat == nil && len(message.ForwardOrigin) == 0
@@ -293,7 +302,7 @@ func (s *Server) handleTelegramUpdate(ctx context.Context, api telegram.API, tok
 	if readErr != nil {
 		return readErr
 	}
-	if latest.Telegram.Token != token {
+	if !latest.Telegram.Enabled || latest.Telegram.Token != token {
 		return nil
 	}
 	if !latest.Telegram.Allows(from, message.Chat) {

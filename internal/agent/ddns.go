@@ -63,7 +63,8 @@ func (e *Engine) runDDNS(ctx context.Context, config *pb.DDNSConfig) {
 	lastIPv4, lastIPv6, zone := "", "", cfg.ZoneID
 	var reconciled4, reconciled6 time.Time
 	for ctx.Err() == nil {
-		cycle, finishCycle := context.WithTimeout(ctx, 60*time.Second)
+		// Allow three bounded address attempts per family and DNS API calls.
+		cycle, finishCycle := context.WithTimeout(ctx, 180*time.Second)
 		now := time.Now()
 		status.CheckedUnix = now.Unix()
 		status.Error = ""
@@ -84,7 +85,7 @@ func (e *Engine) runDDNS(ctx context.Context, config *pb.DDNSConfig) {
 			if family.v6 {
 				label = "IPv6"
 			}
-			ip, err := client.Address(cycle, family.source, family.v6)
+			ip, err := client.AddressWithRetry(cycle, family.source, family.v6)
 			if err != nil {
 				errors = append(errors, label+"："+err.Error())
 				continue

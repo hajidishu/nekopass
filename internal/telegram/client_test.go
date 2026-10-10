@@ -12,6 +12,7 @@ import (
 
 func TestPrivateAdministratorIdentity(t *testing.T) {
 	c := DefaultConfig()
+	c.Enabled = true
 	c.AdminIDs = []int64{42}
 	c.Token = "12345:" + strings.Repeat("x", 35)
 	if err := c.Normalize(); err != nil {
@@ -29,6 +30,40 @@ func TestPrivateAdministratorIdentity(t *testing.T) {
 	c.AdminIDs = []int64{-42}
 	if c.Normalize() == nil {
 		t.Fatal("group ID accepted as administrator")
+	}
+}
+
+func TestExplicitEnableAndChatLookup(t *testing.T) {
+	c := DefaultConfig()
+	c.Enabled = true
+	if c.Normalize() == nil {
+		t.Fatal("enabled without token")
+	}
+	c.Token = "12345:" + strings.Repeat("x", 35)
+	c.AdminIDs = []int64{42}
+	c.Enabled = false
+	if err := c.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if c.Allows(User{ID: 42}, Chat{ID: 42, Type: "private"}) {
+		t.Fatal("disabled bot authorized administrator")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			ChatID int64 `json:"chat_id"`
+		}
+		json.NewDecoder(r.Body).Decode(&in)
+		if r.Method != "POST" || !strings.HasSuffix(r.URL.Path, "getChat") || in.ChatID != -100123 {
+			t.Error("incorrect getChat request")
+		}
+		fmt.Fprint(w, `{"ok":true,"result":{"id":-100123,"type":"supergroup","title":"ignored"}}`)
+	}))
+	defer server.Close()
+	client := NewClient(c.Token).(*Client)
+	client.baseURL = server.URL
+	chat, err := client.Chat(context.Background(), -100123)
+	if err != nil || chat.ID != -100123 || chat.Type != "supergroup" {
+		t.Fatal("chat lookup failed", err)
 	}
 }
 func TestAPIPayloadAndCredentialSafeErrors(t *testing.T) {

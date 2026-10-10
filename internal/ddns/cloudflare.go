@@ -75,6 +75,35 @@ func (c *Client) Address(ctx context.Context, source string, v6 bool) (string, e
 	return address.String(), nil
 }
 
+// AddressWithRetry tolerates temporary loss of connectivity during IP changes.
+// Callers publish status only after this operation completes, never per attempt.
+func (c *Client) AddressWithRetry(ctx context.Context, source string, v6 bool) (string, error) {
+	var last error
+	for attempt := 0; attempt < 3; attempt++ {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		request, cancel := context.WithTimeout(ctx, 15*time.Second)
+		address, err := c.Address(request, source, v6)
+		cancel()
+		if err == nil {
+			return address, nil
+		}
+		last = err
+		if attempt == 2 {
+			break
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return "", last
+}
+
 func (c *Client) request(ctx context.Context, method, path, token string, payload any, result any) error {
 	var body io.Reader
 	if payload != nil {

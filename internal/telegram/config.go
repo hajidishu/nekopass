@@ -12,6 +12,8 @@ const MaxID int64 = (1 << 52) - 1
 const DeniedText = "你当前不是管理员，请在面板上将当前tg账号填入面板中"
 
 type Config struct {
+	Generation          int64   `json:"-"`
+	Enabled             bool    `json:"enabled"`
 	Token               string  `json:"token"`
 	AdminIDs            []int64 `json:"admin_ids"`
 	NotificationChatIDs []int64 `json:"notification_chat_ids"`
@@ -29,6 +31,9 @@ func (c *Config) Normalize() error {
 		c.StatisticsDays = 7
 	}
 	c.Token = strings.TrimSpace(c.Token)
+	if c.Enabled && c.Token == "" {
+		return errors.New("启用 Telegram Bot 前请填写 Bot 密钥")
+	}
 	if c.Token != "" {
 		if !tokenPattern.MatchString(c.Token) {
 			return errors.New("Telegram Bot 密钥格式无效")
@@ -64,5 +69,5 @@ func (c *Config) Normalize() error {
 }
 
 func (c Config) Allows(user User, chat Chat) bool {
-	return !user.IsBot && user.ID > 0 && chat.Type == "private" && chat.ID == user.ID && slices.Contains(c.AdminIDs, user.ID)
+	return c.Enabled && !user.IsBot && user.ID > 0 && chat.Type == "private" && chat.ID == user.ID && slices.Contains(c.AdminIDs, user.ID)
 }

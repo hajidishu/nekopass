@@ -13,9 +13,10 @@ import (
 
 func telegramDeliveryHash(c telegram.Config) string {
 	data, _ := json.Marshal(struct {
-		Token string
-		Chats []int64
-	}{c.Token, c.NotificationChatIDs})
+		Token      string
+		Chats      []int64
+		Generation int64
+	}{c.Token, c.NotificationChatIDs, c.Generation})
 	return Hash(string(data))
 }
 func validReportedIP(s string, v6 bool) bool {
@@ -68,7 +69,7 @@ func recordNodeIPs(ctx context.Context, tx pgx.Tx, node, generation, checked int
 		return err
 	}
 	cfg := settings.Telegram
-	if cfg.Normalize() != nil || cfg.Token == "" {
+	if cfg.Normalize() != nil || !cfg.Enabled || cfg.Token == "" {
 		return nil
 	}
 	for _, chat := range cfg.NotificationChatIDs {
@@ -80,7 +81,7 @@ func recordNodeIPs(ctx context.Context, tx pgx.Tx, node, generation, checked int
 }
 
 func acceptPublicIPReport(ctx context.Context, tx pgx.Tx, node int64, r *pb.PublicIPStatus, settings SystemSettings) error {
-	if r == nil || settings.Telegram.Token == "" || len(settings.Telegram.NotificationChatIDs) == 0 {
+	if r == nil || !settings.Telegram.Enabled || settings.Telegram.Token == "" || len(settings.Telegram.NotificationChatIDs) == 0 {
 		return nil
 	}
 	var enabled bool
@@ -126,7 +127,7 @@ func (s *Server) sendTelegramNotifications(ctx context.Context, api telegram.API
 			return readErr
 		}
 		_ = cfg.Telegram.Normalize()
-		if cfg.Telegram.Token != token || telegramDeliveryHash(cfg.Telegram) != e.ConfigHash || time.Since(e.Created) > 24*time.Hour {
+		if !cfg.Telegram.Enabled || cfg.Telegram.Token != token || telegramDeliveryHash(cfg.Telegram) != e.ConfigHash || time.Since(e.Created) > 24*time.Hour {
 			s.settingsMu.Unlock()
 			_, err = s.Pool.Exec(ctx, "UPDATE telegram_deliveries SET state='canceled' WHERE event_id=$1 AND chat_id=$2", e.ID, e.ChatID)
 			if err != nil {

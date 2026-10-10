@@ -189,3 +189,69 @@ func TestClosingNodeCancelsInFlightDDNS(t *testing.T) {
 		t.Fatal("DNS request not canceled")
 	}
 }
+
+func TestDDNSRetryDoesNotPublishTransientAddressFailure(t *testing.T) {
+	var attempts atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var released atomic.Bool
+	defer func() {
+		if !released.Swap(true) {
+			close(release)
+		}
+	}()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ip4" {
+			n := attempts.Add(1)
+			if n == 2 {
+				close(entered)
+				select {
+				case <-release:
+				case <-r.Context().Done():
+					return
+				}
+			}
+			if n < 3 {
+				http.Error(w, "temporary", 503)
+				return
+			}
+			fmt.Fprint(w, "203.0.113.7")
+			return
+		}
+		fmt.Fprint(w, `{"success":true,"result":[]}`)
+	}))
+	defer server.Close()
+	state, err := OpenState(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	engine, err := NewEngine(state, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	engine.ddnsClient = func() *ddns.Client {
+		return &ddns.Client{APIBase: server.URL, API: server.Client(), IPv4: server.Client()}
+	}
+	cfg := &pb.ControlMessage{Node: defaultNodeConfig()}
+	cfg.Node.Ddns = &pb.DDNSConfig{Enabled: true, Generation: 1, Provider: "cloudflare", RecordName: "node.example.com", Token: "fixture-token", ZoneId: strings.Repeat("a", 32), Ipv4: true, IntervalSeconds: 60, Ttl: 300, Ipv4Url: server.URL + "/ip4"}
+	if err = engine.Apply(cfg); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(4 * time.Second):
+		t.Fatal("second attempt not started")
+	}
+	if status := engine.ddnsStatus.Load(); status == nil || status.State != "pending" || status.Error != "" {
+		t.Fatal("temporary error exposed before retries", status)
+	}
+	if !released.Swap(true) {
+		close(release)
+	}
+	status := waitDDNS(t, engine, 1, "ok")
+	if attempts.Load() != 3 || status.Ipv4 != "203.0.113.7" || status.Error != "" {
+		t.Fatal("retry did not recover", status)
+	}
+}

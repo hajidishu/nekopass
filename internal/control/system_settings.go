@@ -57,7 +57,7 @@ func readSystemSettings(ctx context.Context, query interface {
 }) (SystemSettings, error) {
 	v := defaultSettings()
 	var data []byte
-	e := query.QueryRow(ctx, "SELECT config FROM site_settings WHERE id=1").Scan(&data)
+	e := query.QueryRow(ctx, "SELECT config,telegram_generation FROM site_settings WHERE id=1").Scan(&data, &v.Telegram.Generation)
 	if e != nil {
 		return v, e
 	}
@@ -173,7 +173,11 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 		s.dbError(w, e)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"settings": v, "api_key_configured": has, "agent_listener": s.agentListenerStatus(), "telegram_status": s.telegramInfo()})
+	status := s.telegramInfo()
+	if !v.Telegram.Enabled {
+		status = telegramStatus{State: "disabled"}
+	}
+	writeJSON(w, 200, map[string]any{"settings": v, "api_key_configured": has, "agent_listener": s.agentListenerStatus(), "telegram_status": status})
 }
 func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
@@ -227,9 +231,15 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	data, _ := json.Marshal(v)
-	if _, e := tx.Exec(r.Context(), "UPDATE site_settings SET config=$1,updated_at=now() WHERE id=1", data); e != nil {
+	if _, e := tx.Exec(r.Context(), "UPDATE site_settings SET telegram_generation=telegram_generation+CASE WHEN config->'telegram' IS DISTINCT FROM $1::jsonb->'telegram' THEN 1 ELSE 0 END,config=$1,updated_at=now() WHERE id=1", data); e != nil {
 		s.dbError(w, e)
 		return
+	}
+	if !v.Telegram.Enabled {
+		if _, e := tx.Exec(r.Context(), "UPDATE telegram_deliveries SET state='canceled' WHERE state='queued'"); e != nil {
+			s.dbError(w, e)
+			return
+		}
 	}
 	if e = store.New(tx).BumpRevision(r.Context()); e != nil {
 		s.dbError(w, e)

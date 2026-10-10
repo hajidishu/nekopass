@@ -139,6 +139,7 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	api.HandleFunc("POST /api/v1/admin/updates/panel", s.updatePanel)
 	api.HandleFunc("POST /api/v1/admin/nodes/{id}/update", s.updateNode)
 	api.HandleFunc("PUT /api/v1/admin/settings", s.saveSettings)
+	api.HandleFunc("POST /api/v1/admin/settings/telegram/test", s.testTelegramMessage)
 	api.HandleFunc("POST /api/v1/admin/settings/api-key", s.rotateAPIKey)
 	api.HandleFunc("DELETE /api/v1/admin/settings/api-key", s.revokeAPIKey)
 	api.HandleFunc("POST /api/v1/admin/nodes/{id}/install-command", s.nodeInstallCommand)

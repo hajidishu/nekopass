@@ -50,6 +50,7 @@ type Keyboard struct {
 	Rows [][]Button `json:"inline_keyboard"`
 }
 type API interface {
+	Chat(context.Context, int64) (Chat, error)
 	Me(context.Context) (User, error)
 	Prepare(context.Context) error
 	Updates(context.Context, int64) ([]Update, error)
@@ -133,6 +134,11 @@ func (c *Client) Me(ctx context.Context) (User, error) {
 	var u User
 	err := c.call(ctx, "getMe", struct{}{}, &u)
 	return u, err
+}
+func (c *Client) Chat(ctx context.Context, id int64) (Chat, error) {
+	var chat Chat
+	err := c.call(ctx, "getChat", map[string]int64{"chat_id": id}, &chat)
+	return chat, err
 }
 func (c *Client) Prepare(ctx context.Context) error {
 	return c.call(ctx, "deleteWebhook", map[string]bool{"drop_pending_updates": false}, nil)
