@@ -7,7 +7,7 @@ on:
       version:
         description: 'Stable version tag (vX.Y.Z)'
         required: true
-        default: v0.19.2
+        default: v0.19.3
 permissions:
   contents: read
 concurrency:
@@ -55,6 +55,7 @@ jobs:
           # Native ICMP tests use unprivileged ping sockets on this CI host.
           sudo sysctl -w 'net.ipv4.ping_group_range=0 2147483647'
           go test -race -p 1 ./...
+          go test -race github.com/quic-go/quic-go -run TestPacketPadding
           go vet ./...
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           govulncheck ./...

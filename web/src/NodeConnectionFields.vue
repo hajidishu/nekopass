@@ -4,8 +4,8 @@ import type {NodeProtocolsInput} from './node-protocol'
 const props=defineProps<{form:NodeProtocolsInput;nodes:{id:number;name:string;ingress_enabled:boolean}[];nodeID:number}>()
 const {form:nodeForm,nodes,nodeID}=toRefs(props)
 defineEmits<{'edit-transport':[];'edit-security':[]}>()
-const transportName=computed(()=>({raw_tcp:'raw(tcp)',h2:'h2',raw_udp:'raw(udp)'}[nodeForm.value.tunnel_transport]||nodeForm.value.tunnel_transport))
-watch(()=>nodeForm.value.tunnel_transport,transport=>{if(transport==='raw_udp')nodeForm.value.tls.fingerprint='off'},{immediate:true})
+const transportName=computed(()=>({raw_tcp:'raw(tcp)',h2:'h2',h3:'HTTP/3',raw_udp:'raw(udp)'}[nodeForm.value.tunnel_transport]||nodeForm.value.tunnel_transport))
+watch(()=>nodeForm.value.tunnel_transport,transport=>{if(transport==='h3'){nodeForm.value.tunnel_security='tls';nodeForm.value.tls.fingerprint='off'};if(transport==='raw_udp')nodeForm.value.tls.fingerprint='off'},{immediate:true})
 </script>
 <template>
  <div data-testid="node-connection-fields">
@@ -41,7 +41,7 @@ watch(()=>nodeForm.value.tunnel_transport,transport=>{if(transport==='raw_udp')n
   <el-form-item label="传输协议">
    <div class="admin-actions">
     <el-tag data-testid="node-transport-summary">{{transportName}}</el-tag>
-    <el-tag data-testid="node-security-summary" type="info">{{nodeForm.tunnel_security==='tls'?'TLS':'不加密'}}</el-tag>
+    <el-tag data-testid="node-security-summary" type="info">{{nodeForm.tunnel_security==='tls'?'TLS':nodeForm.tunnel_security==='random'?'全随机加密':'不加密'}}</el-tag>
     <el-button type="primary" plain @click="$emit('edit-transport')">编辑传输协议</el-button>
     <el-button plain @click="$emit('edit-security')">安全性设置</el-button>
    </div>

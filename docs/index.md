@@ -19,7 +19,7 @@ features:
     details: 自动配置数据库、服务和管理员账号。
     link: /guide/panel
   - title: TCP / UDP 转发
-    details: 直转与中转，raw(tcp)、h2、raw(udp) 均可搭配明文或 TLS。
+    details: 直转与中转，支持明文、TLS；raw(tcp)、h2 和 raw(udp) 均可使用全随机加密。
     link: /protocols/
   - title: 用户功能
     details: 邮箱注册、余额购买、邀请返利、工单和订单查询。

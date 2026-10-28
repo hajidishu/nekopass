@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -29,6 +30,71 @@ func waitDDNS(t *testing.T, e *Engine, generation int64, state string) *pb.DDNSS
 	}
 	t.Fatalf("DDNS did not reach generation %d state %s: %v", generation, state, e.ddnsStatus.Load())
 	return nil
+}
+
+func TestDDNSInterfaceSourcePersistsAndAvoidsPublicAPI(t *testing.T) {
+	var writes atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ip4" || r.URL.Path == "/ip6" {
+			t.Error("interface discovery contacted public IP service")
+			http.Error(w, "unexpected", 500)
+			return
+		}
+		if r.Method != http.MethodGet {
+			var record struct {
+				Content string `json:"content"`
+			}
+			if json.NewDecoder(r.Body).Decode(&record) != nil || record.Content != "10.0.0.7" && record.Content != "fd00::7" {
+				t.Error("local interface address lost during DNS update")
+			}
+			writes.Add(1)
+		}
+		fmt.Fprint(w, `{"success":true,"result":[]}`)
+	}))
+	defer server.Close()
+	state, err := OpenState(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	makeEngine := func() *Engine {
+		e, err := NewEngine(state, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.ddnsClient = func() *ddns.Client {
+			return &ddns.Client{APIBase: server.URL, API: server.Client(), IPv4: server.Client(), IPv6: server.Client(), InterfaceIPs: func() ([]netip.Addr, error) {
+				return []netip.Addr{netip.MustParseAddr("10.0.0.7"), netip.MustParseAddr("fd00::7")}, nil
+			}}
+		}
+		return e
+	}
+	engine := makeEngine()
+	defer engine.Close()
+	config := &pb.ControlMessage{Node: defaultNodeConfig()}
+	config.Node.Enabled = false
+	config.Node.Ddns = &pb.DDNSConfig{Enabled: true, Generation: 1, Provider: "cloudflare", RecordName: "node.example.test", Token: "fixture-token", ZoneId: strings.Repeat("a", 32), Ipv4: true, Ipv6: true, IntervalSeconds: 60, Ttl: 300, Ipv4Url: server.URL + "/ip4", Ipv6Url: server.URL + "/ip6", IpSource: ddns.IPSourceInterface, IgnorePrivateIps: false}
+	if err = engine.Apply(config); err != nil {
+		t.Fatal(err)
+	}
+	status := waitDDNS(t, engine, 1, "ok")
+	if status.Ipv4 != "10.0.0.7" || status.Ipv6 != "fd00::7" || writes.Load() != 2 {
+		t.Fatal("interface DDNS did not update both families", status)
+	}
+	saved, err := state.Config()
+	if err != nil || saved.Node.Ddns.IpSource != ddns.IPSourceInterface || saved.Node.Ddns.IgnorePrivateIps {
+		t.Fatal("interface settings did not persist", err)
+	}
+	engine.Close()
+	restored := makeEngine()
+	defer restored.Close()
+	if err = restored.Apply(saved); err != nil {
+		t.Fatal(err)
+	}
+	waitDDNS(t, restored, 1, "ok")
+	if writes.Load() != 4 {
+		t.Fatal("offline restore did not use interface addresses")
+	}
 }
 
 func TestNodeDDNSLifecycleAndOfflineRestore(t *testing.T) {
@@ -143,7 +209,7 @@ func TestNodeDDNSLifecycleAndOfflineRestore(t *testing.T) {
 		t.Fatal("disabled DDNS continued fetching addresses")
 	}
 	report, err := e2.Report()
-	if err != nil || report.ProtocolVersion != 25 {
+	if err != nil || report.ProtocolVersion != pb.CurrentVersion {
 		t.Fatal("DDNS protocol capability missing")
 	}
 }

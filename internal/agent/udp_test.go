@@ -166,7 +166,7 @@ func TestNativeUDPUnknownProbeIsSilent(t *testing.T) {
 }
 
 func TestUDPStreamTunnelTransportCombinations(t *testing.T) {
-	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2", "plain_udp", "dtls_udp"} {
+	for _, mode := range []string{"random_tcp", "random_h2", "plain_tcp", "tls_tcp", "plain_h2", "tls_h2", "plain_udp", "dtls_udp", "random_udp", "tls_h3"} {
 		t.Run(mode, func(t *testing.T) {
 			echo, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 			if err != nil {
@@ -184,6 +184,7 @@ func TestUDPStreamTunnelTransportCombinations(t *testing.T) {
 				}
 			}()
 			engine, transport, config, rule := h2Fixture(t, echo.LocalAddr().String())
+			randomFixture(t, config, rule, "chacha20-poly1305")
 			config.Node.TunnelProtocol = mode
 			config.EgressRules[0].Protocol = "udp"
 			rule.Protocol = "udp"

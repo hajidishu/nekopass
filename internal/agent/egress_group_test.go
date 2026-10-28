@@ -123,9 +123,10 @@ func TestGroupRecoveryThresholdWithoutUserTraffic(t *testing.T) {
 }
 
 func TestGroupAuthenticatedHealthAllTransports(t *testing.T) {
-	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2", "plain_udp", "dtls_udp"} {
+	for _, mode := range []string{"random_tcp", "random_h2", "plain_tcp", "tls_tcp", "plain_h2", "tls_h2", "plain_udp", "dtls_udp", "random_udp", "tls_h3"} {
 		t.Run(mode, func(t *testing.T) {
 			exit, h2, cfg, r := h2Fixture(t, "127.0.0.1:1")
+			randomFixture(t, cfg, r, "chacha20-poly1305")
 			cfg.Node.TunnelProtocol = mode
 			r.TunnelProtocol = mode
 			r.Protocol = "tcp"
@@ -180,10 +181,11 @@ func TestGroupAuthenticatedHealthAllTransports(t *testing.T) {
 }
 
 func TestGroupTargetRejectionDoesNotLookLikeTunnelFailure(t *testing.T) {
-	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2"} {
+	for _, mode := range []string{"random_tcp", "random_h2", "plain_tcp", "tls_tcp", "plain_h2", "tls_h2", "tls_h3"} {
 		for _, network := range []string{"tcp", "udp"} {
 			t.Run(mode+"/"+network, func(t *testing.T) {
 				exit, h2, cfg, r := h2Fixture(t, "127.0.0.1:1")
+				randomFixture(t, cfg, r, "chacha20-poly1305")
 				cfg.Node.TunnelProtocol = mode
 				r.TunnelProtocol = mode
 				r.Protocol = network
@@ -223,6 +225,7 @@ func TestGroupTCPFailoverStickySessionsAndQuota(t *testing.T) {
 		}
 	}()
 	exit, _, cfg, r := h2Fixture(t, target.Addr().String())
+	randomFixture(t, cfg, r, "chacha20-poly1305")
 	cfg.Node.TunnelProtocol = "plain_tcp"
 	if err = exit.Apply(cfg); err != nil {
 		t.Fatal(err)
@@ -322,8 +325,9 @@ func TestGroupUDPMixedTransportsStickySessionsAndMetering(t *testing.T) {
 	}()
 	var peers []*pb.EgressPeer
 	var base *pb.Rule
-	for i, mode := range []string{"plain_udp", "tls_h2"} {
+	for i, mode := range []string{"plain_udp", "tls_h3"} {
 		exit, _, cfg, r := h2Fixture(t, echo.LocalAddr().String())
+		randomFixture(t, cfg, r, "chacha20-poly1305")
 		cfg.Node.TunnelProtocol = mode
 		cfg.EgressRules[0].Protocol = "udp"
 		r.TunnelProtocol = mode

@@ -6,7 +6,10 @@ require (
 	github.com/go-acme/lego/v4 v4.35.2
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pion/dtls/v3 v3.1.10
+	github.com/quic-go/masque-go v0.6.0
+	github.com/quic-go/quic-go v0.64.1
 	github.com/refraction-networking/utls v1.8.2
+	github.com/yosida95/uritemplate/v3 v3.0.2
 	go.etcd.io/bbolt v1.4.3
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.60.0
@@ -25,6 +28,7 @@ require (
 	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/clbanning/mxj/v2 v2.7.0 // indirect
+	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/go-acme/alidns-20150109/v4 v4.7.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -38,6 +42,7 @@ require (
 	github.com/nrdcg/dnspod-go v0.4.0 // indirect
 	github.com/pion/logging v0.2.4 // indirect
 	github.com/pion/transport/v5 v5.0.0 // indirect
+	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
@@ -47,3 +52,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	gopkg.in/ini.v1 v1.67.1 // indirect
 )
+
+replace github.com/quic-go/quic-go => ./third_party/quic-go

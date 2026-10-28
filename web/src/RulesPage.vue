@@ -11,7 +11,7 @@ import { encodeNyanpassRules, parseRuleImport, prepareRuleImport } from './rule-
 import { api as callAPI, bytes, address, quotaText, limitText, type Me, type User, type RuleNode, type Rule, type RuleInput, type Group, type TLSInboundChoice, type RuleBatchPatch } from './api'
 const props = defineProps<{ me: Me; users: User[]; nodes: RuleNode[]; rules: Rule[]; managedUser?: User }>()
 const emit = defineEmits<{ refresh: [] }>()
-const protocolText = (value?: string) => value === 'dtls_udp' ? 'raw(udp) + TLS' : value === 'plain_udp' ? 'raw(udp) + 不加密' : value === 'tls_h2' ? 'h2 + TLS' : value === 'plain_h2' ? 'h2 + 不加密' : value === 'tls_tcp' ? 'raw(tcp) + TLS' : value === 'plain_tcp' ? 'raw(tcp) + 不加密' : '节点中转'
+const protocolText = (value?: string) => value === 'tls_h3' ? 'HTTP/3 + TLS' : value === 'random_udp' ? 'raw(udp) + 全随机加密' : value === 'random_tcp' ? 'raw(tcp) + 全随机加密' : value === 'random_h2' ? 'h2 + 全随机加密' : value === 'dtls_udp' ? 'raw(udp) + TLS' : value === 'plain_udp' ? 'raw(udp) + 不加密' : value === 'tls_h2' ? 'h2 + TLS' : value === 'plain_h2' ? 'h2 + 不加密' : value === 'tls_tcp' ? 'raw(tcp) + TLS' : value === 'plain_tcp' ? 'raw(tcp) + 不加密' : '节点中转'
 const actorID = computed(() => props.managedUser?.id || props.me.id)
 async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> { return callAPI<T>(props.managedUser ? `admin/users/${props.managedUser.id}/${path}` : path, method, body) }
 

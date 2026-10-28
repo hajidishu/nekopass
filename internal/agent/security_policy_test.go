@@ -124,12 +124,13 @@ func TestTargetDialChecksResolvedIPAndPolicyChanges(t *testing.T) {
 }
 
 func TestTunnelExitEnforcesACLAfterDNSResolutionAndClosesLiveStreams(t *testing.T) {
-	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2"} {
+	for _, mode := range []string{"random_tcp", "random_h2", "plain_tcp", "tls_tcp", "plain_h2", "tls_h2"} {
 		t.Run(mode, func(t *testing.T) {
 			target := policyEcho(t)
 			_, port, _ := net.SplitHostPort(target.Addr().String())
 			address := net.JoinHostPort("localhost", port)
 			e, transport, config, rule := h2Fixture(t, address)
+			randomFixture(t, config, rule, "chacha20-poly1305")
 			rule.Tls.SequenceAuth = true
 			rule.TunnelProtocol = mode
 			config.Node.TunnelProtocol = mode
@@ -140,7 +141,7 @@ func TestTunnelExitEnforcesACLAfterDNSResolutionAndClosesLiveStreams(t *testing.
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 			defer cancel()
 			dial := func() (net.Conn, error) {
-				if mode == "plain_h2" || mode == "tls_h2" {
+				if mode == "plain_h2" || mode == "tls_h2" || mode == "random_h2" {
 					return transport.Dial(ctx, ctx, rule, address)
 				}
 				return dialTunnel(ctx, rule, address)

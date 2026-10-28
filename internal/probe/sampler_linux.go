@@ -5,7 +5,9 @@ package probe
 import (
 	"bufio"
 	pb "github.com/nekopass/nekopass/internal/protocol"
+	"math"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -14,10 +16,14 @@ import (
 
 type netBytes struct{ rx, tx uint64 }
 type Sampler struct {
-	total, idle uint64
-	last        time.Time
-	network     map[string]netBytes
-	cpuSeen     bool
+	total, idle         uint64
+	last                time.Time
+	network             map[string]netBytes
+	cpuSeen             bool
+	bootID              string
+	diskDevice          string
+	diskRead, diskWrite uint64
+	diskTime            time.Time
 }
 
 func NewSampler() *Sampler { return &Sampler{} }
@@ -115,6 +121,15 @@ func countSockets(path string, tcp bool) (int64, bool) {
 func (s *Sampler) Sample(c *pb.NodeConfig) *pb.Probe {
 	now := time.Now()
 	p := &pb.Probe{SampledAt: now.Unix()}
+	if s.bootID == "" {
+		if data, err := os.ReadFile("/proc/sys/kernel/random/boot_id"); err == nil {
+			s.bootID = strings.TrimSpace(string(data))
+		}
+	}
+	p.BootId = s.bootID
+	if data, err := os.ReadFile("/proc/uptime"); err == nil {
+		p.UptimeSeconds, p.UptimeReady = uptimeSeconds(string(data))
+	}
 	if data, e := os.ReadFile("/proc/stat"); e == nil {
 		total, idle, ok := cpuTicks(string(data))
 		if ok {
@@ -136,12 +151,16 @@ func (s *Sampler) Sample(c *pb.NodeConfig) *pb.Probe {
 		p.DiskUsed = int64(disk.Blocks-disk.Bfree) * disk.Bsize
 		p.DiskReady = p.DiskTotal > 0
 	}
+	s.sampleDiskIO(c.DiskPath, now, p)
 	if data, e := os.ReadFile("/proc/net/dev"); e == nil {
 		all := networkCounters(string(data))
 		names := c.NetworkInterfaces
 		if len(names) == 0 {
 			names = defaultInterfaces(all)
 		}
+		names = append([]string(nil), names...)
+		sort.Strings(names)
+		p.NetworkCountersReady = len(names) > 0 && s.bootID != ""
 		elapsed := now.Sub(s.last).Seconds()
 		ready := !s.last.IsZero() && len(names) > 0
 		var rx, tx uint64
@@ -152,6 +171,11 @@ func (s *Sampler) Sample(c *pb.NodeConfig) *pb.Probe {
 			}
 			seen[name] = true
 			v, ok := all[name]
+			if ok && v.rx <= math.MaxInt64 && v.tx <= math.MaxInt64 {
+				p.NetworkCounters = append(p.NetworkCounters, &pb.InterfaceTraffic{Name: name, RxBytes: int64(v.rx), TxBytes: int64(v.tx)})
+			} else {
+				p.NetworkCountersReady = false
+			}
 			old, had := s.network[name]
 			if !ok || !had || v.rx < old.rx || v.tx < old.tx {
 				ready = false

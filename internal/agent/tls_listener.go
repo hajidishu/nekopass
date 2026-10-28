@@ -15,7 +15,8 @@ type limitedTLSConn struct {
 	release func()
 }
 
-func (c *limitedTLSConn) Close() error { err := c.Conn.Close(); c.once.Do(c.release); return err }
+func (c *limitedTLSConn) Close() error                { err := c.Conn.Close(); c.once.Do(c.release); return err }
+func (c *limitedTLSConn) AuthenticatedIngress() int64 { return authenticatedIngress(c.Conn) }
 func (l *limitedTLSListener) Accept() (net.Conn, error) {
 	for {
 		conn, err := l.Listener.Accept()

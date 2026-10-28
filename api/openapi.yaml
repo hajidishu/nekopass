@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.19.2
+  version: 0.19.3
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -437,12 +437,15 @@ paths:
                 ttl: {type: integer, description: '1 for automatic or 60–86400 seconds', default: 300}
                 ipv4_url: {type: string, default: 'https://api.ipify.org'}
                 ipv6_url: {type: string, default: 'https://api6.ipify.org'}
+                ip_source: {type: string, enum: [api, interface], default: api, description: Interface discovery requires Agent protocol 30 or newer}
+                ignore_private_ips: {type: boolean, default: true, description: Only used for interface discovery; when false private and loopback addresses are eligible}
                 use_for_ingress: {type: boolean, default: true}
                 use_for_egress: {type: boolean, default: true}
       responses:
         '200': {description: 'generation; state pending until Agent protocol 8 or newer reports. Enabled address binding replaces selected node addresses with record_name. Disabling preserves records and node addresses.'}
         '400': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '409': {description: Upgrade the agent before enabling interface discovery}
   /admin/nodes/{id}/ddns/run:
     parameters:
       - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
@@ -1081,7 +1084,40 @@ paths:
                     enabled: {type: boolean}
                     online: {type: boolean}
                     updated_at: {type: string, format: date-time, nullable: true}
+                    first_connected_at: {type: string, format: date-time, nullable: true}
+                    last_report_at: {type: string, format: date-time, nullable: true}
+                    uptime_seconds: {type: integer, format: int64}
+                    uptime_ready: {type: boolean}
+                    traffic_ready: {type: boolean}
+                    traffic_today_rx_bytes: {type: integer, format: int64}
+                    traffic_today_tx_bytes: {type: integer, format: int64}
+                    traffic_30d_rx_bytes: {type: integer, format: int64}
+                    traffic_30d_tx_bytes: {type: integer, format: int64, description: UTC+8 calendar days including today; machine-interface traffic independent of user billing}
                     metrics: {$ref: '#/components/schemas/Probe'}
+  /node-status/{id}/history:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    get:
+      summary: Recent probe history for a node authorized to the current user
+      responses:
+        '200':
+          description: Up to 120 samples in chronological order; unknown values are null
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 120
+                items:
+                  type: object
+                  properties:
+                    at: {type: integer, format: int64, description: Controller receive time as Unix seconds}
+                    cpu: {type: number, nullable: true}
+                    memory: {type: number, nullable: true}
+                    disk: {type: number, nullable: true}
+                    disk_read: {type: number, nullable: true, description: Main disk read bytes per second}
+                    disk_write: {type: number, nullable: true, description: Main disk write bytes per second}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {description: Node does not exist or is not authorized}
   /admin/plans:
     get:
       summary: Admin lists plans
@@ -1377,13 +1413,14 @@ components:
         ingress_enabled: {type: boolean}
         allow_direct: {type: boolean}
         tunnel_exit_enabled: {type: boolean}
-        tunnel_transport: {type: string, enum: [raw_tcp, h2, raw_udp], description: Egress transport independent of encryption}
-        tunnel_security: {type: string, enum: [none, tls], description: Egress security independent of transport}
-        tunnel_protocol: {type: string, enum: [plain_tcp, tls_tcp, plain_h2, tls_h2, plain_udp, dtls_udp], description: Legacy combination encoding; prefer tunnel_transport and tunnel_security}
+        tunnel_transport: {type: string, enum: [raw_tcp, h2, raw_udp, h3], description: Egress transport; h3 requires TLS and Agent protocol 28}
+        tunnel_security: {type: string, enum: [none, tls, random], description: Egress security; h3 only accepts tls}
+        tunnel_protocol: {type: string, enum: [plain_tcp, tls_tcp, plain_h2, tls_h2, plain_udp, dtls_udp, random_tcp, random_h2, random_udp, tls_h3], description: Legacy combination encoding; prefer tunnel_transport and tunnel_security}
         tunnel_listen_host: {type: string}
         tunnel_listen_port: {type: integer, minimum: 0, maximum: 65535}
         tunnel_public_host: {type: string}
         allowed_ingress_ids: {type: array, items: {type: integer, minimum: 1}}
+        random: {$ref: '#/components/schemas/TunnelRandom'}
         tls: {$ref: '#/components/schemas/TunnelTLS'}
     NodeBasicInput:
       type: object
@@ -1605,11 +1642,12 @@ components:
         allow_direct: {type: boolean, default: true, description: Whether users may select direct forwarding on this ingress}
         ingress_enabled: {type: boolean, default: true, description: Whether this node may be used as an ingress; false still allows exit functionality}
         tunnel_exit_enabled: {type: boolean, default: false}
-        tunnel_transport: {type: string, enum: [raw_tcp, h2, raw_udp], description: Egress transport independent of encryption}
-        tunnel_security: {type: string, enum: [none, tls], description: Egress security independent of transport}
-        tunnel_protocol: {type: string, enum: [plain_tcp, tls_tcp, plain_h2, tls_h2, plain_udp, dtls_udp], default: plain_tcp, description: Legacy combination encoding; tls_tcp and plain_h2 require Agent protocol 13; plain_udp and dtls_udp require Agent protocol 17}
+        tunnel_transport: {type: string, enum: [raw_tcp, h2, raw_udp, h3], description: Egress transport; h3 requires TLS and Agent protocol 28}
+        tunnel_security: {type: string, enum: [none, tls, random], description: Egress security; h3 only accepts tls}
+        tunnel_protocol: {type: string, enum: [plain_tcp, tls_tcp, plain_h2, tls_h2, plain_udp, dtls_udp, random_tcp, random_h2, random_udp, tls_h3], default: plain_tcp, description: Legacy combination encoding; tls_tcp and plain_h2 require Agent protocol 13; plain_udp and dtls_udp require Agent protocol 17}
         tunnel_listen_host: {type: string, default: '0.0.0.0'}
         tunnel_listen_port: {type: integer, minimum: 0, maximum: 65535, description: Required at 1–65535 when tunnel_exit_enabled; low ports need native service bind capability}
+        random: {$ref: '#/components/schemas/TunnelRandom'}
         tls: {$ref: '#/components/schemas/TunnelTLS'}
         tunnel_public_host: {type: string, description: Host reachable from linked ingress nodes; required when tunnel_exit_enabled}
         allowed_ingress_ids: {type: array, items: {type: integer, format: int64}, description: Ingress nodes allowed to use this exit}
@@ -1623,16 +1661,31 @@ components:
         probe_interval_seconds: {type: integer, minimum: 2, maximum: 60, default: 5}
         disk_path: {type: string, default: '/'}
         network_interfaces: {type: array, maxItems: 32, items: {type: string}, description: Empty selects default route interface}
+    TunnelRandom:
+      type: object
+      additionalProperties: false
+      description: Exit-owned random encryption for raw_tcp, h2, and raw_udp; requires Agent protocol 26 for raw_tcp/h2 and protocol 27 for raw_udp on both ends. Omit to retain; blank key generates a new key.
+      properties:
+        cipher: {type: string, enum: [chacha20-poly1305, aes-256-gcm], default: chacha20-poly1305}
+        key: {type: string, maxLength: 44, description: Base64 encoded 32-byte key; blank generates automatically. Administrator and linked agents only.}
     TunnelTLS:
       type: object
       additionalProperties: false
       description: Administrator-only exit TLS protocol settings. Connection options are supplied to ingress nodes for this exit; DNS credentials and private keys are not forwarded.
       properties:
+        quic_padding:
+          type: object
+          description: Effective for HTTP/3 only; requires Agent protocol 29 on both ends
+          properties:
+            enabled: {type: boolean, default: false}
+            max_padding: {type: integer, minimum: 1, maximum: 1400, default: 1400}
+            burst_bytes: {type: integer, maximum: 65536, default: 8192, description: Must be at least max_padding}
+            bytes_per_second: {type: integer, minimum: 1, maximum: 65536, default: 8192}
         padding_enabled: {type: boolean, default: false, description: 'Effective only for raw_tcp + tls; requires both agents to support protocol 23. Other combinations retain but ignore it.'}
         padding_scheme: {type: array, nullable: true, maxItems: 65, items: {type: string}, description: 'AnyTLS-style lines: stop=N, 0=min-max, index=min-max,c,min-max. Empty uses the default policy. Stop 0-64; auth padding 1-2048; other sizes 1-16384; maximum 16 fragments per line and 8192 text bytes.'}
         server_name: {type: string, description: Exit certificate domain and default SNI}
         client_sni: {type: string, description: Optional SNI used by all ingress connections to this exit; certificate names remain verified}
-        fingerprint: {type: string, enum: ['off', chrome, firefox], default: 'off', description: 'off uses standard verified TLS; browser profiles use uTLS'}
+        fingerprint: {type: string, enum: ['off', chrome, firefox], default: 'off', description: 'off uses standard verified TLS; browser profiles use uTLS for TCP transports only; ignored for HTTP/3'}
         host: {type: string, description: 'HTTP authority, optional port; default uses the certificate hostname'}
         fallback_url: {type: string, description: 'HTTP/HTTPS fallback reverse-proxy URL; empty returns ordinary 404; HTTPS also handles pre-flight TLS rejection'}
         certificate_mode: {type: string, enum: [self_signed, import, acme_dns, acme_http], default: self_signed}
@@ -1640,7 +1693,7 @@ components:
         private_key: {type: string, description: Matching private key for import; administrator-only}
         root_ca: {type: string, description: Optional public issuer CA for private imported/ACME certificates}
         acme_root_ca: {type: string, description: Optional public CA for a private ACME directory; no insecure verification bypass}
-        path: {type: string, default: /api/stream}
+        path: {type: string, default: /api/stream, description: HTTP/2 request path or HTTP/3 CONNECT-UDP URI prefix; TCP CONNECT has no path}
         public_port: {type: integer, minimum: 0, maximum: 65535, default: 0}
         pool_size: {type: integer, minimum: 1, maximum: 8, default: 2}
         stream_window_mib: {type: integer, minimum: 1, maximum: 64, default: 16}
@@ -1676,3 +1729,9 @@ components:
         network_ready: {type: boolean}
         connections_ready: {type: boolean}
         load_ready: {type: boolean}
+        uptime_seconds: {type: integer, format: int64}
+        uptime_ready: {type: boolean}
+        disk_read_bytes_per_second: {type: number}
+        disk_write_bytes_per_second: {type: number}
+        disk_io_ready: {type: boolean}
+        disk_device: {type: string}

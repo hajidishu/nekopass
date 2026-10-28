@@ -4,7 +4,7 @@
 
 在节点编辑主窗口开启「作为出口节点」，填写隧道地址、监听端口和允许使用它的入口。「编辑传输协议」设置协议及其专属参数，「安全性设置」选择加密方式、证书和其他安全参数；子窗口确定后，回到主窗口「保存并下发」。
 
-传输协议可选 raw(tcp)、h2、raw(udp)，均可搭配明文或 TLS。raw(tcp) 和 h2 支持 TCP、UDP；raw(udp) 仅支持 UDP。配置属于出口，入口按规则所选出口连接。
+传输协议可选 raw(tcp)、h2、raw(udp)，均可搭配明文或 TLS。三种传输均可搭配[全随机加密](../security/random.md)。[HTTP/3](../protocols/h3.md) 固定 TLS 1.3，支持 TCP、UDP；raw(tcp) 和 h2 支持 TCP、UDP；raw(udp) 仅支持 UDP。配置属于出口，入口按规则所选出口连接。
 
 用户创建规则时选择入口和出口。用户当前个人节点组设置需同时授权入口与出口，套餐只提供初始授权。
 
@@ -17,9 +17,10 @@
 
 | 协议 | 配置 |
 | --- | --- |
-| [raw(tcp)](../protocols/plain-tcp.md) | 出口地址与监听端口，可搭配不加密或 TLS |
-| [h2](../protocols/h2.md) | HTTP Host、Path、连接池与流控，可搭配不加密或 TLS |
-| [raw(udp)](../protocols/raw-udp.md) | 原生 UDP 传输，可搭配不加密或 TLS |
+| [raw(tcp)](../protocols/plain-tcp.md) | 出口地址与监听端口，可搭配不加密、TLS 或全随机加密 |
+| [h2](../protocols/h2.md) | HTTP Host、Path、连接池与流控，可搭配不加密、TLS 或全随机加密 |
+| [raw(udp)](../protocols/raw-udp.md) | 原生 UDP 传输，可搭配不加密、TLS 或全随机加密 |
+| [HTTP/3](../protocols/h3.md) | QUIC 上的 HTTP/3，固定 TLS，配置 CONNECT-UDP Host、路径前缀、连接池与 Fallback |
 
 raw(tcp) + TLS 和 h2 + 不加密需要两端升级至 v0.15.0 或以上。当前默认目标 IP 限制需要节点 v0.15.2 或以上。出口监听端口必须对入口可达。
 

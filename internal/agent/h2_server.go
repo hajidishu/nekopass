@@ -22,6 +22,7 @@ import (
 
 type h2SessionKey struct{}
 type h2ServerSession struct {
+	ingress int64 // Nonzero when authenticated by the outer encrypted connection.
 	binding []byte
 	mu      sync.Mutex
 	nonces  map[string]bool
@@ -170,7 +171,7 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 		exporter, err = r.TLS.ExportKeyingMaterial(exporterLabel, nil, 32)
 	} else {
 		session, ok := r.Context().Value(h2SessionKey{}).(*h2ServerSession)
-		if !ok || len(session.binding) != 32 {
+		if !ok || len(session.binding) != 32 || session.ingress != 0 && session.ingress != open.Ingress {
 			e.camouflage(w, r)
 			return
 		}

@@ -146,7 +146,7 @@ func finishGroupDrafts(out *pb.ControlMessage, drafts []groupRuleDraft, version 
 	for _, d := range drafts {
 		p := d.peer
 		if p.Enabled {
-			d.rule.EgressPeers = append(d.rule.EgressPeers, &pb.EgressPeer{NodeId: p.EgressNodeId, Host: p.TunnelHost, Port: p.TunnelPort, Token: p.TunnelToken, Protocol: p.TunnelProtocol, Tls: p.Tls, Weight: d.weight, Standby: d.standby})
+			d.rule.EgressPeers = append(d.rule.EgressPeers, &pb.EgressPeer{NodeId: p.EgressNodeId, Host: p.TunnelHost, Port: p.TunnelPort, Token: p.TunnelToken, Protocol: p.TunnelProtocol, Tls: p.Tls, Random: p.Random, Weight: d.weight, Standby: d.standby})
 		}
 	}
 	if len(out.Rules) > originalCount {

@@ -41,6 +41,7 @@ jobs:
           # Native ICMP tests use unprivileged ping sockets on this CI host.
           sudo sysctl -w 'net.ipv4.ping_group_range=0 2147483647'
           go test -race -p 1 ./...
+          go test -race github.com/quic-go/quic-go -run TestPacketPadding
           go vet ./...
           go build -o .local/nekopass-startup-test ./cmd/nekopass
           python3 tests/panel_startup_test.py --binary .local/nekopass-startup-test

@@ -2,7 +2,7 @@
 import {reactive,ref,watch} from 'vue'
 import {ElMessage} from 'element-plus'
 import NodeSecurityFields from './NodeSecurityFields.vue'
-import {nodeTLSDefaults,nodeDNSCredentials,nodeSecurityInput,protocolDefaults,type NodeProtocolsInput,type NodeSecurityInput} from './node-protocol'
+import {nodeTLSConfig,nodeDNSCredentials,nodeSecurityInput,protocolDefaults,type NodeProtocolsInput,type NodeSecurityInput} from './node-protocol'
 const props=defineProps<{modelValue:boolean;initial:NodeProtocolsInput}>()
 const emit=defineEmits<{'update:modelValue':[value:boolean];saved:[config:NodeSecurityInput]}>()
 const form=reactive(protocolDefaults()),dnsJSON=ref('{}')
@@ -10,7 +10,8 @@ watch(()=>props.modelValue,open=>{
  if(!open)return
  const copy=JSON.parse(JSON.stringify(props.initial))
  Object.assign(form,copy)
- form.tls={...nodeTLSDefaults(),...copy.tls}
+ form.tls=nodeTLSConfig(copy.tls)
+ form.random={cipher:'chacha20-poly1305',key:'',...copy.random}
  dnsJSON.value=JSON.stringify(form.tls.dns_credentials||{},null,2)
 })
 function save(){

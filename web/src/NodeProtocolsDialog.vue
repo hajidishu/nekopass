@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {reactive,watch} from 'vue'
 import NodeProtocolsForm from './NodeProtocolsForm.vue'
-import {nodeTLSDefaults,nodeTransportInput,protocolDefaults,type NodeProtocolsInput,type NodeTransportInput} from './node-protocol'
+import {nodeTLSConfig,nodeTransportInput,protocolDefaults,type NodeProtocolsInput,type NodeTransportInput} from './node-protocol'
 const props=defineProps<{modelValue:boolean;initial:NodeProtocolsInput}>()
 const emit=defineEmits<{'update:modelValue':[value:boolean];saved:[config:NodeTransportInput]}>()
 const form=reactive(protocolDefaults())
@@ -9,7 +9,7 @@ watch(()=>props.modelValue,open=>{
  if(!open)return
  const copy=JSON.parse(JSON.stringify(props.initial))
  Object.assign(form,copy)
- form.tls={...nodeTLSDefaults(),...copy.tls}
+ form.tls=nodeTLSConfig(copy.tls)
 })
 function save(){emit('saved',nodeTransportInput(form));emit('update:modelValue',false)}
 </script>

@@ -45,6 +45,7 @@ type Engine struct {
 	udpNonceMu       sync.Mutex
 	udpNonces        map[string]time.Time
 	nativeUDP        *nativeUDPListener
+	randomUDP        *randomUDPListener
 	counters         map[int64]*atomic.Int64
 	revision         int64
 	syncError        string
@@ -59,6 +60,7 @@ type Engine struct {
 	tunnelPolicy     atomic.Pointer[tunnelPolicy]
 	egress           *egressManager
 	h2               *h2Transport
+	h3Listener       *h3Listener
 	h2Certificate    atomic.Pointer[tls.Certificate]
 	acmeAck          atomic.Int64
 	challengeServers map[int32]*http.Server
@@ -500,6 +502,7 @@ func copyData(ctx context.Context, dst, src net.Conn, a *Account, count *atomic.
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
 				if tcp, ok := dst.(interface{ CloseWrite() error }); ok {
+					_ = dst.SetWriteDeadline(time.Now().Add(5 * time.Second))
 					_ = tcp.CloseWrite()
 				}
 				return nil
@@ -519,7 +522,7 @@ func (e *Engine) Report() (*pb.AgentMessage, error) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 	}
-	r := &pb.AgentMessage{ProtocolVersion: 25, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load(), PublicIp: e.publicIP.Load(), IpRecoveryStatus: e.ipRecoveryStatus.Load()}
+	r := &pb.AgentMessage{ProtocolVersion: pb.CurrentVersion, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load(), PublicIp: e.publicIP.Load(), IpRecoveryStatus: e.ipRecoveryStatus.Load()}
 	pending, err := e.state.RestorePending()
 	if err != nil {
 		return nil, err
@@ -585,6 +588,14 @@ func (e *Engine) Close() {
 		e.tunnel.cancel()
 		e.tunnel.ln.Close()
 		e.tunnel = nil
+	}
+	if e.h3Listener != nil {
+		e.h3Listener.Close()
+		e.h3Listener = nil
+	}
+	if e.randomUDP != nil {
+		e.randomUDP.Close()
+		e.randomUDP = nil
 	}
 	if e.nativeUDP != nil {
 		e.nativeUDP.cancel()

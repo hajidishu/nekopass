@@ -57,6 +57,14 @@ func dialRawDatagramTunnel(ctx context.Context, r *pb.Rule, target string) (net.
 			return nil, err
 		}
 	}
+	if tunnel.Random(r.TunnelProtocol) {
+		secured, e := dialRandom(ctx, raw, r)
+		if e != nil {
+			return nil, e
+		}
+		c = secured
+		binding = secured.Binding()
+	}
 	success := false
 	defer func() {
 		if !success {
@@ -127,6 +135,7 @@ func dialRawDatagramTunnel(ctx context.Context, r *pb.Rule, target string) (net.
 }
 
 func (e *Engine) handleUDPStream(ctx context.Context, c net.Conn, reader *bufio.Reader) {
+	identity := authenticatedIngress(c)
 	bounded := &boundedHeaderReader{Reader: reader, left: 8192}
 	reader = bufio.NewReaderSize(bounded, 8192)
 	request, err := http.ReadRequest(reader)
@@ -139,7 +148,7 @@ func (e *Engine) handleUDPStream(ctx context.Context, c net.Conn, reader *bufio.
 	encoded := request.Header.Get("X-Stream")
 	metadata, err := base64.RawURLEncoding.DecodeString(encoded)
 	var open udpStreamOpen
-	if err != nil || len(metadata) > 2048 || json.Unmarshal(metadata, &open) != nil || open.Network != "udp" || len(open.Nonce) != 32 || open.Time < time.Now().Unix()-120 || open.Time > time.Now().Unix()+120 || node == nil || policy == nil {
+	if err != nil || len(metadata) > 2048 || json.Unmarshal(metadata, &open) != nil || open.Network != "udp" || identity != 0 && identity != open.Ingress || len(open.Nonce) != 32 || open.Time < time.Now().Unix()-120 || open.Time > time.Now().Unix()+120 || node == nil || policy == nil {
 		e.serveRawCamouflage(ctx, c, reader, request)
 		return
 	}
@@ -150,6 +159,9 @@ func (e *Engine) handleUDPStream(ctx context.Context, c net.Conn, reader *bufio.
 		host = node.Tls.Host
 	}
 	var binding []byte
+	if secured, ok := c.(interface{ Binding() []byte }); ok {
+		binding = secured.Binding()
+	}
 	if tlsConn, ok := c.(*tls.Conn); ok {
 		state := tlsConn.ConnectionState()
 		binding, err = state.ExportKeyingMaterial(exporterLabel, nil, 32)

@@ -89,10 +89,11 @@ message Rule {
   int32 health_successes = 34;
   int64 traffic_rate = 35;
   bool metering_configured = 36;
+  RandomConfig random = 37;
 }
 message EgressPeer {
  int64 node_id = 1; string host = 2; int32 port = 3; string token = 4;
- string protocol = 5; TLSClientConfig tls = 6; int32 weight = 7; bool standby = 8; int64 traffic_rate = 9;
+ string protocol = 5; TLSClientConfig tls = 6; int32 weight = 7; bool standby = 8; int64 traffic_rate = 9; RandomConfig random = 10;
 }
 message OriginTLSConfig { bool enabled = 1; string server_name = 2; string root_ca = 3; repeated string alpn = 4; }
 message SharedTLSInbound {
@@ -179,6 +180,7 @@ message NodeConfig {
  repeated SharedTLSInbound tls_inbounds = 24;
  bool tls_inbound_only = 25;
  repeated ACMEHTTPEndpoint acme_http = 26;
+ RandomConfig random = 27;
 }
 
 message IPRecoveryConfig {
@@ -223,6 +225,8 @@ message DDNSConfig {
  int32 ttl = 10;
  string ipv4_url = 11;
  string ipv6_url = 12;
+ string ip_source = 13;
+ bool ignore_private_ips = 14;
 }
 message DDNSStatus {
  int64 generation = 1;
@@ -234,6 +238,15 @@ message DDNSStatus {
  string error = 7;
  string observed_ipv4 = 8;
  string observed_ipv6 = 9;
+}
+
+message RandomConfig { string cipher = 1; string key = 2; }
+
+message QUICPaddingConfig {
+ bool enabled = 1;
+ int32 max_padding = 2;
+ int32 burst_bytes = 3;
+ int32 bytes_per_second = 4;
 }
 
 message TLSClientConfig {
@@ -249,6 +262,8 @@ message TLSClientConfig {
  bool sequence_auth = 10;
  bool padding_enabled = 11;
  repeated string padding_scheme = 12;
+ int32 max_streams = 13;
+ QUICPaddingConfig quic_padding = 14;
 }
 message TLSServerConfig {
  string server_name = 1;
@@ -265,6 +280,8 @@ message TLSServerConfig {
  string fallback_url = 12;
  bool padding_enabled = 13;
  repeated string padding_scheme = 14;
+ int32 public_port = 15;
+ QUICPaddingConfig quic_padding = 16;
 }
 message ACMEChallenge {
  string domain = 1;
@@ -293,4 +310,18 @@ message Probe {
  bool network_ready = 17;
  bool connections_ready = 18;
  bool load_ready = 19;
+ int64 uptime_seconds = 20;
+ bool uptime_ready = 21;
+ double disk_read_bytes_per_second = 22;
+ double disk_write_bytes_per_second = 23;
+ bool disk_io_ready = 24;
+ string disk_device = 25;
+ string boot_id = 26;
+ repeated InterfaceTraffic network_counters = 27;
+ bool network_counters_ready = 28;
+}
+message InterfaceTraffic {
+ string name = 1;
+ int64 rx_bytes = 2;
+ int64 tx_bytes = 3;
 }

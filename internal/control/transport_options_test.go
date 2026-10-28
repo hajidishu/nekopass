@@ -14,7 +14,7 @@ import (
 func TestIndependentNodeTransportChoicesAndAgentCompatibility(t *testing.T) {
 	f := newSecurityFixture(t)
 	ctx := context.Background()
-	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2", "plain_udp", "dtls_udp"} {
+	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2", "plain_udp", "dtls_udp", "random_tcp", "random_h2", "random_udp", "tls_h3"} {
 		t.Run(mode, func(t *testing.T) {
 			key := Secret()
 			var id int64
@@ -46,7 +46,7 @@ func TestIndependentNodeTransportChoicesAndAgentCompatibility(t *testing.T) {
 			securityStatus(t, f.request(f.admin, base, "PUT", invalid), 400)
 			instance := Secret()
 			stream := &StreamServer{Server: New(f.p)}
-			for _, version := range []int32{12, 13, 16, 17} {
+			for _, version := range []int32{12, 13, 16, 17, 25, 26, 27, 28} {
 				config, err := stream.exchange(ctx, f.p, id, &pb.AgentMessage{InstanceId: instance, ProtocolVersion: version})
 				if err != nil {
 					t.Fatal(err)
@@ -72,7 +72,7 @@ func TestIndependentNodeTransportChoicesAndAgentCompatibility(t *testing.T) {
 func TestSplitTransportTLSPreparationAndDispatch(t *testing.T) {
 	p := testDB(t)
 	ctx := context.Background()
-	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2"} {
+	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2", "tls_h3"} {
 		t.Run(mode, func(t *testing.T) {
 			tx, err := p.Begin(ctx)
 			if err != nil {

@@ -18,6 +18,7 @@ func TestMeteredGroupUsesTheSelectedExitRate(t *testing.T) {
 	var rule *pb.Rule
 	for i, mode := range []string{"plain_tcp", "plain_h2"} {
 		exit, _, cfg, r := h2Fixture(t, target)
+		randomFixture(t, cfg, r, "chacha20-poly1305")
 		cfg.Node.NodeId = int64(3 + i)
 		cfg.Node.TunnelProtocol = mode
 		if err := exit.Apply(cfg); err != nil {
@@ -98,10 +99,11 @@ func TestMeteredGroupUsesTheSelectedExitRate(t *testing.T) {
 }
 
 func TestMeteredTCPForwardingAcrossTransports(t *testing.T) {
-	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2"} {
+	for _, mode := range []string{"random_tcp", "random_h2", "plain_tcp", "tls_tcp", "plain_h2", "tls_h2", "tls_h3"} {
 		t.Run(mode, func(t *testing.T) {
 			target, _ := inboundEcho(t, false)
 			exit, _, cfg, r := h2Fixture(t, target)
+			randomFixture(t, cfg, r, "chacha20-poly1305")
 			cfg.Node.TunnelProtocol = mode
 			r.TunnelProtocol = mode
 			if mode == "tls_tcp" {

@@ -10,7 +10,7 @@ import NodeSecurityDialog from './NodeSecurityDialog.vue'
 import NodeConnectionFields from './NodeConnectionFields.vue'
 import TLSInboundsDialog from './TLSInboundsDialog.vue'
 import type {NodeTransportInput,NodeSecurityInput} from './node-protocol'
-import {nodeTLSDefaults as tlsDefaults,applyNodeTransport,applyNodeSecurity} from './node-protocol'
+import {nodeTLSDefaults as tlsDefaults,nodeTLSConfig as tlsConfig,applyNodeTransport,applyNodeSecurity} from './node-protocol'
 withDefaults(defineProps<{ nodes: Node[]; groups: NodeGroup[]; view?: 'nodes' | 'groups' }>(), {view:'nodes'})
 const emit = defineEmits<{ refresh: [] }>()
 const latestVersion=ref(''),checkingUpdate=ref(false),updatingNode=ref(0)
@@ -26,9 +26,9 @@ const protocolDialog=ref(false),securityDialog=ref(false),tlsInboundDialog=ref(f
 watch(nodeDialog,open=>{if(!open){protocolDialog.value=false;securityDialog.value=false;tlsInboundDialog.value=false}})
 function protocolsSaved(config:NodeTransportInput){applyNodeTransport(nodeForm,config)}
 function securitySaved(config:NodeSecurityInput){applyNodeSecurity(nodeForm,config)}
-const defaults = (): NodeInput => ({ingress_multiplier:'1',egress_multiplier:'0',tls:tlsDefaults(), token:'', ingress_enabled:true, allow_direct:true, tunnel_exit_enabled:false, tunnel_protocol:'plain_tcp',tunnel_transport:'raw_tcp',tunnel_security:'none', tunnel_listen_host:'0.0.0.0', tunnel_listen_port:0, tunnel_public_host:'', allowed_ingress_ids:[], name: '', public_address: '', notes: '', enabled: true, group_ids: [], listen_host: '0.0.0.0', port_min: 1024, port_max: 65535, max_connections: 10000, dial_timeout_seconds: 8, idle_timeout_seconds: 300, udp_idle_timeout_seconds:60, probe_interval_seconds: 5, disk_path: '/', network_interfaces: [] })
+const defaults = (): NodeInput => ({ingress_multiplier:'1',egress_multiplier:'0',random:{cipher:'chacha20-poly1305',key:''},tls:tlsDefaults(), token:'', ingress_enabled:true, allow_direct:true, tunnel_exit_enabled:false, tunnel_protocol:'plain_tcp',tunnel_transport:'raw_tcp',tunnel_security:'none', tunnel_listen_host:'0.0.0.0', tunnel_listen_port:0, tunnel_public_host:'', allowed_ingress_ids:[], name: '', public_address: '', notes: '', enabled: true, group_ids: [], listen_host: '0.0.0.0', port_min: 1024, port_max: 65535, max_connections: 10000, dial_timeout_seconds: 8, idle_timeout_seconds: 300, udp_idle_timeout_seconds:60, probe_interval_seconds: 5, disk_path: '/', network_interfaces: [] })
 const nodeForm = reactive(defaults()), groupForm = reactive({ name: '', description: '', enabled: true, sort_order: 0, node_ids: [] as number[],members:[] as NodeGroupMember[],strategy:'least_connections',health_interval_seconds:5,health_failures:3,health_successes:2 })
-function editNode(n?: Node) { editID.value = n?.id || 0; for (const k of Object.keys(defaults()) as (keyof NodeInput)[]) (nodeForm as any)[k] = n ? JSON.parse(JSON.stringify(n[k]??defaults()[k])) : defaults()[k]; nodeForm.tls={...tlsDefaults(),...(nodeForm.tls||{})};nodeForm.group_ids = [...nodeForm.group_ids]; nodeForm.allowed_ingress_ids=[...(nodeForm.allowed_ingress_ids||[])]; nodeForm.network_interfaces = [...nodeForm.network_interfaces]; interfaces.value = nodeForm.network_interfaces.join('\n'); nodeDialog.value = true }
+function editNode(n?: Node) { editID.value = n?.id || 0; for (const k of Object.keys(defaults()) as (keyof NodeInput)[]) (nodeForm as any)[k] = n ? JSON.parse(JSON.stringify(n[k]??defaults()[k])) : defaults()[k]; nodeForm.tls=tlsConfig(nodeForm.tls);nodeForm.group_ids = [...nodeForm.group_ids]; nodeForm.allowed_ingress_ids=[...(nodeForm.allowed_ingress_ids||[])]; nodeForm.network_interfaces = [...nodeForm.network_interfaces]; interfaces.value = nodeForm.network_interfaces.join('\n'); nodeDialog.value = true }
 function editGroup(g?: NodeGroup) { groupID.value = g?.id || 0; Object.assign(groupForm, { name: g?.name || '', description: g?.description || '', enabled: g?.enabled ?? true, sort_order: g?.sort_order || 0, node_ids: [...(g?.node_ids || [])],members:JSON.parse(JSON.stringify(g?.members||[])),strategy:g?.strategy==='manual'?'least_connections':g?.strategy||'least_connections',health_interval_seconds:g?.health_interval_seconds||5,health_failures:g?.health_failures||3,health_successes:g?.health_successes||2 });syncGroupMembers(); groupDialog.value = true }
 function syncGroupMembers(){groupForm.members=groupForm.node_ids.map(node_id=>groupForm.members.find(m=>m.node_id===node_id)||{node_id,role:'active',weight:1})}
 watch(()=>[...groupForm.node_ids],syncGroupMembers)
@@ -36,8 +36,8 @@ async function act(f: () => Promise<void>) { busy.value = true; try { await f();
 async function saveNode() { await act(async()=>{
  nodeForm.network_interfaces=interfaces.value.split(/[,\s]+/).filter(Boolean)
  const creating=!editID.value
- const data=await api<{id:number;token:string}>(creating?'admin/nodes':`admin/nodes/${editID.value}`,creating?'POST':'PUT',nodeForm)
- editID.value=data.id;nodeForm.token=data.token;ElMessage.success(creating?'节点已创建，密钥已填入下方':'节点配置已保存，密钥可在下方复制')
+ const data=await api<{id:number;token:string;random?:{cipher:string;key:string}}>(creating?'admin/nodes':`admin/nodes/${editID.value}`,creating?'POST':'PUT',nodeForm)
+ editID.value=data.id;nodeForm.token=data.token;if(data.random)nodeForm.random={...data.random};ElMessage.success(creating?'节点已创建，密钥已填入下方':'节点配置已保存，密钥可在下方复制')
 }) }
 
 async function saveGroup() { await act(async () => { await api(`admin/node-groups${groupID.value ? '/' + groupID.value : ''}`, groupID.value ? 'PUT' : 'POST', groupForm); groupDialog.value = false; ElMessage.success('节点组已保存') }) }

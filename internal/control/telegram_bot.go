@@ -335,7 +335,7 @@ func (s *Server) telegramNodes(ctx context.Context, page int) (string, *telegram
 	}
 	pages := max(1, (count+1)/2)
 	page = min(page, pages-1)
-	rows, err := s.Pool.Query(ctx, `SELECT name,enabled,COALESCE(last_seen>now()-interval '12 seconds',false),CASE WHEN probe_received_at>now()-make_interval(secs=>GREATEST(probe_interval_seconds*3,15)) THEN probe ELSE NULL END,probe_received_at FROM nodes ORDER BY id LIMIT 2 OFFSET $1`, page*2)
+	rows, err := s.Pool.Query(ctx, `SELECT n.name,n.enabled,COALESCE(n.last_seen>now()-interval '12 seconds',false),CASE WHEN n.probe_received_at>now()-make_interval(secs=>GREATEST(n.probe_interval_seconds*3,15)) THEN n.probe ELSE NULL END,n.probe_received_at,`+probeNodeColumns+` FROM nodes n `+probeNodeJoins+` ORDER BY n.id LIMIT 2 OFFSET $1`, page*2)
 	if err != nil {
 		return "", nil, err
 	}
@@ -346,7 +346,10 @@ func (s *Server) telegramNodes(ctx context.Context, page int) (string, *telegram
 		var enabled, online bool
 		var data []byte
 		var received *time.Time
-		if err = rows.Scan(&name, &enabled, &online, &data, &received); err != nil {
+		var first, last *time.Time
+		var uptime, todayRX, todayTX, monthRX, monthTX int64
+		var uptimeReady, trafficReady bool
+		if err = rows.Scan(&name, &enabled, &online, &data, &received, &first, &last, &uptime, &uptimeReady, &trafficReady, &todayRX, &todayTX, &monthRX, &monthTX); err != nil {
 			return "", nil, err
 		}
 		state := "🔴 离线"
@@ -361,9 +364,18 @@ func (s *Server) telegramNodes(ctx context.Context, page int) (string, *telegram
 			_ = json.Unmarshal(data, &p)
 		}
 		card := "━━━━━━━━━━━━━━\n<b>" + tgText(name) + "</b>  " + state + "\n" + telegramMetrics(p)
-		if received != nil {
-			card += "\n最近上报  " + received.In(time.FixedZone("UTC+8", 8*3600)).Format("01-02 15:04:05")
+		if trafficReady {
+			card += fmt.Sprintf("\n今日流量  ↑ %s · ↓ %s\n近 30 天  ↑ %s · ↓ %s", tgBytes(todayTX), tgBytes(todayRX), tgBytes(monthTX), tgBytes(monthRX))
+		} else {
+			card += "\n累计流量  等待节点采样"
 		}
+		if uptimeReady {
+			if online && received != nil && time.Now().After(*received) {
+				uptime += int64(time.Since(*received).Seconds())
+			}
+			card += "\n已运行  " + tgDuration(uptime)
+		}
+		card += "\n最后上报  " + tgProbeDate(last) + "\n首次上线  " + tgProbeDate(first)
 		parts = append(parts, card)
 	}
 	if count == 0 {

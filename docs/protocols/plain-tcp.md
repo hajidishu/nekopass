@@ -1,14 +1,14 @@
 # raw(tcp)
 
-客户端 → 入口 → 出口 → 目标。每条转发连接对应一条入口到出口的连接，可搭配不加密或 TLS。
+客户端 → 入口 → 出口 → 目标。每条转发连接对应一条入口到出口的连接，可搭配不加密、TLS 或全随机加密。
 
 | 配置项 | 用途 |
 | --- | --- |
 | 出口传输协议 | 选择 raw(tcp)。 |
-| 安全性 | 不加密使用明文 TCP；TLS 使用加密 TCP。 |
+| 安全性 | 不加密使用明文 TCP；TLS 使用加密 TCP；全随机加密使用所选 AEAD 算法。 |
 | 隧道对外地址 | 入口能访问的出口域名或 IP。 |
 | 出口监听地址、端口 | 出口节点实际监听的位置。 |
 | 公网隧道端口 | NAT / TCP 透传时入口连接的公网端口；0 使用监听端口。 |
 | 允许哪些入口使用此出口 | 允许接入的入口节点；用户当前个人设置还需获得两端的节点组权限。 |
 
-安全性选择见 [不加密](../security/none.md) 和 [TLS](../security/tls.md)。raw(tcp) 不使用 HTTP Host、Path 或 HTTP/2 连接池。搭配 TLS 时，可在「安全性设置」窗口配置普通 HTTP 访问的 Fallback 网站。
+安全性选择见 [不加密](../security/none.md) 、[TLS](../security/tls.md) 和 [全随机加密](../security/random.md)。raw(tcp) 不使用 HTTP Host、Path 或 HTTP/2 连接池。搭配 TLS 时，可在「安全性设置」窗口配置普通 HTTP 访问的 Fallback 网站。

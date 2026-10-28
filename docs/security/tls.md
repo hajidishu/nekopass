@@ -1,6 +1,6 @@
 # TLS
 
-raw(tcp)、h2 和 raw(udp) 均可选择 TLS。配置属于出口，连接它的入口使用同一组设置。这是入口到出口的隧道加密；节点到主控的 HTTP / HTTPS 连接另见 [安装节点](../guide/node.md#密钥与连接)。
+raw(tcp)、h2 和 raw(udp) 均可选择 TLS；[HTTP/3](../protocols/h3.md) 固定使用 TLS 1.3。配置属于出口，连接它的入口使用同一组设置。这是入口到出口的隧道加密；节点到主控的 HTTP / HTTPS 连接另见 [安装节点](../guide/node.md#密钥与连接)。
 
 原生 UDP 传输使用 DTLS。
 
@@ -35,7 +35,7 @@ DNS 凭据填写 JSON，键名如下：
 
 自动续期适用于 HTTP / DNS 自动申请模式；手动导入证书到期后需自行替换。
 
-h2 的 Host、Path 和流控参数在「编辑传输协议」子窗口设置，详见 [h2](../protocols/h2.md)。Fallback 在「安全性设置」窗口配置。
+h2 的 Host、Path 及 HTTP/3 的 CONNECT-UDP Host、路径前缀和流控参数在「编辑传输协议」子窗口设置，详见 [h2](../protocols/h2.md) 和 [HTTP/3](../protocols/h3.md)。Fallback 在「安全性设置」窗口配置。
 
 ## raw(tcp)＋TLS Padding
 
@@ -62,3 +62,7 @@ stop 范围为 0–64，认证填充最大 2048 字节，其余长度为 1–163
 主控将策略统一下发给两端，TCP 以及通过此隧道承载的 UDP 均可使用。填充不会传到目标，也不计入用户套餐用量；节点探针的实际网络流量包含填充开销。此功能沿用 Nekopass 的身份验证和转发权限，不改变客户端与目标之间的 TLS 数据。
 
 关闭发送方向时，结束帧会独立随机填充，不受 `stop` 限制，也不计入用户流量。入口与出口需同时使用支持当前 Padding 帧格式的节点端。
+
+## HTTP/3 Padding
+
+选择 HTTP/3 后，在「安全性设置」开启「HTTP/3 Padding」，可设置单包额外填充上限、每连接突发预算和每秒速率预算。填充使用标准 QUIC PADDING 帧，不计入用户套餐用量；配置项见 [HTTP/3](../protocols/h3.md)。

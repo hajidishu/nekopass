@@ -18,7 +18,7 @@ import zipfile
 ROOT_FILES = {'.gitignore', '.gitattributes', 'README.md', 'CHANGELOG.md', 'SECURITY.md', 'LICENSE',
               'go.mod', 'go.sum', 'sqlc.yaml', '开发指南.md'}
 SOURCE_DIRS = {'.github', '.githooks', 'api', 'cmd', 'deploy', 'docs', 'internal',
-               'scripts', 'tests', 'web'}
+               'scripts', 'tests', 'web', 'third_party'}
 PRIVATE_DIRS = {'.git', '.local', '.tools', 'node_modules', 'dist', '__pycache__',
                 '.ssh', '.aws', '.codex', '.agents', '.vscode', '.idea', 'coverage', 'cache', 'temp', '.temp'}
 EXTENSIONS = {'.go', '.mod', '.sum', '.sql', '.proto', '.yaml', '.yml', '.md', '.txt',
@@ -54,6 +54,10 @@ def path_problem(name):
         return None if name in ROOT_FILES else 'unreviewed-root-file'
     if path.parts[0] not in SOURCE_DIRS:
         return 'unreviewed-directory'
+    if path.parts[0] == 'third_party' and (len(path.parts)<3 or path.parts[1]!='quic-go'):
+        return 'unreviewed-dependency'
+    if name == 'third_party/quic-go/LICENSE':
+        return None
     if path.parts[0] == '.githooks' and path.name in {'pre-commit', 'pre-push'}:
         return None
     return None if path.suffix.lower() in EXTENSIONS else 'unreviewed-file-type'
@@ -95,6 +99,9 @@ def inspect(name, data, mode='100644', known=()):
             findings.append((name, text.count('\n', 0, match.start()) + 1, category))
     for match in ASSIGNMENT.finditer(text):
         value = match.group(1)
+        # Upstream public HKDF domain-separation label, not a token or key.
+        if name == 'third_party/quic-go/internal/handshake/token_protector.go' and value == 'quic-go token source' and match.group(0).startswith('tokenProtectorHKDFInfo '):
+            continue
         if len(value) >= 20 and entropy(value) >= 3.5 and not placeholder(value):
             findings.append((name, text.count('\n', 0, match.start()) + 1, 'literal-credential'))
     for match in ENV_CREDENTIAL.finditer(text):

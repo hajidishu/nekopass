@@ -40,7 +40,7 @@ func (e *Engine) configureDDNS(config *pb.DDNSConfig) {
 }
 
 func ddnsConfiguration(c *pb.DDNSConfig) ddns.Config {
-	return ddns.Config{Enabled: c.Enabled, Provider: c.Provider, RecordName: c.RecordName, ZoneID: c.ZoneId, Token: c.Token, IPv4: c.Ipv4, IPv6: c.Ipv6, IntervalSeconds: int(c.IntervalSeconds), TTL: int(c.Ttl), IPv4URL: c.Ipv4Url, IPv6URL: c.Ipv6Url}
+	return ddns.Config{Enabled: c.Enabled, Provider: c.Provider, RecordName: c.RecordName, ZoneID: c.ZoneId, Token: c.Token, IPv4: c.Ipv4, IPv6: c.Ipv6, IntervalSeconds: int(c.IntervalSeconds), TTL: int(c.Ttl), IPv4URL: c.Ipv4Url, IPv6URL: c.Ipv6Url, IPSource: c.IpSource, IgnorePrivateIPs: c.IgnorePrivateIps}
 }
 
 func (e *Engine) publishDDNS(ctx context.Context, status *pb.DDNSStatus) {
@@ -75,9 +75,9 @@ func (e *Engine) runDDNS(ctx context.Context, config *pb.DDNSConfig) {
 		errors := []string{}
 		successes := 0
 		for _, family := range []struct {
-			enabled, v6  bool
-			source, kind string
-		}{{cfg.IPv4, false, cfg.IPv4URL, "A"}, {cfg.IPv6, true, cfg.IPv6URL, "AAAA"}} {
+			enabled, v6 bool
+			kind        string
+		}{{cfg.IPv4, false, "A"}, {cfg.IPv6, true, "AAAA"}} {
 			if !family.enabled {
 				continue
 			}
@@ -85,7 +85,7 @@ func (e *Engine) runDDNS(ctx context.Context, config *pb.DDNSConfig) {
 			if family.v6 {
 				label = "IPv6"
 			}
-			ip, err := client.AddressWithRetry(cycle, family.source, family.v6)
+			ip, err := client.LookupAddress(cycle, cfg, family.v6)
 			if err != nil {
 				errors = append(errors, label+"："+err.Error())
 				continue

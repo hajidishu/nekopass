@@ -41,7 +41,7 @@ func (e *Engine) startH2PlainServer(ctx context.Context, ln net.Listener, cfg *p
 				conn.Close()
 				continue
 			}
-			session := &h2ServerSession{binding: binding, nonces: map[string]bool{}}
+			session := &h2ServerSession{ingress: authenticatedIngress(conn), binding: binding, nonces: map[string]bool{}}
 			e.wg.Add(1)
 			go func() {
 				defer e.wg.Done()
@@ -89,7 +89,7 @@ func (e *Engine) handleH2Binding(w http.ResponseWriter, r *http.Request, node *p
 		return false
 	}
 	session, ok := r.Context().Value(h2SessionKey{}).(*h2ServerSession)
-	if !ok || len(session.binding) != 32 || !session.take(nonce) {
+	if !ok || len(session.binding) != 32 || session.ingress != 0 && session.ingress != ingress || !session.take(nonce) {
 		return false
 	}
 	w.Header().Set("X-Stream-Binding", base64.RawURLEncoding.EncodeToString(session.binding))

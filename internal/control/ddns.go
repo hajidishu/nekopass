@@ -83,12 +83,17 @@ func (s *Server) saveNodeDDNS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 	var exists int64
-	if err = tx.QueryRow(ctx, "SELECT id FROM nodes WHERE id=$1 FOR UPDATE", id).Scan(&exists); err != nil {
+	var version int32
+	if err = tx.QueryRow(ctx, "SELECT id,protocol_version FROM nodes WHERE id=$1 FOR UPDATE", id).Scan(&exists, &version); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			fail(w, 404, "节点不存在")
 		} else {
 			s.dbError(w, err)
 		}
+		return
+	}
+	if cfg.Enabled && cfg.IPSource == ddns.IPSourceInterface && version < pb.DDNSInterfaceVersion {
+		fail(w, 409, "请先升级节点端，再使用通过网卡获取 IP")
 		return
 	}
 	data, _ := json.Marshal(cfg)
@@ -150,7 +155,8 @@ func (s *Server) runNodeDDNS(w http.ResponseWriter, r *http.Request) {
 func appendDDNSControl(ctx context.Context, tx pgx.Tx, node int64, out *pb.ControlMessage) error {
 	var data []byte
 	var generation int64
-	err := tx.QueryRow(ctx, "SELECT config,generation FROM node_ddns WHERE node_id=$1", node).Scan(&data, &generation)
+	var version int32
+	err := tx.QueryRow(ctx, "SELECT d.config,d.generation,n.protocol_version FROM node_ddns d JOIN nodes n ON n.id=d.node_id WHERE d.node_id=$1", node).Scan(&data, &generation, &version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -164,7 +170,9 @@ func appendDDNSControl(ctx context.Context, tx pgx.Tx, node int64, out *pb.Contr
 	if err = cfg.Normalize(); err != nil {
 		return err
 	}
-	out.Node.Ddns = &pb.DDNSConfig{Enabled: cfg.Enabled, Generation: generation, Provider: cfg.Provider, RecordName: cfg.RecordName, ZoneId: cfg.ZoneID, Token: cfg.Token, Ipv4: cfg.IPv4, Ipv6: cfg.IPv6, IntervalSeconds: int32(cfg.IntervalSeconds), Ttl: int32(cfg.TTL), Ipv4Url: cfg.IPv4URL, Ipv6Url: cfg.IPv6URL}
+	// Older agents ignore unknown protobuf fields and would silently use the API.
+	compatible := cfg.IPSource != ddns.IPSourceInterface || version >= pb.DDNSInterfaceVersion
+	out.Node.Ddns = &pb.DDNSConfig{Enabled: cfg.Enabled && compatible, Generation: generation, Provider: cfg.Provider, RecordName: cfg.RecordName, ZoneId: cfg.ZoneID, Token: cfg.Token, Ipv4: cfg.IPv4, Ipv6: cfg.IPv6, IntervalSeconds: int32(cfg.IntervalSeconds), Ttl: int32(cfg.TTL), Ipv4Url: cfg.IPv4URL, Ipv6Url: cfg.IPv6URL, IpSource: cfg.IPSource, IgnorePrivateIps: cfg.IgnorePrivateIPs}
 	return nil
 }
 
@@ -177,17 +185,6 @@ func acceptDDNSReport(ctx context.Context, tx pgx.Tx, node int64, r *pb.DDNSStat
 	}
 	if r.State != "ok" && r.State != "error" && r.State != "partial" && r.State != "pending" && r.State != "disabled" {
 		return errors.New("DDNS 状态无效")
-	}
-	for _, value := range []struct {
-		address string
-		v6      bool
-	}{{r.Ipv4, false}, {r.Ipv6, true}, {r.ObservedIpv4, false}, {r.ObservedIpv6, true}} {
-		if value.address != "" {
-			a, err := netip.ParseAddr(value.address)
-			if err != nil || a.Zone() != "" || a.Is6() != value.v6 || !a.IsGlobalUnicast() || a.IsPrivate() {
-				return errors.New("DDNS 地址无效")
-			}
-		}
 	}
 	var generation int64
 	var config []byte
@@ -205,8 +202,11 @@ func acceptDDNSReport(ctx context.Context, tx pgx.Tx, node int64, r *pb.DDNSStat
 	if json.Unmarshal(previous, &last) == nil && r.CheckedUnix < last.Checked {
 		return nil
 	}
-	var cfg ddns.Config
+	cfg := ddns.DefaultConfig()
 	if err = json.Unmarshal(config, &cfg); err != nil {
+		return err
+	}
+	if err = validateDDNSAddresses(cfg, r); err != nil {
 		return err
 	}
 	report := map[string]any{"generation": r.Generation, "state": r.State, "ipv4": r.Ipv4, "ipv6": r.Ipv6, "observed_ipv4": r.ObservedIpv4, "observed_ipv6": r.ObservedIpv6, "checked_unix": r.CheckedUnix, "updated_unix": r.UpdatedUnix, "error": truncate(strings.TrimSpace(r.Error), 500)}
@@ -233,4 +233,20 @@ func acceptDDNSReport(ctx context.Context, tx pgx.Tx, node int64, r *pb.DDNSStat
 		state = "partial"
 	}
 	return recordNodeIPs(ctx, tx, node, generation, r.CheckedUnix, v4, v6, state, cfg.RecordName, settings)
+}
+
+func validateDDNSAddresses(cfg ddns.Config, r *pb.DDNSStatus) error {
+	for _, value := range []struct {
+		address string
+		v6      bool
+	}{{r.Ipv4, false}, {r.Ipv6, true}, {r.ObservedIpv4, false}, {r.ObservedIpv6, true}} {
+		if value.address == "" {
+			continue
+		}
+		address, err := netip.ParseAddr(value.address)
+		if err != nil || !cfg.AllowsAddress(address, value.v6) {
+			return errors.New("DDNS 地址无效")
+		}
+	}
+	return nil
 }

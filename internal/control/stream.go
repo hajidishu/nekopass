@@ -143,7 +143,7 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 			return nil, e
 		}
 	}
-	_, e = tx.Exec(ctx, "UPDATE nodes SET instance_id=$2,last_seen=now(),applied_revision=$3,sync_error=$4,active_connections=$5,protocol_version=$6,acme_ack=$7 WHERE id=$1", nodeID, r.InstanceId, r.AppliedRevision, truncate(r.Error, 4000), r.ActiveConnections, r.ProtocolVersion, r.AcmeAck)
+	_, e = tx.Exec(ctx, "UPDATE nodes SET instance_id=$2,last_seen=now(),first_connected_at=COALESCE(first_connected_at,now()),applied_revision=$3,sync_error=$4,active_connections=$5,protocol_version=$6,acme_ack=$7 WHERE id=$1", nodeID, r.InstanceId, r.AppliedRevision, truncate(r.Error, 4000), r.ActiveConnections, r.ProtocolVersion, r.AcmeAck)
 	if e != nil {
 		return nil, e
 	}
@@ -294,11 +294,7 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 		return nil, e
 	}
 	if r.Probe != nil && validProbe(r.Probe) {
-		data, err := json.Marshal(r.Probe)
-		if err != nil {
-			return nil, err
-		}
-		if _, e = tx.Exec(ctx, "UPDATE nodes SET probe_received_at=CASE WHEN probe IS DISTINCT FROM $2::jsonb THEN now() ELSE probe_received_at END,probe=$2 WHERE id=$1", nodeID, data); e != nil {
+		if e = acceptProbe(ctx, tx, nodeID, r.Probe, time.Now()); e != nil {
 			return nil, e
 		}
 	}
@@ -445,6 +441,9 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 	if e = appendTLSControl(ctx, tx, nodeID, out); e != nil {
 		return nil, e
 	}
+	if e = appendRandomControl(ctx, tx, nodeID, out); e != nil {
+		return nil, e
+	}
 	// Legacy agents terminate TLS. Do not send them shared listener resources.
 	if r.ProtocolVersion < 21 {
 		out.Node.TlsInbounds = nil
@@ -466,6 +465,9 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 			if rule.TunnelProtocol == "tls_tcp" && rule.Tls.GetPaddingEnabled() && (r.ProtocolVersion < 23 || version < 23) {
 				rule.Enabled = false
 			}
+			if rule.TunnelProtocol == "tls_h3" && rule.Tls.GetQuicPadding().GetEnabled() && (r.ProtocolVersion < 29 || version < 29) {
+				rule.Enabled = false
+			}
 			if rule.Tls != nil {
 				rule.Tls.SequenceAuth = r.ProtocolVersion >= 14 && version >= 14
 			}
@@ -481,7 +483,12 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 	if out.Node.TunnelProtocol == "tls_tcp" && out.Node.Tls.GetPaddingEnabled() && r.ProtocolVersion < 23 {
 		out.Node.TunnelExitEnabled = false
 	}
-	if out.Node.TunnelExitEnabled && tunnel.UDP(out.Node.TunnelProtocol) && r.ProtocolVersion < int32(tunnel.MinimumVersion(out.Node.TunnelProtocol)) {
+	if out.Node.TunnelProtocol == "tls_h3" && out.Node.Tls.GetQuicPadding().GetEnabled() && r.ProtocolVersion < 29 {
+		out.Node.TunnelExitEnabled = false
+		out.TunnelLinks = nil
+		out.EgressRules = nil
+	}
+	if out.Node.TunnelExitEnabled && (tunnel.UDP(out.Node.TunnelProtocol) || tunnel.Random(out.Node.TunnelProtocol) || tunnel.H3(out.Node.TunnelProtocol)) && r.ProtocolVersion < int32(tunnel.MinimumVersion(out.Node.TunnelProtocol)) {
 		out.Node.TunnelExitEnabled = false
 		out.TunnelLinks = nil
 		out.EgressRules = nil

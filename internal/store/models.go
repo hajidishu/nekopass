@@ -114,6 +114,7 @@ type Node struct {
 	UpdateSupported      bool               `json:"update_supported"`
 	IngressRate          int32              `json:"ingress_rate"`
 	EgressRate           int32              `json:"egress_rate"`
+	RandomConfig         []byte             `json:"random_config"`
 }
 
 type NodeAcmeAccount struct {

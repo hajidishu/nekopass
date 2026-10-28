@@ -46,6 +46,9 @@ func telegramMetrics(p *pb.Probe) string {
 	if p.NetworkReady {
 		lines = append(lines, fmt.Sprintf("网络  ↓ %.2f Mbps  ↑ %.2f Mbps", p.RxMbps, p.TxMbps))
 	}
+	if p.DiskIoReady {
+		lines = append(lines, fmt.Sprintf("主磁盘 I/O  读 %s · 写 %s", tgIORate(p.DiskReadBytesPerSecond), tgIORate(p.DiskWriteBytesPerSecond)))
+	}
 	if p.ConnectionsReady {
 		lines = append(lines, fmt.Sprintf("连接  TCP %d · UDP %d", p.TcpConnections, p.UdpSockets))
 	}
@@ -53,6 +56,23 @@ func telegramMetrics(p *pb.Probe) string {
 		lines = append(lines, fmt.Sprintf("负载  %.2f / %.2f / %.2f", p.Load1, p.Load5, p.Load15))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func tgIORate(n float64) string {
+	if n >= 1e9 {
+		return fmt.Sprintf("%.2f GB/s", n/1e9)
+	}
+	return fmt.Sprintf("%.2f MB/s", n/1e6)
+}
+func tgDuration(seconds int64) string {
+	seconds = max(0, seconds)
+	return fmt.Sprintf("%d 天 %02d:%02d:%02d", seconds/86400, seconds%86400/3600, seconds%3600/60, seconds%60)
+}
+func tgProbeDate(value *time.Time) string {
+	if value == nil {
+		return "尚未上报"
+	}
+	return value.In(probeLocation).Format("2006-01-02 15:04:05") + " (UTC+8)"
 }
 
 func telegramHomeKeyboard(panelURL string) *telegram.Keyboard {

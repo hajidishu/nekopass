@@ -30,7 +30,7 @@ func (q *Queries) DeleteSession(ctx context.Context, tokenHash string) error {
 }
 
 const findNodeByToken = `-- name: FindNodeByToken :one
-SELECT id, name, token_hash, instance_id, last_seen, applied_revision, sync_error, active_connections, public_address, enabled, notes, listen_host, port_min, port_max, max_connections, dial_timeout_seconds, idle_timeout_seconds, probe_interval_seconds, disk_path, network_interfaces, probe, probe_received_at, config_revision, token, allow_direct, tunnel_exit_enabled, tunnel_protocol, tunnel_listen_host, tunnel_listen_port, tunnel_public_host, ingress_enabled, tls_config, tls_certificate, tls_private_key, tls_ca, tls_status, tls_error, tls_not_after, tls_generation, protocol_version, acme_ack, agent_version, update_supported, ingress_rate, egress_rate FROM nodes WHERE token_hash=$1
+SELECT id, name, token_hash, instance_id, last_seen, applied_revision, sync_error, active_connections, public_address, enabled, notes, listen_host, port_min, port_max, max_connections, dial_timeout_seconds, idle_timeout_seconds, probe_interval_seconds, disk_path, network_interfaces, probe, probe_received_at, config_revision, token, allow_direct, tunnel_exit_enabled, tunnel_protocol, tunnel_listen_host, tunnel_listen_port, tunnel_public_host, ingress_enabled, tls_config, tls_certificate, tls_private_key, tls_ca, tls_status, tls_error, tls_not_after, tls_generation, protocol_version, acme_ack, agent_version, update_supported, ingress_rate, egress_rate, random_config FROM nodes WHERE token_hash=$1
 `
 
 func (q *Queries) FindNodeByToken(ctx context.Context, tokenHash string) (Node, error) {
@@ -82,6 +82,7 @@ func (q *Queries) FindNodeByToken(ctx context.Context, tokenHash string) (Node, 
 		&i.UpdateSupported,
 		&i.IngressRate,
 		&i.EgressRate,
+		&i.RandomConfig,
 	)
 	return i, err
 }

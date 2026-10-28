@@ -16,35 +16,36 @@ import (
 )
 
 type NodeInput struct {
-	IngressMultiplier     *billing.Rate    `json:"ingress_multiplier,omitempty"`
-	EgressMultiplier      *billing.Rate    `json:"egress_multiplier,omitempty"`
-	UDPIdleTimeoutSeconds int              `json:"udp_idle_timeout_seconds"`
-	TLS                   *TunnelTLSConfig `json:"tls"`
-	Token                 string           `json:"token"`
-	Name                  string           `json:"name"`
-	PublicAddress         string           `json:"public_address"`
-	Notes                 string           `json:"notes"`
-	Enabled               bool             `json:"enabled"`
-	GroupIDs              []int64          `json:"group_ids"`
-	ListenHost            string           `json:"listen_host"`
-	PortMin               int              `json:"port_min"`
-	PortMax               int              `json:"port_max"`
-	MaxConnections        int64            `json:"max_connections"`
-	DialTimeoutSeconds    int              `json:"dial_timeout_seconds"`
-	IdleTimeoutSeconds    int              `json:"idle_timeout_seconds"`
-	ProbeIntervalSeconds  int              `json:"probe_interval_seconds"`
-	DiskPath              string           `json:"disk_path"`
-	NetworkInterfaces     []string         `json:"network_interfaces"`
-	AllowDirect           bool             `json:"allow_direct"`
-	IngressEnabled        bool             `json:"ingress_enabled"`
-	TunnelExitEnabled     bool             `json:"tunnel_exit_enabled"`
-	TunnelTransport       string           `json:"tunnel_transport"`
-	TunnelSecurity        string           `json:"tunnel_security"`
-	TunnelProtocol        string           `json:"tunnel_protocol"`
-	TunnelListenHost      string           `json:"tunnel_listen_host"`
-	TunnelListenPort      int              `json:"tunnel_listen_port"`
-	TunnelPublicHost      string           `json:"tunnel_public_host"`
-	AllowedIngressIDs     []int64          `json:"allowed_ingress_ids"`
+	IngressMultiplier     *billing.Rate       `json:"ingress_multiplier,omitempty"`
+	EgressMultiplier      *billing.Rate       `json:"egress_multiplier,omitempty"`
+	UDPIdleTimeoutSeconds int                 `json:"udp_idle_timeout_seconds"`
+	TLS                   *TunnelTLSConfig    `json:"tls"`
+	Random                *TunnelRandomConfig `json:"random"`
+	Token                 string              `json:"token"`
+	Name                  string              `json:"name"`
+	PublicAddress         string              `json:"public_address"`
+	Notes                 string              `json:"notes"`
+	Enabled               bool                `json:"enabled"`
+	GroupIDs              []int64             `json:"group_ids"`
+	ListenHost            string              `json:"listen_host"`
+	PortMin               int                 `json:"port_min"`
+	PortMax               int                 `json:"port_max"`
+	MaxConnections        int64               `json:"max_connections"`
+	DialTimeoutSeconds    int                 `json:"dial_timeout_seconds"`
+	IdleTimeoutSeconds    int                 `json:"idle_timeout_seconds"`
+	ProbeIntervalSeconds  int                 `json:"probe_interval_seconds"`
+	DiskPath              string              `json:"disk_path"`
+	NetworkInterfaces     []string            `json:"network_interfaces"`
+	AllowDirect           bool                `json:"allow_direct"`
+	IngressEnabled        bool                `json:"ingress_enabled"`
+	TunnelExitEnabled     bool                `json:"tunnel_exit_enabled"`
+	TunnelTransport       string              `json:"tunnel_transport"`
+	TunnelSecurity        string              `json:"tunnel_security"`
+	TunnelProtocol        string              `json:"tunnel_protocol"`
+	TunnelListenHost      string              `json:"tunnel_listen_host"`
+	TunnelListenPort      int                 `json:"tunnel_listen_port"`
+	TunnelPublicHost      string              `json:"tunnel_public_host"`
+	AllowedIngressIDs     []int64             `json:"allowed_ingress_ids"`
 }
 
 var nodeTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{8,128}$`)
@@ -55,7 +56,7 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
 		return
 	}
-	rows, e := s.Pool.Query(r.Context(), `SELECT to_char(n.ingress_rate::numeric/10000,'FM9990.0000') AS ingress_multiplier,to_char(n.egress_rate::numeric/10000,'FM9990.0000') AS egress_multiplier,n.id,n.name,n.agent_version,n.update_supported,(SELECT jsonb_build_object('generation',u.generation,'version',u.version,'state',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN 'unconfirmed' ELSE u.state END,'error',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN '超过 15 分钟未收到更新结果，请检查节点连接及更新日志' ELSE u.error END,'requested_at',u.requested_at,'updated_at',u.updated_at) FROM node_updates u WHERE u.node_id=n.id) AS update_status,n.token,(n.instance_id<>'') AS bound,n.public_address,n.notes,n.enabled,n.listen_host,n.port_min,n.port_max,n.max_connections,n.dial_timeout_seconds,n.idle_timeout_seconds,n.udp_idle_timeout_seconds,n.probe_interval_seconds,n.disk_path,n.network_interfaces,n.ingress_enabled,n.allow_direct,n.tunnel_exit_enabled,n.tunnel_protocol,CASE WHEN n.tunnel_protocol IN ('plain_h2','tls_h2') THEN 'h2' WHEN n.tunnel_protocol IN ('plain_udp','dtls_udp') THEN 'raw_udp' ELSE 'raw_tcp' END AS tunnel_transport,CASE WHEN n.tunnel_protocol IN ('tls_tcp','tls_h2','dtls_udp') THEN 'tls' ELSE 'none' END AS tunnel_security,n.tls_config AS tls,n.tls_status,n.tls_error,n.tls_not_after,n.protocol_version,n.tunnel_listen_host,n.tunnel_listen_port,n.tunnel_public_host,n.last_seen,n.applied_revision,n.config_revision,n.sync_error,n.active_connections,n.probe,n.probe_received_at,COALESCE(n.last_seen>now()-interval '12 seconds',false) AS online,COALESCE((SELECT array_agg(group_id ORDER BY group_id) FROM node_group_members WHERE node_id=n.id),'{}') AS group_ids,COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}') AS allowed_ingress_ids,(SELECT count(*) FROM rules WHERE node_id=n.id) AS rule_count FROM nodes n ORDER BY n.id`)
+	rows, e := s.Pool.Query(r.Context(), `SELECT to_char(n.ingress_rate::numeric/10000,'FM9990.0000') AS ingress_multiplier,to_char(n.egress_rate::numeric/10000,'FM9990.0000') AS egress_multiplier,n.id,n.name,n.agent_version,n.update_supported,(SELECT jsonb_build_object('generation',u.generation,'version',u.version,'state',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN 'unconfirmed' ELSE u.state END,'error',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN '超过 15 分钟未收到更新结果，请检查节点连接及更新日志' ELSE u.error END,'requested_at',u.requested_at,'updated_at',u.updated_at) FROM node_updates u WHERE u.node_id=n.id) AS update_status,n.token,(n.instance_id<>'') AS bound,n.public_address,n.notes,n.enabled,n.listen_host,n.port_min,n.port_max,n.max_connections,n.dial_timeout_seconds,n.idle_timeout_seconds,n.udp_idle_timeout_seconds,n.probe_interval_seconds,n.disk_path,n.network_interfaces,n.ingress_enabled,n.allow_direct,n.tunnel_exit_enabled,n.tunnel_protocol,CASE WHEN n.tunnel_protocol IN ('plain_h2','tls_h2','random_h2') THEN 'h2' WHEN n.tunnel_protocol='tls_h3' THEN 'h3' WHEN n.tunnel_protocol IN ('plain_udp','dtls_udp','random_udp') THEN 'raw_udp' ELSE 'raw_tcp' END AS tunnel_transport,CASE WHEN n.tunnel_protocol IN ('tls_tcp','tls_h2','dtls_udp','tls_h3') THEN 'tls' WHEN n.tunnel_protocol IN ('random_tcp','random_h2','random_udp') THEN 'random' ELSE 'none' END AS tunnel_security,n.random_config AS random,n.tls_config AS tls,n.tls_status,n.tls_error,n.tls_not_after,n.protocol_version,n.tunnel_listen_host,n.tunnel_listen_port,n.tunnel_public_host,n.last_seen,n.applied_revision,n.config_revision,n.sync_error,n.active_connections,n.probe,n.probe_received_at,COALESCE(n.last_seen>now()-interval '12 seconds',false) AS online,COALESCE((SELECT array_agg(group_id ORDER BY group_id) FROM node_group_members WHERE node_id=n.id),'{}') AS group_ids,COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}') AS allowed_ingress_ids,(SELECT count(*) FROM rules WHERE node_id=n.id) AS rule_count FROM nodes n ORDER BY n.id`)
 	s.sendRows(w, rows, e)
 }
 func (s *Server) saveNode(w http.ResponseWriter, r *http.Request) { s.saveNodePart(w, r, "full") }
@@ -122,7 +123,7 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 		}
 	}
 	v.TunnelTransport, v.TunnelSecurity = tunnel.Split(v.TunnelProtocol)
-	if tunnel.UDP(v.TunnelProtocol) && v.TLS != nil && v.TLS.Fingerprint != "" && v.TLS.Fingerprint != "off" {
+	if tunnel.UDP(v.TunnelProtocol) && !tunnel.Random(v.TunnelProtocol) && v.TLS != nil && v.TLS.Fingerprint != "" && v.TLS.Fingerprint != "off" {
 		fail(w, 400, "DTLS 不支持现有 uTLS 指纹选项")
 		return
 	}
@@ -187,7 +188,7 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 			return
 		}
 		if v.TunnelExitEnabled && v.TunnelListenPort != 0 {
-			if e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rule_ports WHERE node_id=$1 AND listen_port=$2 AND protocol=$3)", id, v.TunnelListenPort, map[bool]string{true: "udp", false: "tcp"}[tunnel.UDP(v.TunnelProtocol)]).Scan(&blocked); e != nil {
+			if e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rule_ports WHERE node_id=$1 AND listen_port=$2 AND protocol=ANY($3::text[]))", id, v.TunnelListenPort, tunnel.Networks(v.TunnelProtocol)).Scan(&blocked); e != nil {
 				s.dbError(w, e)
 				return
 			}
@@ -285,6 +286,10 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 		s.dbError(w, err)
 		return
 	}
+	if e = prepareNodeRandom(ctx, tx, id, &v); e != nil {
+		fail(w, 400, publicOperationError(e))
+		return
+	}
 	if e = prepareNodeTLS(ctx, tx, id, &v); e != nil {
 		fail(w, 400, publicOperationError(e))
 		return
@@ -343,7 +348,7 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 		s.dbError(w, e)
 		return
 	}
-	result := map[string]any{"id": id, "token": token}
+	result := map[string]any{"id": id, "token": token, "random": v.Random}
 	writeJSON(w, 200, result)
 }
 func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
@@ -565,11 +570,11 @@ func (s *Server) deleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) nodeStatus(w http.ResponseWriter, r *http.Request) {
 	u := current(r)
 	rows, e := s.Pool.Query(r.Context(), `SELECT g.id AS group_id,g.name AS group_name,n.id,n.name,n.enabled,COALESCE(n.last_seen>now()-interval '12 seconds',false) AS online,
- CASE WHEN n.probe_received_at>now()-make_interval(secs=>GREATEST(n.probe_interval_seconds*3,15)) THEN n.probe ELSE NULL END AS metrics,n.probe_received_at AS updated_at
+ CASE WHEN n.probe_received_at>now()-make_interval(secs=>GREATEST(n.probe_interval_seconds*3,15)) THEN n.probe ELSE NULL END AS metrics,n.probe_received_at AS updated_at,`+probeNodeColumns+`
  FROM user_entitlements u JOIN plans p ON p.id=u.plan_id AND p.enabled
   JOIN user_node_groups pg ON pg.user_id=u.id JOIN node_groups g ON g.id=pg.group_id AND g.enabled
  JOIN node_group_members m ON m.group_id=g.id JOIN nodes n ON n.id=m.node_id
- WHERE u.id=$1 AND u.enabled AND (u.expires_at IS NULL OR u.expires_at>now()) ORDER BY g.sort_order,g.id,n.id`, u.ID)
+ `+probeNodeJoins+` WHERE u.id=$1 AND u.enabled AND (u.expires_at IS NULL OR u.expires_at>now()) ORDER BY g.sort_order,g.id,n.id`, u.ID)
 	s.sendRows(w, rows, e)
 }
 

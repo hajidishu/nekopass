@@ -37,4 +37,30 @@ func TestLiveProbe(t *testing.T) {
 	if p.CpuPercent < 0 || p.CpuPercent > 100 {
 		t.Fatal("CPU range")
 	}
+	if !p.UptimeReady || p.UptimeSeconds < 0 || p.BootId == "" || !p.NetworkCountersReady || len(p.NetworkCounters) == 0 {
+		t.Fatal("uptime or cumulative counters missing", p)
+	}
+	if _, err := diskStatPath("/"); err == nil && (!p.DiskIoReady || p.DiskDevice == "") {
+		t.Fatal("main disk I/O missing", p)
+	}
+}
+
+func TestDiskAndUptimeParsers(t *testing.T) {
+	r, w, ok := diskCounters("1 0 8 1 2 0 16 1 0 0 0")
+	if !ok || r != 4096 || w != 8192 {
+		t.Fatal(r, w, ok)
+	}
+	for _, v := range []string{"", "1 2", "1 0 bad 1 2 0 1", "1 0 18446744073709551615 1 2 0 1"} {
+		if _, _, ok := diskCounters(v); ok {
+			t.Fatal("invalid disk statistics accepted")
+		}
+	}
+	if n, ok := uptimeSeconds("123.99 100.00"); !ok || n != 123 {
+		t.Fatal(n, ok)
+	}
+	for _, v := range []string{"", "-1", "NaN", "Inf", "1e99"} {
+		if _, ok := uptimeSeconds(v); ok {
+			t.Fatal("invalid uptime accepted", v)
+		}
+	}
 }

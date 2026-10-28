@@ -102,7 +102,7 @@ func (s *Server) saveTLSInbound(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var collision bool
-	err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM nodes WHERE id=$1 AND tunnel_exit_enabled AND tunnel_listen_port=$2 AND tunnel_protocol NOT IN ('plain_udp','dtls_udp')) OR EXISTS(SELECT 1 FROM rule_ports WHERE node_id=$1 AND protocol='tcp' AND listen_port=$2 AND COALESCE(tls_inbound_id,0)<>$3)", node, cfg.Port, in.ID).Scan(&collision)
+	err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM nodes WHERE id=$1 AND tunnel_exit_enabled AND tunnel_listen_port=$2 AND tunnel_protocol NOT IN ('plain_udp','dtls_udp','random_udp')) OR EXISTS(SELECT 1 FROM rule_ports WHERE node_id=$1 AND protocol='tcp' AND listen_port=$2 AND COALESCE(tls_inbound_id,0)<>$3)", node, cfg.Port, in.ID).Scan(&collision)
 	if err != nil {
 		s.dbError(w, err)
 		return

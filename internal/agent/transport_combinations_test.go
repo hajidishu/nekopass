@@ -20,7 +20,7 @@ import (
 )
 
 func TestTunnelTransportSecurityCombinations(t *testing.T) {
-	for _, mode := range []string{"plain_tcp", "tls_tcp", "plain_h2", "tls_h2"} {
+	for _, mode := range []string{"random_tcp", "random_h2", "plain_tcp", "tls_tcp", "plain_h2", "tls_h2", "tls_h3"} {
 		t.Run(mode, func(t *testing.T) {
 			target, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
@@ -37,6 +37,7 @@ func TestTunnelTransportSecurityCombinations(t *testing.T) {
 				}
 			}()
 			engine, transport, config, rule := h2Fixture(t, target.Addr().String())
+			randomFixture(t, config, rule, "chacha20-poly1305")
 			config.Revision++
 			config.Node.TunnelProtocol = mode
 			rule.TunnelProtocol = mode
@@ -53,13 +54,16 @@ func TestTunnelTransportSecurityCombinations(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			dial := func(r *pb.Rule) (net.Conn, error) {
+				if tunnel.H3(mode) {
+					return transport.h3.Dial(ctx, ctx, r, target.Addr().String(), false, nil)
+				}
 				if tunnel.H2(mode) {
 					return transport.Dial(ctx, ctx, r, target.Addr().String())
 				}
 				return dialTunnel(ctx, r, target.Addr().String())
 			}
 			fingerprints := []string{"off"}
-			if tunnel.TLS(mode) {
+			if tunnel.TLS(mode) && !tunnel.H3(mode) {
 				fingerprints = []string{"off", "chrome", "firefox"}
 			}
 			for _, fingerprint := range fingerprints {
@@ -128,6 +132,7 @@ func TestPlainH2RejectsCapturedProofAcrossConnections(t *testing.T) {
 		}
 	}()
 	engine, _, config, rule := h2Fixture(t, target.Addr().String())
+	randomFixture(t, config, rule, "chacha20-poly1305")
 	config.Revision++
 	config.Node.TunnelProtocol = "plain_h2"
 	config.Node.Tls.ServerName = ""

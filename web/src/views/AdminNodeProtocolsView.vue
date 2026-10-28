@@ -7,7 +7,7 @@ import {api} from '../api'
 import NodeConnectionFields from '../NodeConnectionFields.vue'
 import NodeProtocolsDialog from '../NodeProtocolsDialog.vue'
 import NodeSecurityDialog from '../NodeSecurityDialog.vue'
-import {nodeTLSDefaults,protocolDefaults,applyNodeTransport,applyNodeSecurity,type NodeProtocolsInput,type NodeSecurityInput,type NodeTransportInput} from '../node-protocol'
+import {nodeTLSConfig,protocolDefaults,applyNodeTransport,applyNodeSecurity,type NodeProtocolsInput,type NodeSecurityInput,type NodeTransportInput} from '../node-protocol'
 type Choice={id:number;name:string;ingress_enabled:boolean}
 type Details={node_id:number;node_name:string;config:NodeProtocolsInput;ingress_nodes:Choice[]}
 const editID=Number(location.pathname.match(/^\/admin\/nodes\/([1-9]\d*)\/protocols$/)?.[1]||0)
@@ -17,7 +17,7 @@ async function load(){
  if(!editID)throw Error('节点地址无效')
  details.value=await api<Details>(`admin/nodes/${editID}/protocols`)
  Object.assign(nodeForm,details.value.config)
- nodeForm.tls={...nodeTLSDefaults(),...(details.value.config.tls||{})}
+ nodeForm.tls=nodeTLSConfig(details.value.config.tls)
  nodeForm.allowed_ingress_ids=[...details.value.config.allowed_ingress_ids]
  nodes.value=details.value.ingress_nodes
 }

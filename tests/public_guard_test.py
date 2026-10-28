@@ -44,6 +44,14 @@ class PublicGuardTests(unittest.TestCase):
             self.assertNotIn(token, repr(findings))
         self.assertTrue(GUARD.inspect('README.md', b'Local password mentioned in prose', known=['password']))
 
+    def test_dependency_public_label_is_narrowly_allowed(self):
+        name = 'third_party/quic-go/internal/handshake/token_protector.go'
+        declaration = 'const ' + 'tokenProtectorHKDFInfo' + ' = '
+        label = 'quic-' + 'go token source'
+        self.assertFalse(GUARD.inspect(name, (declaration + json.dumps(label)).encode()))
+        self.assertTrue(GUARD.inspect(name, (declaration + json.dumps(secrets.token_hex(32))).encode()))
+        self.assertTrue(GUARD.inspect('third_party/unknown/file.go', b'package unknown'))
+
     def setup_repository(self, root):
         self.git(root, 'init', '-q')
         self.git(root, 'config', 'user.name', 'Public guard fixture')

@@ -83,7 +83,7 @@ func TestAgentRecoveryDisableCancelsBlockedPing(t *testing.T) {
 		t.Fatal("disable failed to stop ping")
 	}
 	report, err := engine.Report()
-	if err != nil || report.IpRecoveryStatus == nil || report.IpRecoveryStatus.State != "disabled" || report.ProtocolVersion != 25 {
+	if err != nil || report.IpRecoveryStatus == nil || report.IpRecoveryStatus.State != "disabled" || report.ProtocolVersion != pb.CurrentVersion {
 		t.Fatal("disabled state not reported", err)
 	}
 }

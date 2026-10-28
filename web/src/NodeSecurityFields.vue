@@ -9,12 +9,17 @@ const paddingPlaceholder='stop=8\n0=30-30\n1=100-400\n2=400-500,c,500-1000,c,500
 </script>
 <template>
 <div data-testid="node-security-fields">
-<el-form-item label="安全性"><el-select v-model="nodeForm.tunnel_security" data-testid="node-security"><el-option label="不加密" value="none"/><el-option label="TLS" value="tls"/></el-select></el-form-item>
+<el-form-item label="安全性"><el-select v-model="nodeForm.tunnel_security" :disabled="nodeForm.tunnel_transport==='h3'" data-testid="node-security"><el-option v-if="nodeForm.tunnel_transport!=='h3'" label="不加密" value="none"/><el-option label="TLS" value="tls"/><el-option v-if="nodeForm.tunnel_transport!=='h3'" label="全随机加密" value="random"/></el-select></el-form-item>
+    <template v-if="nodeForm.tunnel_security==='random'&&nodeForm.random">
+     <div class="form-section-title">全随机加密设置</div>
+     <el-form-item label="加密算法"><el-select v-model="nodeForm.random.cipher" data-testid="random-cipher"><el-option label="ChaCha20-Poly1305" value="chacha20-poly1305"/><el-option label="AES-256-GCM" value="aes-256-gcm"/></el-select></el-form-item>
+     <el-form-item label="加密密钥"><el-input v-model="nodeForm.random.key" type="password" show-password placeholder="留空自动生成" data-testid="random-key"/><span class="field-tip">32 字节 Base64 密钥，由主控统一下发给关联入口。支持 raw(tcp)、h2 和 raw(udp)。</span></el-form-item>
+    </template>
     <template v-if="nodeForm.tunnel_security==='tls'">
     <div class="form-section-title">TLS 设置</div>
     <p class="field-tip">所有入口连接此出口时使用以下设置。</p>
     <div class="form-grid">
-    <el-form-item label="uTLS 指纹">
+    <el-form-item v-if="nodeForm.tunnel_transport!=='h3'" label="uTLS 指纹">
     <el-select v-model="nodeForm.tls.fingerprint" :disabled="nodeForm.tunnel_transport==='raw_udp'">
     <el-option label="关闭（标准 TLS）" value="off"/>
     <el-option label="Chrome（库内预设）" value="chrome"/>
@@ -31,6 +36,15 @@ const paddingPlaceholder='stop=8\n0=30-30\n1=100-400\n2=400-500,c,500-1000,c,500
     <el-input v-model="paddingText" type="textarea" :rows="9" :placeholder="paddingPlaceholder" data-testid="tls-padding-scheme"/>
     <span class="field-tip">一行一条，留空使用默认策略。stop 最大 64，认证填充最多 2048 字节，其他分片最大 16384 字节。设置由主控统一下发到两端。</span>
     </el-form-item>
+    </template>
+    <template v-if="nodeForm.tunnel_transport==='h3'">
+    <el-form-item label="HTTP/3 Padding"><el-switch v-model="nodeForm.tls.quic_padding.enabled" data-testid="h3-padding-enabled"/><span class="field-tip">对 QUIC 数据包进行自适应填充，入口与出口使用同一配置。</span></el-form-item>
+    <div v-if="nodeForm.tls.quic_padding.enabled" class="form-grid">
+    <el-form-item label="单包最多填充（字节）"><el-input-number v-model="nodeForm.tls.quic_padding.max_padding" :min="1" :max="1400" :precision="0" data-testid="h3-padding-max"/></el-form-item>
+    <el-form-item label="突发填充预算（字节）"><el-input-number v-model="nodeForm.tls.quic_padding.burst_bytes" :min="nodeForm.tls.quic_padding.max_padding" :max="65536" :precision="0" data-testid="h3-padding-burst"/></el-form-item>
+    <el-form-item label="预算补充速率（字节/秒）"><el-input-number v-model="nodeForm.tls.quic_padding.bytes_per_second" :min="1" :max="65536" :precision="0" data-testid="h3-padding-rate"/></el-form-item>
+    <p class="field-tip">预算按每条 QUIC 连接、每个发送方向分别计算。填充不计入用户流量用量。</p>
+    </div>
     </template>
     <div class="form-section-title">证书设置</div>
 
@@ -94,7 +108,7 @@ const paddingPlaceholder='stop=8\n0=30-30\n1=100-400\n2=400-500,c,500-1000,c,500
     </el-form-item>
     </template>
     </template>
- <template v-if="nodeForm.tunnel_transport!=='raw_udp'&&(nodeForm.tunnel_transport==='h2'||nodeForm.tunnel_security==='tls')">
+ <template v-if="nodeForm.tunnel_security!=='random'&&nodeForm.tunnel_transport!=='raw_udp'&&(nodeForm.tunnel_transport==='h2'||nodeForm.tunnel_security==='tls')">
   <div class="form-section-title">未认证访问 / Fallback</div>
   <el-form-item label="Fallback 网站地址">
    <el-input v-model="nodeForm.tls.fallback_url" placeholder="https://www.example.com（留空返回普通 404）"/>

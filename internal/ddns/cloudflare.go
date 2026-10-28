@@ -20,6 +20,8 @@ type Client struct {
 	API     *http.Client
 	IPv4    *http.Client
 	IPv6    *http.Client
+	// InterfaceIPs may override OS discovery, for example in integration tests.
+	InterfaceIPs func() ([]netip.Addr, error)
 }
 
 func NewClient() *Client {
@@ -69,7 +71,7 @@ func (c *Client) Address(ctx context.Context, source string, v6 bool) (string, e
 		return "", errors.New("公网 IP 响应不是有效地址")
 	}
 	address = address.Unmap()
-	if address.Is6() != v6 || !address.IsGlobalUnicast() || address.IsPrivate() {
+	if !DefaultConfig().AllowsAddress(address, v6) {
 		return "", errors.New("公网 IP 地址类型错误或不是公网地址")
 	}
 	return address.String(), nil
@@ -78,13 +80,19 @@ func (c *Client) Address(ctx context.Context, source string, v6 bool) (string, e
 // AddressWithRetry tolerates temporary loss of connectivity during IP changes.
 // Callers publish status only after this operation completes, never per attempt.
 func (c *Client) AddressWithRetry(ctx context.Context, source string, v6 bool) (string, error) {
+	return addressWithRetry(ctx, func(ctx context.Context) (string, error) {
+		return c.Address(ctx, source, v6)
+	})
+}
+
+func addressWithRetry(ctx context.Context, lookup func(context.Context) (string, error)) (string, error) {
 	var last error
 	for attempt := 0; attempt < 3; attempt++ {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
 		request, cancel := context.WithTimeout(ctx, 15*time.Second)
-		address, err := c.Address(request, source, v6)
+		address, err := lookup(request)
 		cancel()
 		if err == nil {
 			return address, nil

@@ -215,6 +215,7 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	api.HandleFunc("DELETE /api/v1/admin/nodes/{id}/tls-inbounds", s.deleteTLSInbound)
 	api.HandleFunc("PUT /api/v1/admin/nodes/{id}/tls-policy", s.tlsInboundPolicy)
 	api.HandleFunc("GET /api/v1/node-status", s.nodeStatus)
+	api.HandleFunc("GET /api/v1/node-status/{id}/history", s.nodeProbeHistory)
 	api.HandleFunc("GET /api/v1/admin/plans", s.plans)
 	api.HandleFunc("GET /api/v1/admin/payment-interfaces", s.paymentInterfaces)
 	api.HandleFunc("GET /api/v1/admin/payment-methods", s.paymentMethods)

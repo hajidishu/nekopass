@@ -39,7 +39,8 @@ func camouflageHostMatches(got, expected string) bool {
 	return strings.EqualFold(strings.TrimSuffix(u.Hostname(), "."), strings.TrimSuffix(v.Hostname(), ".")) && (v.Port() == "" || u.Port() == v.Port())
 }
 
-func (e *Engine) camouflage(w http.ResponseWriter, r *http.Request) {
+func (e *Engine) camouflage(w http.ResponseWriter, r *http.Request) { e.camouflageWithAltSvc(w, r, "") }
+func (e *Engine) camouflageWithAltSvc(w http.ResponseWriter, r *http.Request, altSvc string) {
 	node := e.node.Load()
 	if node == nil || node.Tls == nil || node.Tls.FallbackUrl == "" {
 		ordinary404(w, r)
@@ -64,6 +65,11 @@ func (e *Engine) camouflage(w http.ResponseWriter, r *http.Request) {
 		p.Out.Header.Del("X-Stream-Ingress")
 		p.Out.Header.Del("X-Stream-Nonce")
 		p.Out.Header.Del("X-Stream-Binding")
+	}, ModifyResponse: func(response *http.Response) error {
+		if altSvc != "" {
+			response.Header.Set("Alt-Svc", altSvc)
+		}
+		return nil
 	}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) { ordinary404(w, r) }}
 	proxy.ServeHTTP(w, r)
 }

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/nekopass/nekopass/internal/padding"
+	"github.com/nekopass/nekopass/internal/quicpadding"
 	"math/big"
 	"net"
 	"net/url"
@@ -20,39 +21,54 @@ import (
 )
 
 type TunnelTLSConfig struct {
-	PaddingEnabled      bool              `json:"padding_enabled"`
-	PaddingScheme       []string          `json:"padding_scheme"`
-	ServerName          string            `json:"server_name"`
-	ClientSNI           string            `json:"client_sni"`
-	Fingerprint         string            `json:"fingerprint"`
-	CertificateMode     string            `json:"certificate_mode"`
-	Certificate         string            `json:"certificate"`
-	PrivateKey          string            `json:"private_key"`
-	RootCA              string            `json:"root_ca"`
-	Path                string            `json:"path"`
-	Host                string            `json:"host"`
-	FallbackURL         string            `json:"fallback_url"`
-	PublicPort          int               `json:"public_port"`
-	PoolSize            int               `json:"pool_size"`
-	StreamWindowMiB     int               `json:"stream_window_mib"`
-	ConnectionWindowMiB int               `json:"connection_window_mib"`
-	MaxStreams          int               `json:"max_streams"`
-	SiteTitle           string            `json:"site_title"`
-	ACMEEmail           string            `json:"acme_email"`
-	ACMEDirectory       string            `json:"acme_directory"`
-	ACMERootCA          string            `json:"acme_root_ca"`
-	HTTPChallengePort   int               `json:"http_challenge_port"`
-	DNSProvider         string            `json:"dns_provider"`
-	DNSCredentials      map[string]string `json:"dns_credentials"`
+	QUICPadding         quicpadding.Config `json:"quic_padding"`
+	PaddingEnabled      bool               `json:"padding_enabled"`
+	PaddingScheme       []string           `json:"padding_scheme"`
+	ServerName          string             `json:"server_name"`
+	ClientSNI           string             `json:"client_sni"`
+	Fingerprint         string             `json:"fingerprint"`
+	CertificateMode     string             `json:"certificate_mode"`
+	Certificate         string             `json:"certificate"`
+	PrivateKey          string             `json:"private_key"`
+	RootCA              string             `json:"root_ca"`
+	Path                string             `json:"path"`
+	Host                string             `json:"host"`
+	FallbackURL         string             `json:"fallback_url"`
+	PublicPort          int                `json:"public_port"`
+	PoolSize            int                `json:"pool_size"`
+	StreamWindowMiB     int                `json:"stream_window_mib"`
+	ConnectionWindowMiB int                `json:"connection_window_mib"`
+	MaxStreams          int                `json:"max_streams"`
+	SiteTitle           string             `json:"site_title"`
+	ACMEEmail           string             `json:"acme_email"`
+	ACMEDirectory       string             `json:"acme_directory"`
+	ACMERootCA          string             `json:"acme_root_ca"`
+	HTTPChallengePort   int                `json:"http_challenge_port"`
+	DNSProvider         string             `json:"dns_provider"`
+	DNSCredentials      map[string]string  `json:"dns_credentials"`
+}
+
+// Certificate jobs use this identity to reject stale issuance results. Transport
+// settings have their own node revision and must not invalidate an ACME order.
+func (v TunnelTLSConfig) certificateSettings() TunnelTLSConfig {
+	return TunnelTLSConfig{
+		ServerName: v.ServerName, CertificateMode: v.CertificateMode,
+		Certificate: v.Certificate, PrivateKey: v.PrivateKey, RootCA: v.RootCA,
+		ACMEEmail: v.ACMEEmail, ACMEDirectory: v.ACMEDirectory, ACMERootCA: v.ACMERootCA,
+		HTTPChallengePort: v.HTTPChallengePort, DNSProvider: v.DNSProvider, DNSCredentials: v.DNSCredentials,
+	}
 }
 
 func DefaultTunnelTLS() TunnelTLSConfig {
-	return TunnelTLSConfig{Fingerprint: "off", CertificateMode: "self_signed", Path: "/api/stream", PoolSize: 2,
+	return TunnelTLSConfig{QUICPadding: quicpadding.Defaults(), Fingerprint: "off", CertificateMode: "self_signed", Path: "/api/stream", PoolSize: 2,
 		StreamWindowMiB: 16, ConnectionWindowMiB: 64, MaxStreams: 256, SiteTitle: "Welcome", HTTPChallengePort: 80,
 		ACMEDirectory: "https://acme-v02.api.letsencrypt.org/directory", DNSCredentials: map[string]string{}}
 }
 
 func (v *TunnelTLSConfig) normalize() error {
+	if err := v.QUICPadding.Normalize(); err != nil {
+		return err
+	}
 	if v.PaddingEnabled && len(v.PaddingScheme) == 0 {
 		v.PaddingScheme = padding.Defaults()
 	}

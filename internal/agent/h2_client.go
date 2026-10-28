@@ -61,18 +61,27 @@ type h2Pool struct {
 	next  int
 }
 type h2Transport struct {
-	mu     sync.Mutex
-	pools  map[string]*h2Pool
-	closed bool
+	randomUDP *randomUDPPool
+	h3        *h3Transport
+	mu        sync.Mutex
+	pools     map[string]*h2Pool
+	closed    bool
 }
 
-func newH2Transport() *h2Transport { return &h2Transport{pools: map[string]*h2Pool{}} }
+func newH2Transport() *h2Transport {
+	return &h2Transport{pools: map[string]*h2Pool{}, randomUDP: newRandomUDPPool(), h3: newH3Transport()}
+}
 func h2PoolKey(rule *pb.Rule) string {
 	encoded, _ := json.Marshal(rule.Tls)
+	if tunnel.Random(rule.TunnelProtocol) || tunnel.H3(rule.TunnelProtocol) {
+		encoded, _ = json.Marshal([]any{rule.Tls, rule.Random, rule.IngressNodeId, rule.EgressNodeId, rule.TunnelToken})
+	}
 	sum := sha256.Sum256(encoded)
 	return rule.TunnelProtocol + net.JoinHostPort(rule.TunnelHost, strconv.Itoa(int(rule.TunnelPort))) + hex.EncodeToString(sum[:])
 }
 func (t *h2Transport) Prune(rules []*pb.Rule) {
+	t.randomUDP.Prune(rules)
+	t.h3.Prune(rules)
 	wanted := map[string]bool{}
 	for _, rule := range rules {
 		for _, p := range rule.EgressPeers {
@@ -112,6 +121,8 @@ func (t *h2Transport) Prune(rules []*pb.Rule) {
 	}
 }
 func (t *h2Transport) Close() {
+	t.randomUDP.Close()
+	t.h3.Close()
 	t.mu.Lock()
 	t.closed = true
 	for _, pool := range t.pools {
@@ -317,6 +328,12 @@ func dialH2Peer(ctx context.Context, rule *pb.Rule) (*h2Peer, error) {
 	var exporter []byte
 	if tunnel.TLS(rule.TunnelProtocol) {
 		conn, exporter, err = dialTunnelTLS(ctx, raw, cfg, roots)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if tunnel.Random(rule.TunnelProtocol) {
+		conn, err = dialRandom(ctx, raw, rule)
 		if err != nil {
 			return nil, err
 		}
