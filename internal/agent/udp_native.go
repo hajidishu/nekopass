@@ -22,6 +22,7 @@ import (
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/tunnel"
 	dtls "github.com/pion/dtls/v3"
+	"github.com/quic-go/quic-go/brutal"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -170,6 +171,9 @@ func (e *Engine) readNativeUDP(l *nativeUDPListener) {
 		if err != nil || open.Network != "udp" || open.Ingress != link.ingress || open.Time < time.Now().Unix()-120 || open.Time > time.Now().Unix()+120 || !h2RuleAllowed(policy, open.h2Open) {
 			continue
 		}
+		if open.Brutal != link.congestion.GetBrutal() {
+			continue
+		}
 		temporary := newNativePeer(l.ctx, l.conn, source, link.key, id, &e.udpQueued, false)
 		if !l.validCookie(open.Cookie, source, route, id) {
 			temporary.send(nativeChallenge, l.cookie(source, route, id, time.Now().Unix()/60))
@@ -177,6 +181,11 @@ func (e *Engine) readNativeUDP(l *nativeUDPListener) {
 			continue
 		}
 		if !e.takeUDPNonce(link.key + hex.EncodeToString(id[:])) {
+			temporary.Close()
+			continue
+		}
+		temporary.brutal, err = newDatagramBrutal(link.congestion, e.brutalBudget)
+		if err != nil {
 			temporary.Close()
 			continue
 		}
@@ -211,8 +220,9 @@ func (e *Engine) readNativeUDP(l *nativeUDPListener) {
 }
 
 type nativeLink struct {
-	ingress int64
-	key     string
+	ingress    int64
+	key        string
+	congestion *pb.TunnelCongestion
 }
 
 func (e *Engine) runNativeUDP(l *nativeUDPListener, peer *nativePeer, open nativeGateOpen) {
@@ -273,7 +283,7 @@ func (e *Engine) runNativeUDP(l *nativeUDPListener, peer *nativePeer, open nativ
 	})
 }
 
-func dialNativeDatagram(ctx, lifetime context.Context, r *pb.Rule, target string, queued *atomic.Int64) (net.Conn, error) {
+func dialNativeDatagram(ctx, lifetime context.Context, r *pb.Rule, target string, queued *atomic.Int64, budgets ...*brutal.Budget) (net.Conn, error) {
 	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(r.TunnelHost, strconv.Itoa(int(r.TunnelPort))))
 	if err != nil {
 		return nil, err
@@ -292,6 +302,16 @@ func dialNativeDatagram(ctx, lifetime context.Context, r *pb.Rule, target string
 		return nil, err
 	}
 	peer := newNativePeer(lifetime, socket, addr, r.TunnelToken, id, queued, true)
+	var budget *brutal.Budget
+	if len(budgets) > 0 {
+		budget = budgets[0]
+	}
+	peer.brutal, err = newDatagramBrutal(r.Congestion, budget)
+	if err != nil {
+		socket.Close()
+		peer.Close()
+		return nil, err
+	}
 	success := false
 	defer func() {
 		if !success {
@@ -323,6 +343,7 @@ func dialNativeDatagram(ctx, lifetime context.Context, r *pb.Rule, target string
 		}
 	}()
 	open := nativeGateOpen{udpStreamOpen: udpStreamOpen{h2Open: h2Open{Network: "udp", Ingress: r.IngressNodeId, Rule: r.Id, User: r.UserId, Epoch: r.QuotaEpoch, Target: target}, Time: time.Now().Unix()}}
+	open.Brutal = peer.brutal != nil
 	accepted := false
 	for !accepted {
 		if ctx.Err() != nil {

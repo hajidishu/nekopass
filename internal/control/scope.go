@@ -36,6 +36,6 @@ func (s *Server) managedUser(next http.HandlerFunc) http.HandlerFunc {
 }
 func (s *Server) ruleNodes(w http.ResponseWriter, r *http.Request) {
 	u := ruleActor(r)
-	rows, e := s.Pool.Query(r.Context(), `SELECT to_char(n.ingress_rate::numeric/10000,'FM9990.0000') AS ingress_multiplier,to_char(n.egress_rate::numeric/10000,'FM9990.0000') AS egress_multiplier,n.id,n.name,n.public_address,n.port_min,n.port_max,n.ingress_enabled,n.allow_direct,n.tunnel_exit_enabled,n.tunnel_protocol,COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}') AS allowed_ingress_ids,(n.last_seen>now()-interval '12 seconds') AS online FROM nodes n JOIN user_nodes un ON un.node_id=n.id WHERE un.user_id=$1 ORDER BY n.id`, u.ID)
+	rows, e := s.Pool.Query(r.Context(), `SELECT to_char(n.ingress_rate::numeric/10000,'FM9990.0000') AS ingress_multiplier,to_char(n.egress_rate::numeric/10000,'FM9990.0000') AS egress_multiplier,n.id,n.name,n.public_address,n.port_min,n.port_max,n.ingress_enabled,n.deny_udp_ingress_creation,n.allow_direct,n.tunnel_exit_enabled,n.tunnel_protocol,COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}') AS allowed_ingress_ids,(n.last_seen>now()-interval '12 seconds') AS online FROM nodes n JOIN user_nodes un ON un.node_id=n.id WHERE un.user_id=$1 ORDER BY n.id`, u.ID)
 	s.sendRows(w, rows, e)
 }

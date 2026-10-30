@@ -20,6 +20,7 @@ function clearField(key:keyof RuleBatchPatch){delete form[key]}
 const hasSharedTLS=computed(()=>props.rules.some(r=>!!r.tls_inbound_id))
 const hasUDP=computed(()=>props.rules.some(r=>r.protocol==='udp'))
 const ingressNodes=computed(()=>props.nodes.filter(n=>n.ingress_enabled))
+function udpIngressAllowed(node:RuleNode){return !node.deny_udp_ingress_creation||props.rules.every(r=>r.protocol!=='udp'||r.node_id===node.id)}
 const ingressIDs=computed(()=>[...new Set(props.rules.map(r=>form.node_id??r.node_id))])
 const directAllowed=computed(()=>ingressIDs.value.every(id=>props.nodes.some(n=>n.id===id&&n.allow_direct)))
 const exitNodes=computed(()=>props.nodes.filter(n=>n.tunnel_exit_enabled&&
@@ -31,6 +32,7 @@ const selectedEgress=computed({get:()=>form.egress_node_id==null&&form.egress_gr
 watch(exitChoices,()=>{if(selectedEgress.value&&!exitChoices.value.some(o=>o.value===selectedEgress.value))selectedEgress.value=undefined})
 function submit(){
  if(props.busy)return
+ if(form.node_id&&ingressNodes.value.some(n=>n.id===form.node_id&&!udpIngressAllowed(n))){ElMessage.warning('所选入口禁止创建新的 UDP 入站规则');return}
  const patch:RuleBatchPatch={}
  for(const key of ['node_id','egress_node_id','egress_group_id','balance','proxy_accept_enabled','proxy_send_enabled'] as const){
   const value=form[key]
@@ -47,7 +49,7 @@ function submit(){
   <el-form label-position="top" :disabled="busy" @submit.prevent="submit">
    <el-form-item label="入口（留空不更新）">
     <el-select v-model="form.node_id" clearable @clear="clearField('node_id')" placeholder="保持原入口" :disabled="hasSharedTLS" data-testid="batch-rule-ingress">
-     <el-option v-for="n in ingressNodes" :key="n.id" :label="n.name" :value="n.id"/>
+     <el-option v-for="n in ingressNodes" :key="n.id" :label="n.name+(!udpIngressAllowed(n)?'（禁止新增 UDP 入站）':'')" :value="n.id" :disabled="!udpIngressAllowed(n)"/>
     </el-select>
     <span class="field-tip">{{hasSharedTLS?'共享 TLS 规则切换入口时，请逐条选择新节点的共享 TLS 入口。':'更换入口会重新分配监听端口；选择原入口时保留端口。'}}</span>
    </el-form-item>

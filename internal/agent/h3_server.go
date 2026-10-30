@@ -253,6 +253,15 @@ func (e *Engine) handleH3(l *h3Listener, w http.ResponseWriter, r *http.Request)
 	if open.Network == "udp" && !health {
 		w.Header().Set(http3.CapsuleProtocolHeader, "?1")
 	}
+	if cfg := policy.congestion[open.Ingress]; node.BrutalEnabled || cfg.GetBrutal() {
+		if !validBrutal(cfg) {
+			fallback()
+			return
+		}
+		if err = session.conn.EnableBrutal(cfg.SendBps, e.brutalBudget); err != nil {
+			return
+		}
+	}
 	w.WriteHeader(http.StatusOK)
 	stream := w.(http3.HTTPStreamer).HTTPStream()
 	// quic-go's request context follows the response send direction. Once the

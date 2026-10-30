@@ -194,9 +194,11 @@ func putRule(ctx context.Context, tx pgx.Tx, actor store.User, id int64, in Rule
 			return 0, errors.New("目标 IP 位于管理员禁止的网段")
 		}
 	}
+	var oldNodeID int64
+	var oldProtocol string
 	if id != 0 {
 		var owner int64
-		if e := tx.QueryRow(ctx, "SELECT user_id FROM rules WHERE id=$1 AND ($2 OR user_id=$3) FOR UPDATE", id, actor.IsAdmin, actor.ID).Scan(&owner); e != nil {
+		if e := tx.QueryRow(ctx, "SELECT user_id,node_id,protocol FROM rules WHERE id=$1 AND ($2 OR user_id=$3) FOR UPDATE", id, actor.IsAdmin, actor.ID).Scan(&owner, &oldNodeID, &oldProtocol); e != nil {
 			return 0, errors.New("规则不存在或无权操作")
 		}
 		if owner != in.UserID {
@@ -221,11 +223,17 @@ func putRule(ctx context.Context, tx pgx.Tx, actor store.User, id int64, in Rule
 	if !allowed {
 		return 0, errors.New("用户没有此入口节点的权限")
 	}
-	if e := tx.QueryRow(ctx, "SELECT ingress_enabled FROM nodes WHERE id=$1", in.NodeID).Scan(&allowed); e != nil {
+	var denyUDP bool
+	if e := tx.QueryRow(ctx, "SELECT ingress_enabled,deny_udp_ingress_creation FROM nodes WHERE id=$1", in.NodeID).Scan(&allowed, &denyUDP); e != nil {
 		return 0, e
 	}
 	if !allowed {
 		return 0, errors.New("此节点未启用入口功能，只能选择其他入口")
+	}
+	// This is an admission policy: existing UDP rules on this ingress remain usable.
+	// Copies, TCP-to-UDP changes and moves from another ingress need new admission.
+	if denyUDP && in.Protocol == "udp" && !(id != 0 && oldNodeID == in.NodeID && oldProtocol == "udp") {
+		return 0, errors.New("此节点禁止创建新的 UDP 入站规则，请选择其他入口")
 	}
 	if in.EgressGroupID != 0 {
 		if e := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM user_node_groups ug JOIN node_groups g ON g.id=ug.group_id AND g.enabled JOIN node_group_members m ON m.group_id=g.id AND m.role<>'disabled' JOIN nodes n ON n.id=m.node_id AND n.enabled AND n.tunnel_exit_enabled JOIN node_tunnel_links l ON l.egress_node_id=n.id AND l.ingress_node_id=$2 JOIN user_nodes un ON un.node_id=n.id AND un.user_id=$1 WHERE ug.user_id=$1 AND ug.group_id=$3 AND n.id<>$2 AND ($4='udp' OR n.tunnel_protocol NOT IN ('plain_udp','dtls_udp','random_udp')))`, in.UserID, in.NodeID, in.EgressGroupID, in.Protocol).Scan(&allowed); e != nil {
@@ -373,6 +381,10 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
  WHEN r.tls_inbound_id IS NOT NULL AND ti.config->>'enabled'<>'true' THEN 'inbound_disabled'
  WHEN (r.proxy_accept<>'off' OR ti.config->>'proxy_accept'='auto') AND $4 THEN 'proxy_untrusted'
  WHEN en.tunnel_protocol='tls_tcp' AND en.tls_config->>'padding_enabled'='true' AND (n.protocol_version<23 OR en.protocol_version<23) THEN 'upgrade_required'
+ WHEN en.brutal_enabled AND en.tunnel_protocol IN ('tls_h3','plain_udp','dtls_udp','random_udp') AND (n.protocol_version<32 OR en.protocol_version<32) THEN 'upgrade_required'
+ WHEN en.brutal_enabled AND en.tunnel_protocol IN ('tls_h3','plain_udp','dtls_udp','random_udp') AND (n.bandwidth_up_mbps=0 OR n.bandwidth_down_mbps=0 OR en.bandwidth_up_mbps=0 OR en.bandwidth_down_mbps=0) THEN 'bandwidth_required'
+ WHEN r.egress_group_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM rule_outbound_routes o JOIN nodes x ON x.id=o.egress_node_id WHERE o.rule_id=r.id AND (NOT x.brutal_enabled OR x.tunnel_protocol NOT IN ('tls_h3','plain_udp','dtls_udp','random_udp') OR (n.protocol_version>=32 AND x.protocol_version>=32))) THEN 'upgrade_required'
+ WHEN r.egress_group_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM rule_outbound_routes o JOIN nodes x ON x.id=o.egress_node_id WHERE o.rule_id=r.id AND (NOT x.brutal_enabled OR x.tunnel_protocol NOT IN ('tls_h3','plain_udp','dtls_udp','random_udp') OR (n.bandwidth_up_mbps>0 AND n.bandwidth_down_mbps>0 AND x.bandwidth_up_mbps>0 AND x.bandwidth_down_mbps>0))) THEN 'bandwidth_required'
  WHEN en.tunnel_protocol='tls_h3' AND en.tls_config->'quic_padding'->>'enabled'='true' AND (n.protocol_version<29 OR en.protocol_version<29) THEN 'upgrade_required'
  WHEN r.egress_group_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM rule_outbound_routes o JOIN nodes x ON x.id=o.egress_node_id WHERE o.rule_id=r.id AND (x.tunnel_protocol<>'tls_h3' OR x.tls_config->'quic_padding'->>'enabled' IS DISTINCT FROM 'true' OR (n.protocol_version>=29 AND x.protocol_version>=29))) THEN 'upgrade_required'
  WHEN en.tunnel_protocol='tls_h3' AND (n.protocol_version<28 OR en.protocol_version<28) THEN 'upgrade_required'

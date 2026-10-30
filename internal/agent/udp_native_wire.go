@@ -21,12 +21,14 @@ const nativeChallenge = 2
 const nativeAccepted = 3
 const nativeData = 4
 const nativeClose = 5
+const nativeFeedback = 6
 
 type nativeMessage struct {
 	kind    byte
 	payload []byte
 }
 type nativePeer struct {
+	brutal                      *datagramBrutal
 	ctx                         context.Context
 	cancel                      context.CancelFunc
 	conn                        *net.UDPConn
@@ -49,6 +51,7 @@ type udpParts struct {
 	fragments [][]byte
 	seen      int
 	bytes     int
+	queued    int64
 	expires   time.Time
 }
 
@@ -86,13 +89,23 @@ func (p *nativePeer) send(kind byte, body []byte) error {
 	if !deadline.IsZero() && time.Now().After(deadline) {
 		return context.DeadlineExceeded
 	}
-	total := max(1, (len(body)+nativePartSize-1)/nativePartSize)
+	partSize := nativePartSize
+	if p.brutal != nil && kind == nativeData {
+		partSize -= brutalDataHeader
+	}
+	total := max(1, (len(body)+partSize-1)/partSize)
 	msg := p.message.Add(1)
 	for part := 0; part < total; part++ {
 		if p.ctx.Err() != nil {
 			return net.ErrClosed
 		}
-		chunk := body[min(len(body), part*nativePartSize):min(len(body), (part+1)*nativePartSize)]
+		chunk := body[min(len(body), part*partSize):min(len(body), (part+1)*partSize)]
+		if p.brutal != nil && kind == nativeData {
+			if err := p.brutal.wait(p.ctx, deadline, nativeHeader+len(chunk)+brutalDataHeader+nativeMAC); err != nil {
+				return err
+			}
+			chunk = p.brutal.frame(chunk)
+		}
 		wire := make([]byte, nativeHeader+len(chunk)+nativeMAC)
 		copy(wire[:16], p.route[:])
 		copy(wire[16:32], p.id[:])
@@ -130,20 +143,21 @@ func decodeNative(wire []byte, key string, ingressToExit bool) (route, id [16]by
 	msg = binary.BigEndian.Uint32(wire[41:45])
 	index, total = int(wire[45]), int(wire[46])
 	body = wire[nativeHeader : len(wire)-nativeMAC]
-	ok = seq != 0 && total > 0 && total <= 60 && index < total && kind >= nativeOpen && kind <= nativeClose
+	ok = seq != 0 && total > 0 && total <= 61 && index < total && kind >= nativeOpen && kind <= nativeFeedback
 	return
 }
 
 // Caller holds mu; control and data payloads use the same node-wide budget.
 func (p *nativePeer) queueControlLocked(kind byte, body []byte) {
-	if p.queued.Add(int64(len(body))) > maxQueuedUDPBytes {
-		p.queued.Add(-int64(len(body)))
+	charge := udpQueueCharge(len(body))
+	if p.queued.Add(charge) > maxQueuedUDPBytes {
+		p.queued.Add(-charge)
 		return
 	}
 	select {
 	case p.queue <- nativeMessage{kind: kind, payload: append([]byte{}, body...)}:
 	default:
-		p.queued.Add(-int64(len(body)))
+		p.queued.Add(-charge)
 	}
 }
 
@@ -159,6 +173,26 @@ func (p *nativePeer) receive(seq uint64, kind byte, msg uint32, index, total int
 	if p.ctx.Err() != nil || !p.replay.takeSequence(seq) {
 		return
 	}
+	if p.brutal != nil {
+		if kind == nativeFeedback {
+			if total == 1 {
+				p.brutal.feedback(body)
+			}
+			return
+		}
+		if kind == nativeData {
+			plain, feedback, ok := p.brutal.receive(body)
+			if !ok {
+				return
+			}
+			body = plain
+			if feedback != nil {
+				_ = p.send(nativeFeedback, feedback)
+			}
+		}
+	} else if kind == nativeFeedback {
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.ctx.Err() != nil {
@@ -167,7 +201,7 @@ func (p *nativePeer) receive(seq uint64, kind byte, msg uint32, index, total int
 	now := time.Now()
 	for id, parts := range p.parts {
 		if parts.expires.Before(now) {
-			p.queued.Add(-int64(parts.bytes))
+			p.queued.Add(-parts.queued)
 			delete(p.parts, id)
 		}
 	}
@@ -189,17 +223,20 @@ func (p *nativePeer) receive(seq uint64, kind byte, msg uint32, index, total int
 	if len(parts.fragments) != total || parts.fragments[index] != nil || parts.bytes+len(body) > maxDatagram {
 		return
 	}
-	if p.queued.Add(int64(len(body))) > maxQueuedUDPBytes {
-		p.queued.Add(-int64(len(body)))
+	charge := udpQueueCharge(len(body))
+	if p.queued.Add(charge) > maxQueuedUDPBytes {
+		p.queued.Add(-charge)
 		return
 	}
 	parts.fragments[index] = append([]byte{}, body...)
 	parts.bytes += len(body)
+	parts.queued += charge
 	parts.seen++
 	if parts.seen == total {
 		// Reserve the assembled copy while the fragments are still live.
-		if p.queued.Add(int64(parts.bytes)) > maxQueuedUDPBytes {
-			p.queued.Add(-2 * int64(parts.bytes))
+		assembledCharge := udpQueueCharge(parts.bytes)
+		if p.queued.Add(assembledCharge) > maxQueuedUDPBytes {
+			p.queued.Add(-parts.queued - assembledCharge)
 			delete(p.parts, msg)
 			return
 		}
@@ -208,11 +245,11 @@ func (p *nativePeer) receive(seq uint64, kind byte, msg uint32, index, total int
 			payload = append(payload, part...)
 		}
 		delete(p.parts, msg)
-		p.queued.Add(-int64(parts.bytes))
+		p.queued.Add(-parts.queued)
 		select {
 		case p.queue <- nativeMessage{kind: nativeData, payload: payload}:
 		default:
-			p.queued.Add(-int64(parts.bytes))
+			p.queued.Add(-assembledCharge)
 		}
 	}
 }
@@ -244,7 +281,7 @@ func (p *nativePeer) next() (nativeMessage, error) {
 			if timer != nil {
 				timer.Stop()
 			}
-			p.queued.Add(-int64(len(m.payload)))
+			p.queued.Add(-udpQueueCharge(len(m.payload)))
 			return m, nil
 		}
 	}
@@ -278,13 +315,13 @@ func (p *nativePeer) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, parts := range p.parts {
-		p.queued.Add(-int64(parts.bytes))
+		p.queued.Add(-parts.queued)
 	}
 	p.parts = map[uint32]*udpParts{}
 	for {
 		select {
 		case m := <-p.queue:
-			p.queued.Add(-int64(len(m.payload)))
+			p.queued.Add(-udpQueueCharge(len(m.payload)))
 		default:
 			return nil
 		}

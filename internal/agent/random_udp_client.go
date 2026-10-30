@@ -13,6 +13,7 @@ import (
 
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/tunnelcrypto"
+	"github.com/quic-go/quic-go/brutal"
 )
 
 type randomUDPDial struct {
@@ -21,12 +22,13 @@ type randomUDPDial struct {
 	err         error
 }
 type randomUDPPool struct {
-	mu     sync.Mutex
-	ctx    context.Context
-	cancel context.CancelFunc
-	closed bool
-	peers  map[string]*randomUDPDial
-	wg     sync.WaitGroup
+	brutalBudget *brutal.Budget
+	mu           sync.Mutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	closed       bool
+	peers        map[string]*randomUDPDial
+	wg           sync.WaitGroup
 }
 
 func newRandomUDPPool() *randomUDPPool {
@@ -123,7 +125,7 @@ func (p *randomUDPPool) association(ctx context.Context, r *pb.Rule, queued *ato
 		stop := context.AfterFunc(p.ctx, cancel)
 		defer stop()
 		defer cancel()
-		a, err := dialRandomUDPAssociation(dialCtx, p.ctx, r, queued)
+		a, err := dialRandomUDPAssociation(dialCtx, p.ctx, r, queued, p.brutalBudget)
 		p.mu.Lock()
 		if err == nil && p.closed {
 			err = net.ErrClosed
@@ -150,7 +152,7 @@ func (p *randomUDPPool) association(ctx context.Context, r *pb.Rule, queued *ato
 		return a, err
 	}
 }
-func dialRandomUDPAssociation(ctx, lifetime context.Context, r *pb.Rule, queued *atomic.Int64) (*randomUDPAssociation, error) {
+func dialRandomUDPAssociation(ctx, lifetime context.Context, r *pb.Rule, queued *atomic.Int64, budgets ...*brutal.Budget) (*randomUDPAssociation, error) {
 	if r.Random == nil {
 		return nil, errors.New("random UDP encryption settings missing")
 	}
@@ -224,7 +226,17 @@ func dialRandomUDPAssociation(ctx, lifetime context.Context, r *pb.Rule, queued 
 			if session != nil {
 				socket.SetDeadline(time.Time{})
 				success = true
-				return newRandomUDPAssociation(lifetime, socket, addr, session, r.TunnelToken, queued), nil
+				a := newRandomUDPAssociation(lifetime, socket, addr, session, r.TunnelToken, queued)
+				var budget *brutal.Budget
+				if len(budgets) > 0 {
+					budget = budgets[0]
+				}
+				a.brutal, err = newDatagramBrutal(r.Congestion, budget)
+				if err != nil {
+					a.Close()
+					return nil, err
+				}
+				return a, nil
 			}
 			if retry != nil && phase == 0 {
 				request = retry
@@ -258,6 +270,7 @@ func (p *randomUDPPool) Dial(ctx, lifetime context.Context, r *pb.Rule, target s
 		}
 	}()
 	open := udpStreamOpen{h2Open: h2Open{Network: "udp", Ingress: r.IngressNodeId, Rule: r.Id, User: r.UserId, Epoch: r.QuotaEpoch, Target: target}, Time: time.Now().Unix()}
+	open.Brutal = a.brutal != nil
 	body, err := json.Marshal(open)
 	if err != nil || len(body) > nativePartSize {
 		return nil, errors.New("UDP tunnel metadata too large")

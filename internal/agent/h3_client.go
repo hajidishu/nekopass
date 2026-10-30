@@ -23,6 +23,7 @@ import (
 	"github.com/nekopass/nekopass/internal/quicpadding"
 	"github.com/nekopass/nekopass/internal/tunnel"
 	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/brutal"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/yosida95/uritemplate/v3"
 )
@@ -46,12 +47,13 @@ type h3PoolDrain struct {
 	cancel context.CancelFunc
 }
 type h3Transport struct {
-	mu     sync.Mutex
-	pools  map[string]*h3Pool
-	ctx    context.Context
-	cancel context.CancelFunc
-	closed bool
-	wg     sync.WaitGroup
+	brutalBudget *brutal.Budget
+	mu           sync.Mutex
+	pools        map[string]*h3Pool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	closed       bool
+	wg           sync.WaitGroup
 }
 
 func newH3Transport() *h3Transport {
@@ -398,6 +400,16 @@ func (t *h3Transport) Dial(dialCtx, lifetime context.Context, r *pb.Rule, target
 	if response.StatusCode != 200 || !valid {
 		response.Body.Close()
 		return nil, errors.New("HTTP/3 tunnel authentication refused")
+	}
+	if r.Congestion.GetBrutal() {
+		if !validBrutal(r.Congestion) {
+			response.Body.Close()
+			return nil, errors.New("Brutal bandwidth configuration missing")
+		}
+		if err = peer.conn.EnableBrutal(r.Congestion.SendBps, t.brutalBudget); err != nil {
+			response.Body.Close()
+			return nil, err
+		}
 	}
 	str.SetDeadline(time.Time{})
 	conn := newH3StreamConn(lifetime, str, peer.conn.LocalAddr(), peer.conn.RemoteAddr(), release)

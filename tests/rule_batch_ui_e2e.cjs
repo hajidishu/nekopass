@@ -18,7 +18,7 @@ const server=http.createServer((req,res)=>{
  res.setHeader('Content-Type',types[path.extname(file)]||'application/octet-stream');fs.createReadStream(file).pipe(res);
 });
 const profile={id:2,username:'fixture@example.test',plan_id:1,plan_name:'fixture',plan_enabled:true,node_ids:[10,11,20],quota_bytes:-1,traffic_bytes:10,max_rules:0,max_connections:0,rule_speed_mbps:0,rule_ip_limit:0,rule_connection_limit:0,rule_count:4,expires_at:null};
-const nodes=[{id:10,name:'入口一',ingress_enabled:true,allow_direct:true,tunnel_exit_enabled:false,tunnel_protocol:'plain_tcp',allowed_ingress_ids:[],public_address:'entry.example.test',port_min:1024,port_max:65535},{id:11,name:'入口二',ingress_enabled:true,allow_direct:true,tunnel_exit_enabled:false,tunnel_protocol:'plain_tcp',allowed_ingress_ids:[],public_address:'entry2.example.test',port_min:1024,port_max:65535},{id:20,name:'出口',ingress_enabled:false,allow_direct:false,tunnel_exit_enabled:true,tunnel_protocol:'plain_tcp',allowed_ingress_ids:[10,11],public_address:'exit.example.test'}];
+const nodes=[{id:10,name:'入口一',deny_udp_ingress_creation:true,ingress_enabled:true,allow_direct:true,tunnel_exit_enabled:false,tunnel_protocol:'plain_tcp',allowed_ingress_ids:[],public_address:'entry.example.test',port_min:1024,port_max:65535},{id:11,name:'入口二',deny_udp_ingress_creation:true,ingress_enabled:true,allow_direct:true,tunnel_exit_enabled:false,tunnel_protocol:'plain_tcp',allowed_ingress_ids:[],public_address:'entry2.example.test',port_min:1024,port_max:65535},{id:20,name:'出口',ingress_enabled:false,allow_direct:false,tunnel_exit_enabled:true,tunnel_protocol:'plain_tcp',allowed_ingress_ids:[10,11],public_address:'exit.example.test'}];
 const rules=[1,2,3,4].map(id=>({id,user_id:2,node_id:10,node_name:'入口一',egress_node_id:20,egress_node_name:'出口',protocol:id===3?'udp':'tcp',name:'rule-'+id,listen_port:id===4?443:20000+id,targets:['target.example.test:443'],group_id:0,group_name:'',balance:'random',proxy_accept:'off',proxy_send:'v2',proxy_trusted_cidrs:[],enabled:true,public_address:'entry.example.test',traffic_bytes:100,status:'active',tls_inbound_id:id===4?7:0,sni_names:id===4?['a.example.test']:[],tls_alpn:[],origin_tls:{enabled:false},sync_error:'',speed_mbps:0,ip_limit:0,connection_limit:0}));
 
 (async()=>{
@@ -48,6 +48,17 @@ const rules=[1,2,3,4].map(id=>({id,user_id:2,node_id:10,node_name:'入口一',eg
    async function open(){await page.getByRole('button',{name:'批量编辑',exact:true}).click();const dlg=page.getByRole('dialog',{name:/批量编辑 \d+ 条规则/});await dlg.waitFor();return dlg}
    async function option(dlg,id,label){await dlg.getByTestId(id).click();await page.getByRole('option',{name:label,exact:true}).click()}
    async function advanced(dlg){await dlg.getByText('高级选项（留空不更新）',{exact:true}).click()}
+   // New rules cannot select UDP on a restricted ingress. Existing UDP edits remain allowed.
+   const field=(dialog,label)=>dialog.getByText(label,{exact:true}).locator('..');
+   async function selectField(dialog,label,value){await field(dialog,label).locator('.el-select').click();await page.getByRole('option',{name:value,exact:true}).click()}
+   async function inspectUDP(dialog,disabled){await field(dialog,'转发类型').locator('.el-select').click();assert.equal(await page.getByRole('option',{name:'UDP',exact:true}).getAttribute('aria-disabled')==='true',disabled);await page.getByRole('option',{name:'TCP',exact:true}).click()}
+   async function cancelRule(dialog){await dialog.getByRole('button',{name:'取消',exact:true}).click();await dialog.waitFor({state:'hidden'})}
+   await page.getByRole('button',{name:'添加规则',exact:true}).click();let ruleDialog=page.getByRole('dialog',{name:'添加规则',exact:true});
+   await selectField(ruleDialog,'入口','入口一');await inspectUDP(ruleDialog,true);await cancelRule(ruleDialog);
+   await rows().nth(0).getByRole('button',{name:'编辑规则',exact:true}).click();ruleDialog=page.getByRole('dialog',{name:'编辑规则',exact:true});await inspectUDP(ruleDialog,true);await cancelRule(ruleDialog);
+   await rows().nth(2).getByRole('button',{name:'编辑规则',exact:true}).click();ruleDialog=page.getByRole('dialog',{name:'编辑规则',exact:true});await inspectUDP(ruleDialog,false);await cancelRule(ruleDialog);
+   await rows().nth(2).getByRole('button',{name:'复制规则',exact:true}).click();ruleDialog=page.getByRole('dialog',{name:'添加规则',exact:true});
+   await ruleDialog.getByRole('button',{name:'确定',exact:true}).click();await page.getByText('此节点禁止创建新的 UDP 入站规则，请选择其他入口',{exact:true}).waitFor();assert.equal(calls.length,0);await cancelRule(ruleDialog);
    await select([0,1]);let dlg=await open();
    await option(dlg,'batch-rule-egress','#0 不使用隧道，直接转发');
    await option(dlg,'batch-rule-ingress','入口二');
@@ -62,7 +73,13 @@ const rules=[1,2,3,4].map(id=>({id,user_id:2,node_id:10,node_name:'入口一',eg
    await dlg.getByRole('button',{name:'确定',exact:true}).click();await page.getByText('请选择至少一个需要更新的字段',{exact:true}).waitFor();assert.equal(calls.length,previous);
    await dlg.getByRole('button',{name:'暂停选中规则',exact:true}).click();await dlg.waitFor({state:'hidden'});
    assert.deepEqual(calls.at(-1).body,{ids:[1,2],action:'disable'});
-   await select([0,2]);dlg=await open();await advanced(dlg);await dlg.getByTestId('batch-rule-proxy-send').click();
+   await select([0,2]);dlg=await open();
+   await dlg.getByTestId('batch-rule-ingress').click();
+   assert.equal(await page.getByRole('option',{name:'入口二（禁止新增 UDP 入站）',exact:true}).getAttribute('aria-disabled'),'true');
+   assert.notEqual(await page.getByRole('option',{name:'入口一',exact:true}).getAttribute('aria-disabled'),'true');
+   await page.getByRole('option',{name:'入口一',exact:true}).click();
+   await dlg.getByTestId('batch-rule-ingress').hover();await dlg.getByTestId('batch-rule-ingress').locator('.el-select__clear').click();
+   await advanced(dlg);await dlg.getByTestId('batch-rule-proxy-send').click();
    const enabled=page.getByRole('option',{name:'开启',exact:true});assert.equal(await enabled.getAttribute('aria-disabled'),'true');
    await page.getByRole('option',{name:'关闭',exact:true}).click();await dlg.getByRole('button',{name:'确定',exact:true}).click();await dlg.waitFor({state:'hidden'});
    assert.deepEqual(calls.at(-1).body,{ids:[1,3],action:'edit',patch:{proxy_send_enabled:false}});

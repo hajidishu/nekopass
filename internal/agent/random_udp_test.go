@@ -48,6 +48,32 @@ func randomUDPFixture(t testing.TB, name, target string) (*Engine, *h2Transport,
 	}
 	return e, h, c, r
 }
+
+func TestRandomUDPExpireReleasesShortAndEmptyFragmentCharges(t *testing.T) {
+	var queued atomic.Int64
+	a := &randomUDPAssociation{flows: map[uint64]*randomUDPFlow{}}
+	peer := newNativePeer(context.Background(), nil, nil, "fixture-expire", [16]byte{1}, &queued, true)
+	f := &randomUDPFlow{nativePeer: peer, association: a, id: 1}
+	a.flows[f.id] = f
+	defer peer.Close()
+
+	peer.receive(1, nativeData, 1, 0, 2, nil)
+	peer.receive(2, nativeData, 2, 0, 2, []byte{'x'})
+	if want := 2 * udpQueueCharge(0); queued.Load() != want {
+		t.Fatal("short fragments were not charged before expiry", queued.Load(), want)
+	}
+	now := time.Now()
+	peer.mu.Lock()
+	for _, parts := range peer.parts {
+		parts.expires = now.Add(-time.Second)
+	}
+	peer.mu.Unlock()
+	a.expire(now)
+	if used := queued.Load(); used != 0 {
+		t.Fatal("expired random UDP fragments leaked or underflowed budget", used)
+	}
+}
+
 func TestRandomUDPAlgorithmsMultiplexAndAuthorization(t *testing.T) {
 	for _, name := range []string{tunnelcrypto.ChaCha20Poly1305, tunnelcrypto.AES256GCM} {
 		t.Run(name, func(t *testing.T) {

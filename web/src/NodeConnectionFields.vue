@@ -9,8 +9,23 @@ watch(()=>nodeForm.value.tunnel_transport,transport=>{if(transport==='h3'){nodeF
 </script>
 <template>
  <div data-testid="node-connection-fields">
+  <div class="form-section-title">节点带宽</div>
+  <div class="form-grid">
+   <el-form-item label="上行带宽"><el-input-number v-model="nodeForm.bandwidth_up_mbps" :min="0" :max="1000000" :precision="0" data-testid="bandwidth-up"/><span class="field-tip">Mbps · 节点向外发送</span></el-form-item>
+   <el-form-item label="下行带宽"><el-input-number v-model="nodeForm.bandwidth_down_mbps" :min="0" :max="1000000" :precision="0" data-testid="bandwidth-down"/><span class="field-tip">Mbps · 节点接收</span></el-form-item>
+  </div>
+  <p class="field-tip">请填写准确的带宽数值，填写高于实际带宽的数值会导致大幅丢包和延迟</p>
+  <p class="field-tip">启用 Brutal 的线路需在入口、出口均填写上下行带宽；0 表示未填写。</p>
   <div class="form-section-title">入口配置</div>
   <el-form-item label="允许作为入口"><el-switch v-model="nodeForm.ingress_enabled"/></el-form-item>
+  <el-form-item label="入口tcp Brutal">
+   <el-switch v-model="nodeForm.client_tcp_brutal_enabled" data-testid="client-tcp-brutal-enabled"/>
+   <span class="field-tip switch-hint">仅在你入口安装了tcp brutal的时候再打开，并且请确保上方带宽设置正确</span>
+  </el-form-item>
+  <el-form-item label="UDP 入站规则">
+   <el-checkbox v-model="nodeForm.deny_udp_ingress_creation" data-testid="deny-udp-ingress-creation">禁止用户在此节点创建 UDP 入站规则</el-checkbox>
+   <span class="field-tip">限制新增及迁入的 UDP 规则；已有规则和 UDP 出口不受影响。</span>
+  </el-form-item>
   <el-form-item v-if="nodeForm.ingress_enabled" label="允许用户选择直转">
    <el-switch v-model="nodeForm.allow_direct"/>
    <span class="field-tip switch-hint">关闭后，此入口的规则必须选择已关联的出口节点。</span>

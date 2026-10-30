@@ -445,6 +445,9 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 		return nil, e
 	}
 	// Legacy agents terminate TLS. Do not send them shared listener resources.
+	if e = appendBrutalControl(ctx, tx, r.ProtocolVersion, out); e != nil {
+		return nil, e
+	}
 	if r.ProtocolVersion < 21 {
 		out.Node.TlsInbounds = nil
 	}

@@ -98,7 +98,7 @@ func TestNativeUDPControlQueueReleasesSharedBudget(t *testing.T) {
 	peer := newNativePeer(context.Background(), nil, nil, "fixture-control", [16]byte{1}, &queued, true)
 	defer peer.Close()
 	peer.receiveControl(nativeChallenge, make([]byte, 40))
-	if queued.Load() != 40 {
+	if queued.Load() != udpQueueCharge(40) {
 		t.Fatal("control packet not charged")
 	}
 	if _, err := peer.next(); err != nil || queued.Load() != 0 {
@@ -110,4 +110,73 @@ func TestNativeUDPControlQueueReleasesSharedBudget(t *testing.T) {
 	if queued.Load() != 0 {
 		t.Fatal("close leaked reservation or accepted new packet")
 	}
+}
+
+func TestNativeUDPEmptyDatagramsConsumeSharedQueueBudget(t *testing.T) {
+	var queued atomic.Int64
+	peer := newNativePeer(context.Background(), nil, nil, "fixture-empty", [16]byte{2}, &queued, true)
+	defer peer.Close()
+	peer.receive(1, nativeData, 1, 0, 1, nil)
+	if queued.Load() != udpQueueCharge(0) || len(peer.queue) != 1 {
+		t.Fatal("empty datagram bypassed queue accounting", queued.Load(), len(peer.queue))
+	}
+	if _, err := peer.next(); err != nil || queued.Load() != 0 {
+		t.Fatal("empty datagram dequeue leaked accounting", err, queued.Load())
+	}
+	peer.receive(2, nativeData, 2, 0, 1, nil)
+	if queued.Load() != udpQueueCharge(0) {
+		t.Fatal("empty datagram reservation missing before close", queued.Load())
+	}
+	peer.Close()
+	if queued.Load() != 0 {
+		t.Fatal("close leaked empty datagram reservation", queued.Load())
+	}
+	peer = newNativePeer(context.Background(), nil, nil, "fixture-fragments", [16]byte{4}, &queued, true)
+	defer peer.Close()
+
+	// A zero-length fragment still reserves memory, and completion replaces
+	// fragment charges with exactly one assembled queue-entry charge.
+	peer.receive(3, nativeData, 2, 0, 2, nil)
+	if queued.Load() != udpQueueCharge(0) {
+		t.Fatal("empty fragment bypassed queue accounting", queued.Load())
+	}
+	peer.receive(4, nativeData, 2, 1, 2, []byte{'x'})
+	if queued.Load() != udpQueueCharge(1) {
+		t.Fatal("fragment assembly leaked or miscounted reservations", queued.Load())
+	}
+	if _, err := peer.next(); err != nil || queued.Load() != 0 {
+		t.Fatal("fragment dequeue leaked reservation", err, queued.Load())
+	}
+
+	// Expiration and close both release unfinished empty fragments.
+	peer.receive(5, nativeData, 3, 0, 2, nil)
+	peer.mu.Lock()
+	peer.parts[3].expires = time.Now().Add(-time.Second)
+	peer.mu.Unlock()
+	peer.receive(6, nativeClose, 0, 0, 1, nil)
+	if queued.Load() != udpQueueCharge(0) {
+		t.Fatal("fragment expiration leaked or underflowed accounting", queued.Load())
+	}
+	if _, err := peer.next(); err != nil || queued.Load() != 0 {
+		t.Fatal("control dequeue after expiration leaked reservation", err, queued.Load())
+	}
+	peer.receive(7, nativeData, 4, 0, 2, nil)
+	peer.Close()
+	if queued.Load() != 0 {
+		t.Fatal("close leaked unfinished fragment reservation", queued.Load())
+	}
+
+	// Use a fresh, live peer so the saturated-budget path is exercised.
+	saturated := newNativePeer(context.Background(), nil, nil, "fixture-saturated", [16]byte{3}, &queued, true)
+	queued.Store(maxQueuedUDPBytes - 1)
+	saturated.receive(1, nativeData, 1, 0, 1, nil)
+	if len(saturated.queue) != 0 || queued.Load() != maxQueuedUDPBytes-1 {
+		t.Fatal("empty fragment bypassed a saturated shared budget", len(saturated.queue), queued.Load())
+	}
+	saturated.receiveControl(nativeData, nil)
+	if len(saturated.queue) != 0 || queued.Load() != maxQueuedUDPBytes-1 {
+		t.Fatal("empty datagram bypassed a saturated shared budget", len(saturated.queue), queued.Load())
+	}
+	queued.Store(0)
+	saturated.Close()
 }

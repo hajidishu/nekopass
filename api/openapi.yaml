@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.19.3
+  version: 0.19.4
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -1408,9 +1408,14 @@ components:
       type: object
       additionalProperties: false
       properties:
+        bandwidth_up_mbps: {type: integer, minimum: 0, maximum: 1000000, default: 0, description: 'Node transmit bandwidth in Mbps; 0 means unconfigured. Omission preserves the current value.'}
+        bandwidth_down_mbps: {type: integer, minimum: 0, maximum: 1000000, default: 0, description: 'Node receive bandwidth in Mbps; 0 means unconfigured. Omission preserves the current value.'}
+        brutal_enabled: {type: boolean, default: false, description: 'Enable Brutal for HTTP/3 or raw UDP tunnels only. Both ingress and egress need accurate bandwidth; requires Agent protocol 32. TCP transports ignore this saved value.'}
+        client_tcp_brutal_enabled: {type: boolean, default: false, description: '入口tcp Brutal：仅在你入口安装了tcp brutal的时候再打开，并且请确保上方带宽设置正确。 Apply Linux TCP Brutal v2 to ingress-to-user TCP sends only. All user TCP sockets share node upload bandwidth; positive bandwidth_up_mbps is required. Requires Agent protocol 33. Kernel module is installed by the administrator.'}
         ingress_multiplier: {$ref: '#/components/schemas/TrafficMultiplier'}
         egress_multiplier: {$ref: '#/components/schemas/TrafficMultiplier'}
         ingress_enabled: {type: boolean}
+        deny_udp_ingress_creation: {type: boolean, default: false, description: Reject new UDP ingress rules and moves from other nodes; existing UDP rules and egress remain usable. Omission preserves the current value.}
         allow_direct: {type: boolean}
         tunnel_exit_enabled: {type: boolean}
         tunnel_transport: {type: string, enum: [raw_tcp, h2, raw_udp, h3], description: Egress transport; h3 requires TLS and Agent protocol 28}
@@ -1426,6 +1431,10 @@ components:
       type: object
       additionalProperties: false
       properties:
+        bandwidth_up_mbps: {type: integer, minimum: 0, maximum: 1000000, default: 0, description: 'Node transmit bandwidth in Mbps; 0 means unconfigured. Omission preserves the current value.'}
+        bandwidth_down_mbps: {type: integer, minimum: 0, maximum: 1000000, default: 0, description: 'Node receive bandwidth in Mbps; 0 means unconfigured. Omission preserves the current value.'}
+        brutal_enabled: {type: boolean, default: false, description: 'Enable Brutal for HTTP/3 or raw UDP tunnels only. Both ingress and egress need accurate bandwidth; requires Agent protocol 32. TCP transports ignore this saved value.'}
+        client_tcp_brutal_enabled: {type: boolean, default: false, description: '入口tcp Brutal：仅在你入口安装了tcp brutal的时候再打开，并且请确保上方带宽设置正确。 Apply Linux TCP Brutal v2 to ingress-to-user TCP sends only. All user TCP sockets share node upload bandwidth; positive bandwidth_up_mbps is required. Requires Agent protocol 33. Kernel module is installed by the administrator.'}
         token: {type: string, description: Omit to retain the existing key; an explicit empty value generates a key}
         name: {type: string}
         public_address: {type: string}
@@ -1631,6 +1640,10 @@ components:
       type: object
       required: [name, enabled, group_ids]
       properties:
+        bandwidth_up_mbps: {type: integer, minimum: 0, maximum: 1000000, default: 0, description: 'Node transmit bandwidth in Mbps; 0 means unconfigured. Omission preserves the current value.'}
+        bandwidth_down_mbps: {type: integer, minimum: 0, maximum: 1000000, default: 0, description: 'Node receive bandwidth in Mbps; 0 means unconfigured. Omission preserves the current value.'}
+        brutal_enabled: {type: boolean, default: false, description: 'Enable Brutal for HTTP/3 or raw UDP tunnels only. Both ingress and egress need accurate bandwidth; requires Agent protocol 32. TCP transports ignore this saved value.'}
+        client_tcp_brutal_enabled: {type: boolean, default: false, description: '入口tcp Brutal：仅在你入口安装了tcp brutal的时候再打开，并且请确保上方带宽设置正确。 Apply Linux TCP Brutal v2 to ingress-to-user TCP sends only. All user TCP sockets share node upload bandwidth; positive bandwidth_up_mbps is required. Requires Agent protocol 33. Kernel module is installed by the administrator.'}
         ingress_multiplier: {$ref: '#/components/schemas/TrafficMultiplier'}
         egress_multiplier: {$ref: '#/components/schemas/TrafficMultiplier'}
         token: {type: string, description: 'Administrator-editable node key. Empty generates a new 64-character key; custom values require 8–128 ASCII letters, digits, underscores or dashes. Saving an existing node with an empty key replaces its previous key.'}
@@ -1641,6 +1654,7 @@ components:
         group_ids: {type: array, items: {type: integer, format: int64}}
         allow_direct: {type: boolean, default: true, description: Whether users may select direct forwarding on this ingress}
         ingress_enabled: {type: boolean, default: true, description: Whether this node may be used as an ingress; false still allows exit functionality}
+        deny_udp_ingress_creation: {type: boolean, default: false, description: Reject new UDP ingress rules and moves from other nodes; existing UDP rules and egress remain usable. Omission preserves the current value.}
         tunnel_exit_enabled: {type: boolean, default: false}
         tunnel_transport: {type: string, enum: [raw_tcp, h2, raw_udp, h3], description: Egress transport; h3 requires TLS and Agent protocol 28}
         tunnel_security: {type: string, enum: [none, tls, random], description: Egress security; h3 only accepts tls}

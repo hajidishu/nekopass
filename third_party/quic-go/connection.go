@@ -174,6 +174,7 @@ type Conn struct {
 
 	notifyReceivedPacket chan struct{}
 	sendingScheduled     chan struct{}
+	brutalUpdates        chan brutalUpdate
 	receivedPacketMx     sync.Mutex
 	receivedPackets      ringbuffer.RingBuffer[receivedPacket]
 
@@ -554,6 +555,7 @@ func (c *Conn) preSetup() {
 	c.notifyReceivedPacket = make(chan struct{}, 1)
 	c.closeChan = make(chan struct{}, 1)
 	c.sendingScheduled = make(chan struct{}, 1)
+	c.brutalUpdates = make(chan brutalUpdate)
 	c.handshakeCompleteChan = make(chan struct{})
 
 	now := monotime.Now()
@@ -604,6 +606,11 @@ func (c *Conn) run() (err error) {
 
 runLoop:
 	for {
+		select {
+		case update := <-c.brutalUpdates:
+			c.applyBrutal(update)
+		default:
+		}
 		if c.framer.QueuedTooManyControlFrames() {
 			c.setCloseError(&closeError{err: &qerr.TransportError{ErrorCode: InternalError}})
 			break runLoop
@@ -665,6 +672,8 @@ runLoop:
 				break runLoop
 			case <-c.timer.C:
 			case <-c.sendingScheduled:
+			case update := <-c.brutalUpdates:
+				c.applyBrutal(update)
 			case <-sendQueueAvailable:
 			case <-c.notifyReceivedPacket:
 				wasProcessed, err := c.handlePackets()

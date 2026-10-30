@@ -15,6 +15,10 @@ watch(()=>nodeForm.value.tunnel_transport,value=>{if(value==='h3')nodeForm.value
     <el-option label="raw(udp)" value="raw_udp"/>
    </el-select>
   </el-form-item>
+  <el-form-item v-if="['h3','raw_udp'].includes(nodeForm.tunnel_transport)" label="拥塞控制">
+   <el-select v-model="nodeForm.brutal_enabled" data-testid="brutal-enabled"><el-option label="默认" :value="false"/><el-option label="Brutal" :value="true"/></el-select>
+   <span class="field-tip">按入口、出口的节点带宽计算发送速率，多连接共享节点预算。</span>
+  </el-form-item>
   <p v-if="nodeForm.tunnel_transport==='h3'" class="field-tip">HTTP/3 固定使用 TLS 1.3，出口同一端口提供 TCP HTTPS 与 UDP HTTP/3。TCP 使用 CONNECT；UDP 使用 CONNECT-UDP。</p>
   <p v-if="nodeForm.tunnel_transport==='raw_udp'" class="field-tip">raw(udp) 仅承载 UDP 转发。</p>
   <template v-if="['h2','h3'].includes(nodeForm.tunnel_transport)">

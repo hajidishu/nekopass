@@ -12,7 +12,7 @@ const server=http.createServer((req,res)=>{
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  const browser=await chromium.launch({headless:true,...(process.env.NEKOPASS_BROWSER?{executablePath:process.env.NEKOPASS_BROWSER}:{})});
  try{
-  const original={id:6,name:'配置测试节点',token:'fixture-key',public_address:'exit.example.test',notes:'',enabled:true,group_ids:[],listen_host:'0.0.0.0',port_min:1024,port_max:65535,max_connections:10000,dial_timeout_seconds:8,idle_timeout_seconds:300,udp_idle_timeout_seconds:60,probe_interval_seconds:5,disk_path:'/',network_interfaces:[],ingress_enabled:true,allow_direct:true,tunnel_exit_enabled:false,tunnel_protocol:'plain_tcp',tunnel_transport:'raw_tcp',tunnel_security:'none',tunnel_listen_host:'0.0.0.0',tunnel_listen_port:27443,tunnel_public_host:'exit.example.test',allowed_ingress_ids:[],tls:{server_name:'exit.example.test',fingerprint:'off',certificate_mode:'self_signed',padding_enabled:false,padding_scheme:[]},online:true,sync_error:'',applied_revision:1,config_revision:1,active_connections:0};
+  const original={id:6,protocol_version:33,name:'配置测试节点',token:'fixture-key',public_address:'exit.example.test',notes:'',enabled:true,group_ids:[],listen_host:'0.0.0.0',port_min:1024,port_max:65535,max_connections:10000,dial_timeout_seconds:8,idle_timeout_seconds:300,udp_idle_timeout_seconds:60,probe_interval_seconds:5,disk_path:'/',network_interfaces:[],ingress_enabled:true,allow_direct:true,tunnel_exit_enabled:false,tunnel_protocol:'plain_tcp',tunnel_transport:'raw_tcp',tunnel_security:'none',tunnel_listen_host:'0.0.0.0',tunnel_listen_port:27443,tunnel_public_host:'exit.example.test',allowed_ingress_ids:[],tls:{server_name:'exit.example.test',fingerprint:'off',certificate_mode:'self_signed',padding_enabled:false,padding_scheme:[]},online:true,sync_error:'',applied_revision:1,config_revision:1,active_connections:0};
   let saved=structuredClone(original);const writes=[],errors=[];
   const page=await browser.newPage({viewport:{width:1440,height:1050}});page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/api/v1/**',async route=>{
@@ -34,6 +34,7 @@ const server=http.createServer((req,res)=>{
    const dialog=page.getByRole('dialog',{name:'编辑传输协议',exact:true});
    for(const label of ['允许作为入口','作为出口节点','安全性','uTLS 指纹','证书模式','隧道对外地址'])assert.equal(await dialog.getByText(label,{exact:true}).count(),0,label+' leaked into transport dialog');
    await select(dialog,'传输协议',value);
+   if(['raw(udp)','HTTP/3'].includes(value)){await select(dialog,'拥塞控制','Brutal')}else{assert.equal(await dialog.getByText('拥塞控制',{exact:true}).count(),0)}
    if(value==='h2'){await input(dialog,'HTTP Path').fill('/custom/stream');await input(dialog,'HTTP Host').fill('stream.example.test');await input(dialog,'连接池上限').fill('3')}
    if(process.env.NEKOPASS_UI_SCREENSHOT_DIR){fs.mkdirSync(process.env.NEKOPASS_UI_SCREENSHOT_DIR,{recursive:true});await dialog.screenshot({path:path.join(process.env.NEKOPASS_UI_SCREENSHOT_DIR,'node-transport-dialog.png')})}
    await dialog.getByRole('button',{name:cancel?'取消':'确定',exact:true}).click();await dialog.waitFor({state:'hidden'});
@@ -44,6 +45,11 @@ const server=http.createServer((req,res)=>{
   assert.equal(await parent.getByText('安全性',{exact:true}).count(),0);
   assert.equal(await parent.getByRole('button',{name:'安全性设置',exact:true}).locator('..').getByRole('button',{name:'编辑传输协议',exact:true}).count(),1);
   assert.equal(await field(parent,'作为出口节点').getByRole('switch').getAttribute('aria-checked'),'false');
+  assert.equal(await parent.getByTestId('deny-udp-ingress-creation').getByRole('checkbox').isChecked(),false);
+  await parent.getByTestId('deny-udp-ingress-creation').click();
+  assert.equal(await parent.getByTestId('client-tcp-brutal-enabled').getByRole('switch').getAttribute('aria-checked'),'false');await parent.getByTestId('client-tcp-brutal-enabled').click();
+  await input(parent,'上行带宽').fill('200');await input(parent,'下行带宽').fill('1000');
+  assert.equal(await parent.getByText('请填写准确的带宽数值，填写高于实际带宽的数值会导致大幅丢包和延迟',{exact:true}).isVisible(),true);
   await input(parent,'节点名称').fill('已编辑但未保存');
   await input(parent,'公网隧道端口').fill('32443');
   assert.equal(await input(parent,'入口流量倍率').inputValue(),'1');
@@ -99,11 +105,15 @@ const server=http.createServer((req,res)=>{
   await parent.getByRole('button',{name:'保存并下发',exact:true}).click();await page.getByText('节点配置已保存，密钥可在下方复制',{exact:true}).waitFor();
   assert.equal(writes.length,1);assert.equal(writes[0].endpoint,'/api/v1/admin/nodes/6');
   const body=writes[0].body;assert.equal(body.name,'已编辑但未保存');assert.equal(body.ingress_enabled,false);assert.equal(body.tunnel_exit_enabled,false);assert.equal(body.tunnel_security,'tls');assert.equal(body.tunnel_transport,'h2');
+  assert.equal(body.client_tcp_brutal_enabled,true);assert.equal(body.bandwidth_up_mbps,200);assert.equal(body.bandwidth_down_mbps,1000);assert.equal(body.brutal_enabled,true);
+  assert.equal(body.deny_udp_ingress_creation,true);
   assert.equal(body.ingress_multiplier,'0');assert.equal(body.egress_multiplier,'1.2345');
   assert.equal(body.tls.client_sni,'final.example.test');assert.equal(body.tls.path,'/custom/stream');assert.equal(body.tls.host,'stream.example.test');assert.equal(body.tls.pool_size,3);assert.equal(body.tls.public_port,32443);assert.equal(body.tls.dns_credentials.api_token,'fixture');assert.equal(body.tls.fallback_url,'https://fallback.example.test');assert.equal(body.tls.padding_enabled,true);assert.deepEqual(body.tls.padding_scheme,policy.split('\n'));
   await parent.getByRole('button',{name:'关闭',exact:true}).click();
   await page.getByRole('button',{name:'添加节点',exact:true}).click();parent=page.getByRole('dialog',{name:'添加节点',exact:true});
   assert.equal(await input(parent,'入口流量倍率').inputValue(),'1');assert.equal(await input(parent,'出口流量倍率').inputValue(),'0');
+  assert.equal(await parent.getByTestId('deny-udp-ingress-creation').getByRole('checkbox').isChecked(),false);
+  assert.equal(await parent.getByTestId('client-tcp-brutal-enabled').getByRole('switch').getAttribute('aria-checked'),'false');
   await input(parent,'节点名称').fill('新建配置测试');await transport('h2');assert.equal(writes.length,1);assert.equal(await parent.getByTestId('node-security-summary').innerText(),'不加密');
   await parent.getByRole('button',{name:'保存并下发',exact:true}).click();await page.getByText('节点已创建，密钥已填入下方',{exact:true}).waitFor();
   assert.equal(writes.length,2);assert.equal(writes[1].endpoint,'/api/v1/admin/nodes');assert.equal(writes[1].body.tunnel_transport,'h2');assert.equal(writes[1].body.tunnel_security,'none');assert.equal(writes[1].body.tls.path,'/custom/stream');assert.equal(writes[1].body.tunnel_listen_port,0);

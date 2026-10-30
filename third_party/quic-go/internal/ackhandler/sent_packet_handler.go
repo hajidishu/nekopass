@@ -3,6 +3,7 @@ package ackhandler
 import (
 	"errors"
 	"fmt"
+	"github.com/quic-go/quic-go/brutal"
 	"time"
 
 	"github.com/quic-go/quic-go/internal/congestion"
@@ -74,6 +75,8 @@ func (p *handshakePacketNumbers) Highest() protocol.PacketNumber {
 }
 
 type sentPacketHandler struct {
+	brutalRate   uint64
+	brutalBudget *brutal.Budget
 	// Packet numbers and their history are shared across encryption levels.
 	// ACK processing and loss detection still use the state for each space.
 	pns  *packetNumberGenerator
@@ -1263,6 +1266,9 @@ func (h *sentPacketHandler) MigratedPath(now monotime.Time, initialMaxDatagramSi
 		true, // use Reno
 		h.qlogger,
 	)
+	if h.brutalRate > 0 {
+		h.congestion = congestion.NewBrutalSender(h.brutalRate, h.brutalBudget, h.rttStats, initialMaxDatagramSize)
+	}
 	h.qlogRecoveryParametersSet(true)
 	h.setLossDetectionTimer(now)
 }

@@ -11,23 +11,26 @@ import (
 )
 
 type NodeProtocolsInput struct {
-	IngressMultiplier *billing.Rate       `json:"ingress_multiplier,omitempty"`
-	EgressMultiplier  *billing.Rate       `json:"egress_multiplier,omitempty"`
-	TLS               *TunnelTLSConfig    `json:"tls"`
-	Random            *TunnelRandomConfig `json:"random"`
-	AllowDirect       bool                `json:"allow_direct"`
-	IngressEnabled    bool                `json:"ingress_enabled"`
-	TunnelExitEnabled bool                `json:"tunnel_exit_enabled"`
-	TunnelTransport   string              `json:"tunnel_transport"`
-	TunnelSecurity    string              `json:"tunnel_security"`
-	TunnelProtocol    string              `json:"tunnel_protocol"`
-	TunnelListenHost  string              `json:"tunnel_listen_host"`
-	TunnelListenPort  int                 `json:"tunnel_listen_port"`
-	TunnelPublicHost  string              `json:"tunnel_public_host"`
-	AllowedIngressIDs []int64             `json:"allowed_ingress_ids"`
+	NodeBandwidth
+	DenyUDPIngressCreation *bool               `json:"deny_udp_ingress_creation,omitempty"`
+	IngressMultiplier      *billing.Rate       `json:"ingress_multiplier,omitempty"`
+	EgressMultiplier       *billing.Rate       `json:"egress_multiplier,omitempty"`
+	TLS                    *TunnelTLSConfig    `json:"tls"`
+	Random                 *TunnelRandomConfig `json:"random"`
+	AllowDirect            bool                `json:"allow_direct"`
+	IngressEnabled         bool                `json:"ingress_enabled"`
+	TunnelExitEnabled      bool                `json:"tunnel_exit_enabled"`
+	TunnelTransport        string              `json:"tunnel_transport"`
+	TunnelSecurity         string              `json:"tunnel_security"`
+	TunnelProtocol         string              `json:"tunnel_protocol"`
+	TunnelListenHost       string              `json:"tunnel_listen_host"`
+	TunnelListenPort       int                 `json:"tunnel_listen_port"`
+	TunnelPublicHost       string              `json:"tunnel_public_host"`
+	AllowedIngressIDs      []int64             `json:"allowed_ingress_ids"`
 }
 
 type NodeBasicInput struct {
+	NodeBandwidth
 	UDPIdleTimeoutSeconds int      `json:"udp_idle_timeout_seconds,omitempty"`
 	Token                 *string  `json:"token,omitempty"`
 	Name                  string   `json:"name"`
@@ -70,7 +73,12 @@ func loadNodeInput(ctx context.Context, db interface {
 	}
 	v.IngressMultiplier = &ingressRate
 	v.EgressMultiplier = &egressRate
-	if err = db.QueryRow(ctx, "SELECT udp_idle_timeout_seconds FROM nodes WHERE id=$1", id).Scan(&v.UDPIdleTimeoutSeconds); err != nil {
+	var denyUDP bool
+	if err = db.QueryRow(ctx, "SELECT udp_idle_timeout_seconds,deny_udp_ingress_creation FROM nodes WHERE id=$1", id).Scan(&v.UDPIdleTimeoutSeconds, &denyUDP); err != nil {
+		return v, hash, err
+	}
+	v.DenyUDPIngressCreation = &denyUDP
+	if err = v.NodeBandwidth.load(ctx, db, id); err != nil {
 		return v, hash, err
 	}
 	cfg := DefaultTunnelTLS()

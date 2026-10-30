@@ -24,7 +24,7 @@ var errTunnelTarget = errors.New("tunnel target unavailable")
 func peerRule(r *pb.Rule, p *pb.EgressPeer) *pb.Rule {
 	// Dialing needs only authentication and peer configuration. Cloning the
 	// entire rule here would copy every peer's certificate once per candidate.
-	return &pb.Rule{Id: r.Id, UserId: r.UserId, IngressNodeId: r.IngressNodeId, QuotaEpoch: r.QuotaEpoch, Protocol: r.Protocol, TrafficRate: p.TrafficRate, MeteringConfigured: r.MeteringConfigured, EgressNodeId: p.NodeId, TunnelHost: p.Host, TunnelPort: p.Port, TunnelToken: p.Token, TunnelProtocol: p.Protocol, Tls: p.Tls, Random: p.Random}
+	return &pb.Rule{Id: r.Id, UserId: r.UserId, IngressNodeId: r.IngressNodeId, QuotaEpoch: r.QuotaEpoch, Protocol: r.Protocol, TrafficRate: p.TrafficRate, MeteringConfigured: r.MeteringConfigured, EgressNodeId: p.NodeId, TunnelHost: p.Host, TunnelPort: p.Port, TunnelToken: p.Token, TunnelProtocol: p.Protocol, Tls: p.Tls, Random: p.Random, Congestion: p.Congestion}
 }
 func peerKey(r *pb.Rule) string {
 	return fmt.Sprint(r.EgressNodeId) + "/" + r.TunnelToken + "/" + h2PoolKey(r)

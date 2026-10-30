@@ -161,6 +161,11 @@ func (l *randomUDPListener) read() {
 				return
 			}
 			a := newRandomUDPAssociation(l.ctx, l.socket, from, c, link, &l.e.udpQueued)
+			a.brutal, err = newDatagramBrutal(p.congestion[req.IngressID()], l.e.brutalBudget)
+			if err != nil {
+				a.Close()
+				return
+			}
 			a.server = l
 			a.onConfirmed = release
 			a.onClose = func() {
@@ -238,7 +243,7 @@ func (a *randomUDPAssociation) expire(now time.Time) {
 		f.nativePeer.mu.Lock()
 		for key, p := range f.parts {
 			if now.After(p.expires) {
-				f.queued.Add(-int64(p.bytes))
+				f.queued.Add(-p.queued)
 				delete(f.parts, key)
 			}
 		}
@@ -269,7 +274,7 @@ func (l *randomUDPListener) openFlow(a *randomUDPAssociation, id uint64, body []
 		return
 	}
 	p := l.e.tunnelPolicy.Load()
-	if p == nil || !h2RuleAllowed(p, open.h2Open) {
+	if p == nil || open.Brutal != (a.brutal != nil) || !h2RuleAllowed(p, open.h2Open) {
 		_ = a.control(randomUDPAck, id, []byte{randomUDPDenied})
 		return
 	}

@@ -63,6 +63,9 @@ func dialDatagramTunnel(dialCtx, lifetime context.Context, r *pb.Rule, target st
 			}
 			return h2.randomUDP.Dial(dialCtx, lifetime, r, target, queued)
 		}
+		if h2 != nil {
+			return dialNativeDatagram(dialCtx, lifetime, r, target, queued, h2.h3.brutalBudget)
+		}
 		return dialNativeDatagram(dialCtx, lifetime, r, target, queued)
 	}
 	if tunnel.H2(r.TunnelProtocol) {

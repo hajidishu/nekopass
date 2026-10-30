@@ -19,6 +19,7 @@ const randomUDPData = 3
 const randomUDPClose = 4
 const randomUDPPing = 5
 const randomUDPPong = 6
+const randomUDPFeedback = 7
 const randomUDPReady = 1
 const randomUDPTargetFailed = 2
 const randomUDPDenied = 3
@@ -27,6 +28,7 @@ const randomUDPClosed = 5
 const maxRandomUDPFlows = 65536
 
 type randomUDPAssociation struct {
+	brutal        *datagramBrutal
 	ctx           context.Context
 	cancel        context.CancelFunc
 	socket        *net.UDPConn
@@ -82,9 +84,19 @@ func (a *randomUDPAssociation) newFlowLocked(id uint64, lifetime context.Context
 	a.lastActivity.Store(time.Now().UnixNano())
 	return f
 }
-func (a *randomUDPAssociation) send(kind byte, id uint64, message uint32, index, total byte, body []byte) error {
+func (a *randomUDPAssociation) send(kind byte, id uint64, message uint32, index, total byte, body []byte, deadlines ...time.Time) error {
 	if a.ctx.Err() != nil {
 		return net.ErrClosed
+	}
+	if a.brutal != nil && kind == randomUDPData {
+		var deadline time.Time
+		if len(deadlines) > 0 {
+			deadline = deadlines[0]
+		}
+		if err := a.brutal.wait(a.ctx, deadline, randomUDPFrameSize+len(body)+brutalDataHeader+96); err != nil {
+			return err
+		}
+		body = a.brutal.frame(body)
 	}
 	frame := make([]byte, randomUDPFrameSize+len(body))
 	frame[0] = kind
@@ -113,11 +125,27 @@ func (a *randomUDPAssociation) receive(packet tunnelcrypto.DatagramPacket) {
 	}
 	kind, id, message, index, total := plain[0], binary.BigEndian.Uint64(plain[1:9]), binary.BigEndian.Uint32(plain[9:13]), int(plain[13]), int(plain[14])
 	body := plain[15:]
-	if kind < randomUDPOpen || kind > randomUDPPong || total == 0 || total > 60 || index >= total || len(body) > nativePartSize {
+	if kind < randomUDPOpen || kind > randomUDPFeedback || total == 0 || total > 61 || index >= total || len(body) > nativePartSize {
 		return
 	}
 	if kind != randomUDPData && (message != 0 || index != 0 || total != 1) {
 		return
+	}
+	if kind == randomUDPFeedback {
+		if a.brutal != nil && id == 0 {
+			a.brutal.feedback(body)
+		}
+		return
+	}
+	if a.brutal != nil && kind == randomUDPData {
+		payload, feedback, ok := a.brutal.receive(body)
+		if !ok {
+			return
+		}
+		body = payload
+		if feedback != nil {
+			_ = a.control(randomUDPFeedback, 0, feedback)
+		}
 	}
 	a.lastReceive.Store(time.Now().UnixNano())
 	if a.server != nil {
@@ -236,13 +264,17 @@ func (f *randomUDPFlow) Write(body []byte) (int, error) {
 	if message == 0 {
 		message = f.message.Add(1)
 	}
-	total := max(1, (len(body)+nativePartSize-1)/nativePartSize)
+	partSize := nativePartSize
+	if f.association.brutal != nil {
+		partSize -= brutalDataHeader
+	}
+	total := max(1, (len(body)+partSize-1)/partSize)
 	for i := 0; i < total; i++ {
 		if f.ctx.Err() != nil {
 			return 0, net.ErrClosed
 		}
-		part := body[min(len(body), i*nativePartSize):min(len(body), (i+1)*nativePartSize)]
-		if err := f.association.send(randomUDPData, f.id, message, byte(i), byte(total), part); err != nil {
+		part := body[min(len(body), i*partSize):min(len(body), (i+1)*partSize)]
+		if err := f.association.send(randomUDPData, f.id, message, byte(i), byte(total), part, deadline); err != nil {
 			return 0, err
 		}
 	}

@@ -27,6 +27,7 @@ type tunnelListener struct {
 	config *pb.ControlMessage
 }
 type tunnelPolicy struct {
+	congestion   map[int64]*pb.TunnelCongestion
 	nativeRoutes map[[16]byte]nativeLink
 	links        map[int64]string
 	rules        map[int64]*pb.EgressRule
@@ -152,12 +153,14 @@ func dialTunnel(ctx context.Context, rule *pb.Rule, target string) (net.Conn, er
 func policyOf(c *pb.ControlMessage) *tunnelPolicy {
 	p := &tunnelPolicy{links: map[int64]string{}, rules: map[int64]*pb.EgressRule{}, dialTimeout: 8 * time.Second}
 	p.nativeRoutes = map[[16]byte]nativeLink{}
+	p.congestion = map[int64]*pb.TunnelCongestion{}
 	if c.Node != nil && c.Node.DialTimeoutSeconds > 0 {
 		p.dialTimeout = time.Duration(c.Node.DialTimeoutSeconds) * time.Second
 	}
 	for _, link := range c.TunnelLinks {
 		p.links[link.IngressNodeId] = link.Token
-		p.nativeRoutes[nativeRouteTag(link.Token)] = nativeLink{ingress: link.IngressNodeId, key: link.Token}
+		p.congestion[link.IngressNodeId] = link.Congestion
+		p.nativeRoutes[nativeRouteTag(link.Token)] = nativeLink{ingress: link.IngressNodeId, key: link.Token, congestion: link.Congestion}
 	}
 	for _, rule := range c.EgressRules {
 		p.rules[rule.RuleId] = proto.Clone(rule).(*pb.EgressRule)
@@ -168,7 +171,7 @@ func policyOf(c *pb.ControlMessage) *tunnelPolicy {
 func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
 	if e.h3Listener != nil {
 		old := e.h3Listener.config
-		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && c.Node.TunnelProtocol == old.TunnelProtocol && c.Node.TunnelListenHost == old.TunnelListenHost && c.Node.TunnelListenPort == old.TunnelListenPort && sameH2Listener(old.Tls, c.Node.Tls) && proto.Equal(old.Tls.GetQuicPadding(), c.Node.Tls.GetQuicPadding()) {
+		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && c.Node.TunnelProtocol == old.TunnelProtocol && e.sameBrutal(old, c) && c.Node.TunnelListenHost == old.TunnelListenHost && c.Node.TunnelListenPort == old.TunnelListenPort && sameH2Listener(old.Tls, c.Node.Tls) && proto.Equal(old.Tls.GetQuicPadding(), c.Node.Tls.GetQuicPadding()) {
 			pair, err := tls.X509KeyPair([]byte(c.Node.Tls.Certificate), []byte(c.Node.Tls.PrivateKey))
 			if err != nil {
 				return err
@@ -183,7 +186,7 @@ func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
 
 	if e.randomUDP != nil {
 		old := e.randomUDP.node
-		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && c.Node.TunnelProtocol == old.TunnelProtocol && c.Node.TunnelListenHost == old.TunnelListenHost && c.Node.TunnelListenPort == old.TunnelListenPort && c.Node.UdpIdleTimeoutSeconds == old.UdpIdleTimeoutSeconds && proto.Equal(old.Random, c.Node.Random) {
+		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && c.Node.TunnelProtocol == old.TunnelProtocol && e.sameBrutal(old, c) && c.Node.TunnelListenHost == old.TunnelListenHost && c.Node.TunnelListenPort == old.TunnelListenPort && c.Node.UdpIdleTimeoutSeconds == old.UdpIdleTimeoutSeconds && proto.Equal(old.Random, c.Node.Random) {
 			e.tunnelPolicy.Store(policyOf(c))
 			return nil
 		}
@@ -192,7 +195,7 @@ func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
 	}
 
 	if e.nativeUDP != nil {
-		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && c.Node.TunnelProtocol == e.nativeUDP.node.TunnelProtocol && c.Node.TunnelListenHost == e.nativeUDP.node.TunnelListenHost && c.Node.TunnelListenPort == e.nativeUDP.node.TunnelListenPort {
+		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && c.Node.TunnelProtocol == e.nativeUDP.node.TunnelProtocol && e.sameBrutal(e.nativeUDP.node, c) && c.Node.TunnelListenHost == e.nativeUDP.node.TunnelListenHost && c.Node.TunnelListenPort == e.nativeUDP.node.TunnelListenPort {
 			e.tunnelPolicy.Store(policyOf(c))
 			return nil
 		}

@@ -17,6 +17,12 @@ import (
 const maxDatagram = 65535
 const maxQueuedUDPBytes = 32 << 20
 
+// Account for the queue entry and slice header even when a datagram has no
+// payload. Otherwise empty datagrams bypass the shared memory budget.
+const minQueuedUDPItemBytes = 64
+
+func udpQueueCharge(n int) int64 { return int64(max(n, minQueuedUDPItemBytes)) }
+
 var errUDPRate = errors.New("UDP packet rate limited")
 
 func networkIncludes(protocol, network string) bool {
@@ -203,16 +209,17 @@ func (e *Engine) readUDP(l *udpListener, a *Account, count *atomic.Int64) {
 			go e.runUDP(session, a, count)
 		}
 		if session != nil {
-			if e.udpQueued.Add(int64(n)) <= maxQueuedUDPBytes {
+			charge := udpQueueCharge(n)
+			if e.udpQueued.Add(charge) <= maxQueuedUDPBytes {
 				packet := append([]byte{}, buffer[:n]...)
 				select {
 				case session.queue <- packet:
 					session.last.Store(time.Now().UnixNano())
 				default:
-					e.udpQueued.Add(-int64(n))
+					e.udpQueued.Add(-charge)
 				}
 			} else {
-				e.udpQueued.Add(-int64(n))
+				e.udpQueued.Add(-charge)
 			}
 		}
 		l.mu.Unlock()
@@ -262,7 +269,7 @@ func (e *Engine) runUDP(s *udpAssociation, a *Account, count *atomic.Int64) {
 		for {
 			select {
 			case p := <-s.queue:
-				e.udpQueued.Add(-int64(len(p)))
+				e.udpQueued.Add(-udpQueueCharge(len(p)))
 			default:
 				l.mu.Unlock()
 				a.removeIP(s.source.Addr().String())
@@ -323,7 +330,7 @@ func (e *Engine) runUDP(s *udpAssociation, a *Account, count *atomic.Int64) {
 				return
 			}
 		case p := <-s.queue:
-			e.udpQueued.Add(-int64(len(p)))
+			e.udpQueued.Add(-udpQueueCharge(len(p)))
 			reservation, ok := e.reserveUDPPacket(s, a, len(p))
 			if !ok {
 				continue

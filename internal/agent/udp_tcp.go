@@ -24,6 +24,7 @@ import (
 
 type udpStreamOpen struct {
 	h2Open
+	Brutal         bool  `json:"brutal,omitempty"`
 	Time           int64 `json:"time"`
 	Padding        bool  `json:"padding,omitempty"`
 	PaddingVersion int   `json:"padding_version,omitempty"`

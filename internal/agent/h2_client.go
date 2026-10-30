@@ -74,7 +74,7 @@ func newH2Transport() *h2Transport {
 func h2PoolKey(rule *pb.Rule) string {
 	encoded, _ := json.Marshal(rule.Tls)
 	if tunnel.Random(rule.TunnelProtocol) || tunnel.H3(rule.TunnelProtocol) {
-		encoded, _ = json.Marshal([]any{rule.Tls, rule.Random, rule.IngressNodeId, rule.EgressNodeId, rule.TunnelToken})
+		encoded, _ = json.Marshal([]any{rule.Tls, rule.Random, rule.Congestion, rule.IngressNodeId, rule.EgressNodeId, rule.TunnelToken})
 	}
 	sum := sha256.Sum256(encoded)
 	return rule.TunnelProtocol + net.JoinHostPort(rule.TunnelHost, strconv.Itoa(int(rule.TunnelPort))) + hex.EncodeToString(sum[:])
