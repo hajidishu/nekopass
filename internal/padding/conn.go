@@ -12,11 +12,15 @@ const overhead = 7
 const dataCommand = 2
 const wasteCommand = 0
 const finCommand = 3
+const shapedDataCommand = 4
 const chunkSize = 32 << 10
 
 // Version 2 carries padding inside FIN itself. Both peers must negotiate this
 // version before exchanging frames; a version 1 FIN has an empty payload.
 const WireVersion = 2
+
+// MuxWireVersion keeps short writes padded for the entire carrier lifetime.
+const MuxWireVersion = 3
 const finMin = 64
 const finMax = 1024
 const finReserve = overhead + finMax
@@ -32,12 +36,16 @@ type Conn struct {
 	scheme                                *Scheme
 	readMu, writeMu                       sync.Mutex
 	remaining                             int
+	tailPadding                           int
+	continuous                            bool
 	finished, writeClosed                 bool
 	writeCloseErr                         error
 	reads, wasteBytes, extraBytes, writes int
 }
 
 func NewConn(c net.Conn, s *Scheme) *Conn { return &Conn{Conn: c, scheme: s} }
+
+func NewMuxConn(c net.Conn, s *Scheme) *Conn { return &Conn{Conn: c, scheme: s, continuous: true} }
 
 func header(command byte, length int) [overhead]byte {
 	var h [overhead]byte
@@ -58,6 +66,12 @@ func (c *Conn) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 	for c.remaining == 0 {
+		if c.tailPadding > 0 {
+			if err := discard(c.Conn, c.tailPadding); err != nil {
+				return 0, err
+			}
+			c.tailPadding = 0
+		}
 		var h [overhead]byte
 		if _, err := io.ReadFull(c.Conn, h[:]); err != nil {
 			if errors.Is(err, io.EOF) {
@@ -69,10 +83,24 @@ func (c *Conn) Read(p []byte) (int, error) {
 		n := int(binary.BigEndian.Uint16(h[5:]))
 		switch h[0] {
 		case dataCommand:
-			if id != 1 || n == 0 || n > chunkSize {
+			if c.continuous || id != 1 || n == 0 || n > chunkSize {
 				return 0, errFrame
 			}
 			c.remaining = n
+		case shapedDataCommand:
+			if !c.continuous || id != 1 || n < 4 || n > (15<<10)+2+256 {
+				return 0, errFrame
+			}
+			var size [2]byte
+			if _, err := io.ReadFull(c.Conn, size[:]); err != nil {
+				return 0, err
+			}
+			real := int(binary.BigEndian.Uint16(size[:]))
+			extra := n - 2 - real
+			if real < 1 || real > 15<<10 || extra < 1 || extra > 256 {
+				return 0, errFrame
+			}
+			c.remaining, c.tailPadding = real, extra
 		case wasteCommand:
 			c.reads++
 			c.wasteBytes += n + overhead
@@ -196,12 +224,31 @@ func (c *Conn) Write(p []byte) (int, error) {
 	total := 0
 	for len(p) > 0 {
 		n := min(len(p), chunkSize)
-		b := (*holder)[:overhead+n]
-		h := header(dataCommand, n)
+		prefix, extra, command := overhead, 0, byte(dataCommand)
+		if c.continuous {
+			n = min(len(p), 15<<10)
+			maxExtra := 256
+			if n > 1024 {
+				maxExtra = 64
+			}
+			var err error
+			extra, err = randomSize(interval{1, maxExtra + 1})
+			if err != nil {
+				return total, err
+			}
+			prefix, command = overhead+2, shapedDataCommand
+		}
+		b := (*holder)[:prefix+n+extra]
+		h := header(command, len(b)-overhead)
 		copy(b, h[:])
-		copy(b[overhead:], p[:n])
+		if c.continuous {
+			binary.BigEndian.PutUint16(b[overhead:prefix], uint16(n))
+		}
+		copy(b[prefix:], p[:n])
+		// Clear pooled tail bytes: no unrelated business data is carried as waste.
+		clear(b[prefix+n:])
 		written, err := c.shaped(b)
-		total += max(0, min(n, written-overhead))
+		total += max(0, min(n, written-prefix))
 		if err != nil {
 			return total, err
 		}

@@ -37,6 +37,11 @@ type nativePeer struct {
 	id                          [16]byte
 	key                         string
 	sendKey                     []byte
+	envelope                    *nativeEnvelope
+	ingressToExit               bool
+	handshakeConfirmed          atomic.Bool
+	gateDigest                  [32]byte
+	sentWire                    atomic.Uint64
 	sequence                    atomic.Uint64
 	message                     atomic.Uint32
 	replay                      h2ServerSession
@@ -77,7 +82,7 @@ func nativePacketKey(key string, id [16]byte, ingressToExit bool) []byte {
 
 func newNativePeer(ctx context.Context, conn *net.UDPConn, remote *net.UDPAddr, key string, id [16]byte, queued *atomic.Int64, sendIngressToExit bool) *nativePeer {
 	ctx, cancel := context.WithCancel(ctx)
-	return &nativePeer{ctx: ctx, cancel: cancel, conn: conn, remote: remote, key: key, id: id, route: nativeRouteTag(key), queue: make(chan nativeMessage, 64), parts: map[uint32]*udpParts{}, queued: queued, deadlineChanged: make(chan struct{}, 1), sendKey: nativePacketKey(key, id, sendIngressToExit)}
+	return &nativePeer{ctx: ctx, cancel: cancel, conn: conn, remote: remote, key: key, id: id, route: nativeRouteTag(key), queue: make(chan nativeMessage, 64), parts: map[uint32]*udpParts{}, queued: queued, deadlineChanged: make(chan struct{}, 1), sendKey: nativePacketKey(key, id, sendIngressToExit), ingressToExit: sendIngressToExit}
 }
 func (p *nativePeer) send(kind byte, body []byte) error {
 	if len(body) > maxDatagram {
@@ -90,6 +95,9 @@ func (p *nativePeer) send(kind byte, body []byte) error {
 		return context.DeadlineExceeded
 	}
 	partSize := nativePartSize
+	if p.envelope != nil {
+		partSize -= nativeEnvelopeOverhead
+	}
 	if p.brutal != nil && kind == nativeData {
 		partSize -= brutalDataHeader
 	}
@@ -101,7 +109,11 @@ func (p *nativePeer) send(kind byte, body []byte) error {
 		}
 		chunk := body[min(len(body), part*partSize):min(len(body), (part+1)*partSize)]
 		if p.brutal != nil && kind == nativeData {
-			if err := p.brutal.wait(p.ctx, deadline, nativeHeader+len(chunk)+brutalDataHeader+nativeMAC); err != nil {
+			envelopeBytes := 0
+			if p.envelope != nil {
+				envelopeBytes = nativeEnvelopeOverhead
+			}
+			if err := p.brutal.wait(p.ctx, deadline, nativeHeader+len(chunk)+brutalDataHeader+nativeMAC+envelopeBytes); err != nil {
 				return err
 			}
 			chunk = p.brutal.frame(chunk)
@@ -118,12 +130,23 @@ func (p *nativePeer) send(kind byte, body []byte) error {
 		mac := hmac.New(sha256.New, p.sendKey)
 		mac.Write(wire[:len(wire)-nativeMAC])
 		copy(wire[len(wire)-nativeMAC:], mac.Sum(nil))
-		if _, err := p.conn.WriteToUDP(wire, p.remote); err != nil {
+		if p.envelope != nil {
+			var err error
+			wire, err = p.envelope.seal(wire, p.ingressToExit)
+			if err != nil {
+				return err
+			}
+		}
+		n, err := p.conn.WriteToUDP(wire, p.remote)
+		p.sentWire.Add(uint64(n))
+		if err != nil {
 			return err
 		}
 	}
 	return nil
 }
+
+func (p *nativePeer) wireBytesSent() uint64 { return p.sentWire.Load() }
 func decodeNative(wire []byte, key string, ingressToExit bool) (route, id [16]byte, seq uint64, kind byte, msg uint32, index, total int, body []byte, ok bool) {
 	if len(wire) < nativeHeader+nativeMAC || len(wire) > nativeHeader+nativePartSize+nativeMAC {
 		return

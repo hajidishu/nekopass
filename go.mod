@@ -4,6 +4,7 @@ go 1.26.10
 
 require (
 	github.com/go-acme/lego/v4 v4.35.2
+	github.com/hashicorp/yamux v0.1.2
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pion/dtls/v3 v3.1.10
 	github.com/quic-go/masque-go v0.6.0

@@ -3,7 +3,6 @@ package tunnelcrypto
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"io"
 	"net"
 	"testing"
@@ -83,29 +82,6 @@ func TestHandshakeReplayAndTampering(t *testing.T) {
 		})
 	}
 }
-func TestReplayWindowBounded(t *testing.T) {
-	_, cfg := configs(t, ChaCha20Poly1305)
-	s, _ := NewServer(cfg)
-	for j := 0; j < replayLimit; j++ {
-		var salt [24]byte
-		binary.BigEndian.PutUint64(salt[:8], uint64(j))
-		if !s.take(salt) {
-			t.Fatal("premature replay bound")
-		}
-	}
-	var salt [24]byte
-	salt[23] = 1
-	if s.take(salt) || len(s.seen) != replayLimit {
-		t.Fatal("replay cache unbounded")
-	}
-	for k := range s.seen {
-		s.seen[k] = time.Now().Add(-time.Second)
-	}
-	if !s.take(salt) || len(s.seen) != 1 {
-		t.Fatal("expired entries not reclaimed")
-	}
-}
-
 func FuzzRecordReader(f *testing.F) {
 	f.Add([]byte{})
 	f.Add(bytes.Repeat([]byte{1}, 100))

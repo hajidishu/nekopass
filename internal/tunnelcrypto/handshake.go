@@ -6,19 +6,20 @@ import (
 	"crypto/ecdh"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"io"
 	"net"
-	"sync"
 	"time"
 
+	"github.com/nekopass/nekopass/internal/handshakereplay"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-const routeSize = 19 // version, cipher, transport, ingress ID, exit ID (all encrypted)
+const routeSize = 27 // version, cipher, transport, ingress ID, exit ID, timestamp (encrypted)
 const clientWireSize = 24 + routeSize + 48 + 16
 const serverWireSize = 24 + 72 + 16
-const replayLimit = 65536
+const replayLimit = handshakereplay.Limit
 
 type ClientConfig struct {
 	Cipher, Key, LinkKey, Transport string
@@ -28,13 +29,12 @@ type ServerConfig struct {
 	Cipher, Key, Transport string
 	ExitID                 int64
 	LinkKey                func(int64) (string, bool)
+	Replay                 handshakereplay.Store
 }
 type Server struct {
 	cfg    ServerConfig
 	cover  cipher.AEAD
-	mu     sync.Mutex
-	seen   map[[24]byte]time.Time
-	pruned time.Time
+	replay handshakereplay.Store
 }
 
 func NewServer(cfg ServerConfig) (*Server, error) {
@@ -45,8 +45,12 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	if !ValidCipher(cfg.Cipher) || cfg.ExitID <= 0 || transportID(cfg.Transport) == 0 || cfg.LinkKey == nil {
 		return nil, ErrAuthentication
 	}
-	cover, _ := chacha20poly1305.NewX(derive(key, "nekopass/random/v1/cover", 32))
-	return &Server{cfg: cfg, cover: cover, seen: map[[24]byte]time.Time{}}, nil
+	cover, _ := chacha20poly1305.NewX(derive(key, "nekopass/random/v2/cover", 32))
+	store := cfg.Replay
+	if store == nil {
+		store = handshakereplay.NewMemory()
+	}
+	return &Server{cfg: cfg, cover: cover, replay: store}, nil
 }
 func transportID(s string) byte {
 	switch s {
@@ -67,7 +71,7 @@ func cipherID(s string) byte {
 	return 0
 }
 func prologue(route, salt []byte) []byte {
-	out := append([]byte("nekopass/random/v1/handshake\x00"), route...)
+	out := append([]byte("nekopass/random/v2/handshake\x00"), route...)
 	return append(out, salt...)
 }
 func guard(ctx context.Context, c net.Conn) func() {
@@ -118,11 +122,12 @@ func Dial(ctx context.Context, c net.Conn, cfg ClientConfig) (out *Conn, err err
 		return nil, err
 	}
 	route := make([]byte, routeSize)
-	route[0] = 1
+	route[0] = 3
 	route[1] = cipherID(cfg.Cipher)
 	route[2] = transportID(cfg.Transport)
 	binary.BigEndian.PutUint64(route[3:11], uint64(cfg.IngressID))
 	binary.BigEndian.PutUint64(route[11:19], uint64(cfg.ExitID))
+	binary.BigEndian.PutUint64(route[19:27], uint64(time.Now().Unix()))
 	n := newNoise(cfg.Cipher, prologue(route, salt[:]), psk)
 	private, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
@@ -131,7 +136,7 @@ func Dial(ctx context.Context, c net.Conn, cfg ClientConfig) (out *Conn, err err
 	pub := private.PublicKey().Bytes()
 	n.ephemeral(pub)
 	message := append(append(route, pub...), n.seal(nil)...)
-	cover, _ := chacha20poly1305.NewX(derive(key, "nekopass/random/v1/cover", 32))
+	cover, _ := chacha20poly1305.NewX(derive(key, "nekopass/random/v2/cover", 32))
 	wire := append(salt[:], cover.Seal(nil, salt[:], message, []byte("client"))...)
 	if err = writeFull(c, wire); err != nil {
 		return nil, err
@@ -176,7 +181,8 @@ func (s *Server) Accept(ctx context.Context, c net.Conn) (out *Conn, err error) 
 	route := message[:routeSize]
 	ingress := int64(binary.BigEndian.Uint64(route[3:11]))
 	exit := int64(binary.BigEndian.Uint64(route[11:19]))
-	if route[0] != 1 || route[1] != cipherID(s.cfg.Cipher) || route[2] != transportID(s.cfg.Transport) || ingress <= 0 || exit != s.cfg.ExitID {
+	stamp := int64(binary.BigEndian.Uint64(route[19:27]))
+	if route[0] != 3 || route[1] != cipherID(s.cfg.Cipher) || route[2] != transportID(s.cfg.Transport) || ingress <= 0 || exit != s.cfg.ExitID || !handshakereplay.ValidTimestamp(stamp, time.Now().Unix()) {
 		return nil, ErrAuthentication
 	}
 	token, ok := s.cfg.LinkKey(ingress)
@@ -195,7 +201,8 @@ func (s *Server) Accept(ctx context.Context, c net.Conn) (out *Conn, err error) 
 	}
 	var clientSalt [24]byte
 	copy(clientSalt[:], wire[:24])
-	if !s.take(clientSalt) {
+	claimed, replayErr := s.replay.Claim(sha256.Sum256(wire), handshakereplay.Expiry(stamp))
+	if replayErr != nil || !claimed {
 		return nil, ErrAuthentication
 	}
 	private, err := ecdh.X25519().GenerateKey(rand.Reader)
@@ -218,22 +225,4 @@ func (s *Server) Accept(ctx context.Context, c net.Conn) (out *Conn, err error) 
 	}
 	clientSend, clientReceive := n.split()
 	return newConn(c, s.cfg.Cipher, clientReceive, clientSend, n.h, ingress), nil
-}
-func (s *Server) take(salt [24]byte) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now()
-	if now.Sub(s.pruned) > time.Second || len(s.seen) >= replayLimit {
-		for key, expiry := range s.seen {
-			if !expiry.After(now) {
-				delete(s.seen, key)
-			}
-		}
-		s.pruned = now
-	}
-	if _, ok := s.seen[salt]; ok || len(s.seen) >= replayLimit {
-		return false
-	}
-	s.seen[salt] = now.Add(time.Minute)
-	return true
 }

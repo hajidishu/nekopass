@@ -36,7 +36,7 @@ func OpenState(path string) (*State, error) {
 	}
 	s := &State{db: db}
 	e = db.Update(func(tx *bolt.Tx) error {
-		for _, n := range []string{"meta", "users", "rules", "retired_users"} {
+		for _, n := range []string{"meta", "users", "rules", "retired_users", "handshake_replay", "handshake_replay_expiry"} {
 			if _, e := tx.CreateBucketIfNotExists([]byte(n)); e != nil {
 				return e
 			}

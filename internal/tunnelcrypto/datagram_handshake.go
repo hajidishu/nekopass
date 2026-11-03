@@ -7,8 +7,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"sync"
 	"time"
 
+	"github.com/nekopass/nekopass/internal/handshakereplay"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -30,6 +32,10 @@ type DatagramServer struct {
 	cover        cipher.AEAD
 	header       *datagramHeaderKey
 	cookieSecret [32]byte
+	gate         *handshakereplay.Gate
+	mu           sync.Mutex
+	requests     map[[32]byte]*DatagramRequest
+	pruned       int64
 }
 type DatagramRequest struct {
 	server  *DatagramServer
@@ -39,20 +45,25 @@ type DatagramRequest struct {
 	digest  [32]byte
 	ingress int64
 	link    string
+	expires int64
+	mu      sync.Mutex
+	reply   []byte
+	session *DatagramSession
+	failed  bool
 }
 
 func (r *DatagramRequest) Digest() [32]byte { return r.digest }
 func (r *DatagramRequest) IngressID() int64 { return r.ingress }
 func (r *DatagramRequest) LinkKey() string  { return r.link }
 func datagramPrologue(route, salt []byte) []byte {
-	return append(append([]byte("nekopass/random/udp/v1/handshake\x00"), route...), salt...)
+	return append(append([]byte("nekopass/random/udp/v2/handshake\x00"), route...), salt...)
 }
 func datagramCover(key string) (cipher.AEAD, error) {
 	b, err := DecodeKey(key)
 	if err != nil {
 		return nil, err
 	}
-	return chacha20poly1305.NewX(derive(b, "nekopass/random/udp/v1/cover", 32))
+	return chacha20poly1305.NewX(derive(b, "nekopass/random/udp/v2/cover", 32))
 }
 func NewDatagramHandshake(cfg ClientConfig) (*DatagramHandshake, error) {
 	if !ValidCipher(cfg.Cipher) || cfg.Transport != "raw_udp" || cfg.IngressID <= 0 || cfg.ExitID <= 0 {
@@ -75,11 +86,12 @@ func NewDatagramHandshake(cfg ClientConfig) (*DatagramHandshake, error) {
 		return nil, err
 	}
 	route := make([]byte, routeSize)
-	route[0] = 2
+	route[0] = 4
 	route[1] = cipherID(cfg.Cipher)
 	route[2] = 3
 	binary.BigEndian.PutUint64(route[3:11], uint64(cfg.IngressID))
 	binary.BigEndian.PutUint64(route[11:], uint64(cfg.ExitID))
+	binary.BigEndian.PutUint64(route[19:27], uint64(time.Now().Unix()))
 	h.noise = newNoise(cfg.Cipher, datagramPrologue(route, h.salt[:]), psk)
 	h.private, err = ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
@@ -136,12 +148,28 @@ func NewDatagramServer(cfg ServerConfig) (*DatagramServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &DatagramServer{cfg: cfg, cover: cover, header: header}
+	s := &DatagramServer{cfg: cfg, cover: cover, header: header, gate: handshakereplay.NewGate(cfg.Replay), requests: make(map[[32]byte]*DatagramRequest)}
 	_, err = rand.Read(s.cookieSecret[:])
 	return s, err
 }
 func (s *DatagramServer) ParsePacket(wire []byte) (DatagramPacket, error) {
 	return s.header.parse(wire, true)
+}
+
+func (s *DatagramServer) Complete(digest [32]byte) {
+	s.gate.Retire(digest)
+	s.mu.Lock()
+	r := s.requests[digest]
+	delete(s.requests, digest)
+	s.mu.Unlock()
+	if r != nil {
+		r.mu.Lock()
+		r.failed = true
+		r.noise = nil
+		r.reply = nil
+		r.session = nil
+		r.mu.Unlock()
+	}
 }
 
 // The bucket is implicit: returning a clear timestamp here would create a
@@ -168,8 +196,8 @@ func (s *DatagramServer) response(salt [24]byte, kind byte, payload []byte) ([]b
 }
 
 // Check validates the client's PSK before answering a source-address challenge.
-// No DH, target socket, or per-client allocation is retained until the cookie
-// proves return reachability. The caller deduplicates validated requests.
+// No DH or target socket is created before a source-bound challenge. Small,
+// bounded pending entries are retained only for authenticated first flights.
 func (s *DatagramServer) Check(wire []byte, source string) (*DatagramRequest, []byte, error) {
 	if len(wire) != DatagramInitialSize && len(wire) != DatagramInitialSize+DatagramCookieSize {
 		return nil, nil, ErrAuthentication
@@ -182,7 +210,8 @@ func (s *DatagramServer) Check(wire []byte, source string) (*DatagramRequest, []
 	route := message[:routeSize]
 	ingress := int64(binary.BigEndian.Uint64(route[3:11]))
 	exit := int64(binary.BigEndian.Uint64(route[11:]))
-	if route[0] != 2 || route[1] != cipherID(s.cfg.Cipher) || route[2] != 3 || ingress <= 0 || exit != s.cfg.ExitID {
+	stamp := int64(binary.BigEndian.Uint64(route[19:27]))
+	if route[0] != 4 || route[1] != cipherID(s.cfg.Cipher) || route[2] != 3 || ingress <= 0 || exit != s.cfg.ExitID || !handshakereplay.ValidTimestamp(stamp, time.Now().Unix()) {
 		return nil, nil, ErrAuthentication
 	}
 	token, ok := s.cfg.LinkKey(ingress)
@@ -199,27 +228,61 @@ func (s *DatagramServer) Check(wire []byte, source string) (*DatagramRequest, []
 	if _, err = n.open(message[routeSize+32:]); err != nil {
 		return nil, nil, err
 	}
-	r := &DatagramRequest{server: s, noise: n, public: pub, digest: sha256.Sum256(first), ingress: ingress, link: token}
+	r := &DatagramRequest{server: s, noise: n, public: append([]byte(nil), pub...), digest: sha256.Sum256(first), ingress: ingress, link: token, expires: handshakereplay.Expiry(stamp)}
 	copy(r.salt[:], first[:24])
-	valid := false
-	now := time.Now().Unix() / 60
-	if len(wire) > DatagramInitialSize {
-		c := wire[DatagramInitialSize:]
-		current := hmac.Equal(c, s.cookie(source, r.digest, c[:16], now))
-		previous := hmac.Equal(c, s.cookie(source, r.digest, c[:16], now-1))
-		valid = current || previous
-	}
-	if !valid {
+	challenge, verified, err := s.gate.Exchange(r.digest, source, r.expires, wire[DatagramInitialSize:], func() ([]byte, []byte, error) {
 		var salt [16]byte
-		if _, err = rand.Read(salt[:]); err != nil {
+		if _, err := rand.Read(salt[:]); err != nil {
 			return nil, nil, err
 		}
-		reply, err := s.response(r.salt, 1, s.cookie(source, r.digest, salt[:], now))
-		return nil, reply, err
+		cookie := s.cookie(source, r.digest, salt[:], time.Now().Unix()/60)
+		reply, err := s.response(r.salt, 1, cookie)
+		return reply, cookie, err
+	})
+	if err != nil || !verified {
+		return nil, challenge, err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.gate.Pending(r.digest) {
+		return nil, nil, ErrAuthentication
+	}
+	now := time.Now().Unix()
+	if s.pruned != now || len(s.requests) >= handshakereplay.Limit {
+		for key, request := range s.requests {
+			if request.expires <= now {
+				delete(s.requests, key)
+			}
+		}
+		s.pruned = now
+	}
+	if cached := s.requests[r.digest]; cached != nil {
+		return cached, nil, nil
+	}
+	if len(s.requests) >= handshakereplay.Limit {
+		return nil, nil, ErrAuthentication
+	}
+	s.requests[r.digest] = r
 	return r, nil, nil
 }
 func (r *DatagramRequest) Respond() (reply []byte, session *DatagramSession, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failed {
+		return nil, nil, ErrAuthentication
+	}
+	if r.session != nil {
+		return append([]byte(nil), r.reply...), r.session, nil
+	}
+	reply, session, err = r.respond()
+	if err != nil {
+		r.failed = true
+		return nil, nil, err
+	}
+	r.reply, r.session = append([]byte(nil), reply...), session
+	return reply, session, nil
+}
+func (r *DatagramRequest) respond() (reply []byte, session *DatagramSession, err error) {
 	private, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, nil, err

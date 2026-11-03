@@ -35,7 +35,7 @@ func (e *Engine) newRandomListener(ctx context.Context, ln net.Listener, node *p
 		return nil, errors.New("random encryption settings missing")
 	}
 	transport, _ := tunnel.Split(node.TunnelProtocol)
-	server, err := tunnelcrypto.NewServer(tunnelcrypto.ServerConfig{Cipher: node.Random.Cipher, Key: node.Random.Key, Transport: transport, ExitID: node.NodeId, LinkKey: func(id int64) (string, bool) {
+	server, err := tunnelcrypto.NewServer(tunnelcrypto.ServerConfig{Cipher: node.Random.Cipher, Key: node.Random.Key, Transport: transport, ExitID: node.NodeId, Replay: e.state, LinkKey: func(id int64) (string, bool) {
 		policy := e.tunnelPolicy.Load()
 		if policy == nil {
 			return "", false

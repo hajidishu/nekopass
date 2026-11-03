@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/nekopass/nekopass/internal/tunnel"
 	"math"
 	"net"
 	"sync"
@@ -17,11 +19,17 @@ import (
 )
 
 type randomUDPDial struct {
+	base string
+
 	done        chan struct{}
 	association *randomUDPAssociation
 	err         error
 }
 type randomUDPPool struct {
+	byBase map[string]map[string]*randomUDPDial
+
+	next uint64
+
 	brutalBudget *brutal.Budget
 	mu           sync.Mutex
 	ctx          context.Context
@@ -33,7 +41,7 @@ type randomUDPPool struct {
 
 func newRandomUDPPool() *randomUDPPool {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &randomUDPPool{ctx: ctx, cancel: cancel, peers: map[string]*randomUDPDial{}}
+	return &randomUDPPool{byBase: map[string]map[string]*randomUDPDial{}, ctx: ctx, cancel: cancel, peers: map[string]*randomUDPDial{}}
 }
 func (p *randomUDPPool) Close() {
 	p.mu.Lock()
@@ -58,11 +66,11 @@ func (p *randomUDPPool) Close() {
 func (p *randomUDPPool) Prune(rules []*pb.Rule) {
 	wanted := map[string]bool{}
 	for _, r := range rules {
-		if r.Enabled && r.TunnelProtocol == "random_udp" {
+		if r.Enabled && (r.TunnelProtocol == "random_udp" || tunnel.UDP(r.TunnelProtocol) && r.Mux.GetEnabled()) {
 			wanted[h2PoolKey(r)] = true
 		}
 		for _, v := range r.EgressPeers {
-			if r.Enabled && v.Protocol == "random_udp" {
+			if r.Enabled && (v.Protocol == "random_udp" || tunnel.UDP(v.Protocol) && v.Mux.GetEnabled()) {
 				wanted[h2PoolKey(peerRule(r, v))] = true
 			}
 		}
@@ -70,7 +78,7 @@ func (p *randomUDPPool) Prune(rules []*pb.Rule) {
 	p.mu.Lock()
 	var close []*randomUDPAssociation
 	for key, d := range p.peers {
-		if wanted[key] || d.association == nil {
+		if wanted[d.base] || wanted[key] || d.association == nil {
 			continue
 		}
 		a := d.association
@@ -86,46 +94,90 @@ func (p *randomUDPPool) Prune(rules []*pb.Rule) {
 		a.Close()
 	}
 }
+func (p *randomUDPPool) removeDialLocked(key string, d *randomUDPDial) {
+	if p.peers[key] != d {
+		return
+	}
+	delete(p.peers, key)
+	delete(p.byBase[d.base], key)
+	if len(p.byBase[d.base]) == 0 {
+		delete(p.byBase, d.base)
+	}
+}
 func (p *randomUDPPool) association(ctx context.Context, r *pb.Rule, queued *atomic.Int64) (*randomUDPAssociation, error) {
-	key := h2PoolKey(r)
+	base := h2PoolKey(r)
+	cfg := tunnel.MuxSettings(r.Mux)
 	for {
 		p.mu.Lock()
 		if p.closed {
 			p.mu.Unlock()
 			return nil, net.ErrClosed
 		}
-		if d := p.peers[key]; d != nil {
+		var waiting *randomUDPDial
+		count := 0
+		for _, d := range p.byBase[base] {
+			if d.base != base {
+				continue
+			}
+			if d.association == nil {
+				waiting = d
+				count++
+				continue
+			}
+			a := d.association
+			if a.ctx.Err() != nil {
+				continue
+			}
+			count++
+			a.mu.Lock()
+			available := !cfg.Enabled || len(a.flows)+a.reserved < cfg.MaxStreams
+			if available {
+				a.reserved++
+				a.mu.Unlock()
+				p.mu.Unlock()
+				return a, nil
+			}
+			a.mu.Unlock()
+		}
+		if waiting != nil {
 			p.mu.Unlock()
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case <-p.ctx.Done():
 				return nil, net.ErrClosed
-			case <-d.done:
-			}
-			if d.err != nil {
-				return nil, d.err
-			}
-			if d.association.ctx.Err() != nil {
-				p.mu.Lock()
-				if p.peers[key] == d {
-					delete(p.peers, key)
+			case <-waiting.done:
+				if waiting.err != nil {
+					return nil, waiting.err
 				}
-				p.mu.Unlock()
 				continue
 			}
-			return d.association, nil
 		}
-		d := &randomUDPDial{done: make(chan struct{})}
+		if cfg.Enabled && cfg.MaxConnections > 0 && count >= cfg.MaxConnections {
+			p.mu.Unlock()
+			return nil, errMuxCapacity
+		}
+		p.next++
+		key := fmt.Sprint(base, "/", p.next)
+		d := &randomUDPDial{base: base, done: make(chan struct{})}
 		p.peers[key] = d
+		if p.byBase[base] == nil {
+			p.byBase[base] = map[string]*randomUDPDial{}
+		}
+		p.byBase[base][key] = d
 		p.wg.Add(1)
 		p.mu.Unlock()
-		defer p.wg.Done()
 		dialCtx, cancel := context.WithCancel(ctx)
 		stop := context.AfterFunc(p.ctx, cancel)
-		defer stop()
-		defer cancel()
-		a, err := dialRandomUDPAssociation(dialCtx, p.ctx, r, queued, p.brutalBudget)
+		var a *randomUDPAssociation
+		var err error
+		if r.TunnelProtocol == "random_udp" {
+			a, err = dialRandomUDPAssociation(dialCtx, p.ctx, r, queued, p.brutalBudget)
+		} else {
+			a, err = dialNativeMuxAssociation(dialCtx, p.ctx, r, queued, p.brutalBudget)
+		}
+		stop()
+		cancel()
 		p.mu.Lock()
 		if err == nil && p.closed {
 			err = net.ErrClosed
@@ -133,22 +185,32 @@ func (p *randomUDPPool) association(ctx context.Context, r *pb.Rule, queued *ato
 		}
 		d.err = err
 		if err != nil {
-			delete(p.peers, key)
+			p.removeDialLocked(key, d)
 		} else {
+			a.muxConfig = r.Mux
+			a.reserved = 1
 			d.association = a
 			a.onClose = func() {
 				p.mu.Lock()
 				if p.peers[key] == d {
-					delete(p.peers, key)
+					p.removeDialLocked(key, d)
 				}
 				p.mu.Unlock()
 			}
 			p.wg.Add(2)
-			go func() { defer p.wg.Done(); a.readClient() }()
+			go func() {
+				defer p.wg.Done()
+				if a.datagrams != nil {
+					a.readDatagrams()
+				} else {
+					a.readClient()
+				}
+			}()
 			go func() { defer p.wg.Done(); a.maintainClient() }()
 		}
 		close(d.done)
 		p.mu.Unlock()
+		p.wg.Done()
 		return a, err
 	}
 }
@@ -256,7 +318,8 @@ func (p *randomUDPPool) Dial(ctx, lifetime context.Context, r *pb.Rule, target s
 		return nil, err
 	}
 	a.mu.Lock()
-	if a.ctx.Err() != nil || len(a.flows) >= maxRandomUDPFlows || a.flowSequence == math.MaxUint64 {
+	a.reserved--
+	if a.ctx.Err() != nil || len(a.flows) >= a.flowLimit() || a.flowSequence == math.MaxUint64 {
 		a.mu.Unlock()
 		return nil, errors.New("UDP tunnel capacity reached")
 	}
@@ -289,6 +352,13 @@ func (p *randomUDPPool) Dial(ctx, lifetime context.Context, r *pb.Rule, target s
 		case <-f.ctx.Done():
 			return nil, net.ErrClosed
 		case code := <-f.ready:
+			if code == randomUDPBusy && attempts < 4 {
+				a.mu.Lock()
+				f.state = 0
+				a.mu.Unlock()
+				timer.Reset(50 * time.Millisecond)
+				continue
+			}
 			if code == randomUDPReady && f.ctx.Err() == nil {
 				success = true
 				return f, nil
@@ -339,11 +409,18 @@ func (a *randomUDPAssociation) maintainClient() {
 			return
 		case now := <-ticker.C:
 			a.expire(now)
+			if a.server != nil && !a.server.allowed(a) {
+				return
+			}
 			a.mu.Lock()
 			empty := len(a.flows) == 0
 			a.mu.Unlock()
 			if empty {
-				if now.Sub(time.Unix(0, a.lastActivity.Load())) > 8*time.Second {
+				idle := 8 * time.Second
+				if a.muxConfig.GetEnabled() {
+					idle = time.Duration(tunnel.MuxSettings(a.muxConfig).IdleTimeoutSeconds) * time.Second
+				}
+				if now.Sub(time.Unix(0, a.lastActivity.Load())) > idle {
 					return
 				}
 				continue

@@ -28,8 +28,8 @@ func datagramPair(t testing.TB, name string) (*DatagramSession, *DatagramSession
 	if err != nil || session != nil {
 		t.Fatal(err)
 	}
-	if req, challenge, err = gate.Check(retry, "different:123"); err != nil || req != nil || challenge == nil {
-		t.Fatal("cookie not bound to source")
+	if req, challenge, err = gate.Check(retry, "different:123"); err == nil || req != nil || challenge != nil {
+		t.Fatal("captured flight received a response at another source")
 	}
 	req, challenge, err = gate.Check(retry, "source:123")
 	if err != nil || req == nil || challenge != nil {

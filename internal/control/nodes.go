@@ -17,6 +17,7 @@ import (
 
 type NodeInput struct {
 	NodeBandwidth
+	Mux                    *tunnel.MuxConfig   `json:"mux,omitempty"`
 	DenyUDPIngressCreation *bool               `json:"deny_udp_ingress_creation,omitempty"`
 	IngressMultiplier      *billing.Rate       `json:"ingress_multiplier,omitempty"`
 	EgressMultiplier       *billing.Rate       `json:"egress_multiplier,omitempty"`
@@ -58,7 +59,7 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
 		return
 	}
-	rows, e := s.Pool.Query(r.Context(), `SELECT to_char(n.ingress_rate::numeric/10000,'FM9990.0000') AS ingress_multiplier,to_char(n.egress_rate::numeric/10000,'FM9990.0000') AS egress_multiplier,n.bandwidth_up_mbps,n.bandwidth_down_mbps,n.brutal_enabled,n.client_tcp_brutal_enabled,n.id,n.name,n.agent_version,n.update_supported,(SELECT jsonb_build_object('generation',u.generation,'version',u.version,'state',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN 'unconfirmed' ELSE u.state END,'error',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN '超过 15 分钟未收到更新结果，请检查节点连接及更新日志' ELSE u.error END,'requested_at',u.requested_at,'updated_at',u.updated_at) FROM node_updates u WHERE u.node_id=n.id) AS update_status,n.token,(n.instance_id<>'') AS bound,n.public_address,n.notes,n.enabled,n.listen_host,n.port_min,n.port_max,n.max_connections,n.dial_timeout_seconds,n.idle_timeout_seconds,n.udp_idle_timeout_seconds,n.probe_interval_seconds,n.disk_path,n.network_interfaces,n.ingress_enabled,n.deny_udp_ingress_creation,n.allow_direct,n.tunnel_exit_enabled,n.tunnel_protocol,CASE WHEN n.tunnel_protocol IN ('plain_h2','tls_h2','random_h2') THEN 'h2' WHEN n.tunnel_protocol='tls_h3' THEN 'h3' WHEN n.tunnel_protocol IN ('plain_udp','dtls_udp','random_udp') THEN 'raw_udp' ELSE 'raw_tcp' END AS tunnel_transport,CASE WHEN n.tunnel_protocol IN ('tls_tcp','tls_h2','dtls_udp','tls_h3') THEN 'tls' WHEN n.tunnel_protocol IN ('random_tcp','random_h2','random_udp') THEN 'random' ELSE 'none' END AS tunnel_security,n.random_config AS random,n.tls_config AS tls,n.tls_status,n.tls_error,n.tls_not_after,n.protocol_version,n.tunnel_listen_host,n.tunnel_listen_port,n.tunnel_public_host,n.last_seen,n.applied_revision,n.config_revision,n.sync_error,n.active_connections,n.probe,n.probe_received_at,COALESCE(n.last_seen>now()-interval '12 seconds',false) AS online,COALESCE((SELECT array_agg(group_id ORDER BY group_id) FROM node_group_members WHERE node_id=n.id),'{}') AS group_ids,COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}') AS allowed_ingress_ids,(SELECT count(*) FROM rules WHERE node_id=n.id) AS rule_count FROM nodes n ORDER BY n.id`)
+	rows, e := s.Pool.Query(r.Context(), `SELECT to_char(n.ingress_rate::numeric/10000,'FM9990.0000') AS ingress_multiplier,to_char(n.egress_rate::numeric/10000,'FM9990.0000') AS egress_multiplier,n.bandwidth_up_mbps,n.bandwidth_down_mbps,n.brutal_enabled,n.client_tcp_brutal_enabled,n.id,n.name,n.agent_version,n.update_supported,(SELECT jsonb_build_object('generation',u.generation,'version',u.version,'state',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN 'unconfirmed' ELSE u.state END,'error',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN '超过 15 分钟未收到更新结果，请检查节点连接及更新日志' ELSE u.error END,'requested_at',u.requested_at,'updated_at',u.updated_at) FROM node_updates u WHERE u.node_id=n.id) AS update_status,n.token,(n.instance_id<>'') AS bound,n.public_address,n.notes,n.enabled,n.listen_host,n.port_min,n.port_max,n.max_connections,n.dial_timeout_seconds,n.idle_timeout_seconds,n.udp_idle_timeout_seconds,n.probe_interval_seconds,n.disk_path,n.network_interfaces,n.ingress_enabled,n.deny_udp_ingress_creation,n.allow_direct,n.tunnel_exit_enabled,n.tunnel_protocol,CASE WHEN n.tunnel_protocol IN ('plain_h2','tls_h2','random_h2') THEN 'h2' WHEN n.tunnel_protocol='tls_h3' THEN 'h3' WHEN n.tunnel_protocol IN ('plain_udp','dtls_udp','random_udp') THEN 'raw_udp' ELSE 'raw_tcp' END AS tunnel_transport,CASE WHEN n.tunnel_protocol IN ('tls_tcp','tls_h2','dtls_udp','tls_h3') THEN 'tls' WHEN n.tunnel_protocol IN ('random_tcp','random_h2','random_udp') THEN 'random' ELSE 'none' END AS tunnel_security,n.mux_config AS mux,n.random_config AS random,n.tls_config AS tls,n.tls_status,n.tls_error,n.tls_not_after,n.protocol_version,n.tunnel_listen_host,n.tunnel_listen_port,n.tunnel_public_host,n.last_seen,n.applied_revision,n.config_revision,n.sync_error,n.active_connections,n.probe,n.probe_received_at,COALESCE(n.last_seen>now()-interval '12 seconds',false) AS online,COALESCE((SELECT array_agg(group_id ORDER BY group_id) FROM node_group_members WHERE node_id=n.id),'{}') AS group_ids,COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}') AS allowed_ingress_ids,(SELECT count(*) FROM rules WHERE node_id=n.id) AS rule_count FROM nodes n ORDER BY n.id`)
 	s.sendRows(w, rows, e)
 }
 func (s *Server) saveNode(w http.ResponseWriter, r *http.Request) { s.saveNodePart(w, r, "full") }
@@ -135,6 +136,14 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 	}
 	if e = v.NodeBandwidth.validate(v.TunnelProtocol); e != nil {
 		fail(w, 400, e.Error())
+		return
+	}
+	if e = loadMux(ctx, tx, id, &v.Mux); e != nil {
+		s.dbError(w, e)
+		return
+	}
+	if e = v.Mux.Validate(); e != nil {
+		fail(w, 400, "Mux 参数无效：每连接会话数 1–4096、连接上限 0–1024、空闲回收时间 10–3600 秒")
 		return
 	}
 	if tunnel.UDP(v.TunnelProtocol) && !tunnel.Random(v.TunnelProtocol) && v.TLS != nil && v.TLS.Fingerprint != "" && v.TLS.Fingerprint != "off" {
@@ -283,6 +292,11 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 		return
 	}
 	interfaces, _ := json.Marshal(v.NetworkInterfaces)
+	muxData, _ := json.Marshal(v.Mux)
+	if _, e = tx.Exec(ctx, "UPDATE nodes SET mux_config=$2 WHERE id=$1", id, muxData); e != nil {
+		s.dbError(w, e)
+		return
+	}
 	tag, e := tx.Exec(ctx, `UPDATE nodes SET name=$2,public_address=$3,notes=$4,enabled=$5,listen_host=$6,port_min=$7,port_max=$8,max_connections=$9,dial_timeout_seconds=$10,idle_timeout_seconds=$11,probe_interval_seconds=$12,disk_path=$13,network_interfaces=$14,allow_direct=$15,tunnel_exit_enabled=$16,tunnel_protocol=$17,tunnel_listen_host=$18,tunnel_listen_port=$19,tunnel_public_host=$20,token=$21,token_hash=$22,ingress_enabled=$23,config_revision=(SELECT value+1 FROM revision WHERE id=1) WHERE id=$1`, id, v.Name, v.PublicAddress, v.Notes, v.Enabled, v.ListenHost, v.PortMin, v.PortMax, v.MaxConnections, v.DialTimeoutSeconds, v.IdleTimeoutSeconds, v.ProbeIntervalSeconds, v.DiskPath, interfaces, v.AllowDirect, v.TunnelExitEnabled, v.TunnelProtocol, v.TunnelListenHost, v.TunnelListenPort, v.TunnelPublicHost, token, tokenHash, v.IngressEnabled)
 	if e != nil {
 		s.dbError(w, e)

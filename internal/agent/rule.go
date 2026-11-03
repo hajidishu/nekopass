@@ -142,6 +142,8 @@ func (r *ruleRuntime) dialRoute(ctx context.Context) (net.Conn, func(), string, 
 					return nil, nil, "", errors.New("TLS transport unavailable")
 				}
 				c, e = r.h2.Dial(dialCtx, ctx, r.policy, r.targets[i])
+			} else if r.policy.Mux.GetEnabled() && r.h2 != nil {
+				c, e = r.h2.rawMux.Dial(dialCtx, ctx, r.policy, r.targets[i], false)
 			} else {
 				c, e = dialTunnel(dialCtx, r.policy, r.targets[i])
 			}

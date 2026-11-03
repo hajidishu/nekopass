@@ -35,6 +35,10 @@ type listener struct {
 	cancel  context.CancelFunc
 }
 type Engine struct {
+	muxMu       sync.Mutex
+	muxCarriers map[string]int
+	muxTotal    int
+
 	clientTCPBrutal  *clientTCPBrutal
 	brutalBudget     *brutal.Budget
 	mu               sync.Mutex
@@ -140,6 +144,9 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 	defer e.mu.Unlock()
 	if e.closed {
 		return errors.New("engine closed")
+	}
+	if err := validateMuxControl(c); err != nil {
+		return err
 	}
 	if err := validateBrutalControl(c); err != nil {
 		return err

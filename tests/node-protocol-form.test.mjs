@@ -22,3 +22,16 @@ test('security edits are isolated until saved and survive changing transport',()
  assert.equal(form.tls.quic_padding.enabled,true)
  assert.equal(form.tls.padding_enabled,false)
 })
+
+test('Mux transport edits are isolated and survive hidden transport/security choices',()=>{
+ const form=protocolDefaults();const draft=nodeTransportInput(form)
+ draft.mux.enabled=true;draft.mux.max_streams=48;draft.mux.max_connections=0
+ assert.equal(form.mux.enabled,false)
+ applyNodeTransport(form,draft)
+ assert.equal(form.mux.enabled,true);assert.equal(form.mux.max_streams,48)
+ draft.mux.max_streams=7;assert.equal(form.mux.max_streams,48)
+ const next=nodeTransportInput(form);next.tunnel_transport='h3';applyNodeTransport(form,next)
+ assert.equal(form.mux.enabled,true);assert.equal(form.tunnel_security,'tls')
+ const security=nodeSecurityInput(form);applyNodeSecurity(form,security);assert.equal(form.mux.max_streams,48)
+ const back=nodeTransportInput(form);back.tunnel_transport='raw_udp';applyNodeTransport(form,back);assert.equal(form.mux.max_connections,0)
+})

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/nekopass/nekopass/internal/padding"
@@ -186,7 +187,7 @@ func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
 
 	if e.randomUDP != nil {
 		old := e.randomUDP.node
-		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && c.Node.TunnelProtocol == old.TunnelProtocol && e.sameBrutal(old, c) && c.Node.TunnelListenHost == old.TunnelListenHost && c.Node.TunnelListenPort == old.TunnelListenPort && c.Node.UdpIdleTimeoutSeconds == old.UdpIdleTimeoutSeconds && proto.Equal(old.Random, c.Node.Random) {
+		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && c.Node.TunnelProtocol == old.TunnelProtocol && e.sameBrutal(old, c) && c.Node.TunnelListenHost == old.TunnelListenHost && c.Node.TunnelListenPort == old.TunnelListenPort && c.Node.UdpIdleTimeoutSeconds == old.UdpIdleTimeoutSeconds && proto.Equal(old.Mux, c.Node.Mux) && proto.Equal(old.Random, c.Node.Random) {
 			e.tunnelPolicy.Store(policyOf(c))
 			return nil
 		}
@@ -195,7 +196,7 @@ func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
 	}
 
 	if e.nativeUDP != nil {
-		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && c.Node.TunnelProtocol == e.nativeUDP.node.TunnelProtocol && e.sameBrutal(e.nativeUDP.node, c) && c.Node.TunnelListenHost == e.nativeUDP.node.TunnelListenHost && c.Node.TunnelListenPort == e.nativeUDP.node.TunnelListenPort {
+		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && c.Node.TunnelProtocol == e.nativeUDP.node.TunnelProtocol && e.sameBrutal(e.nativeUDP.node, c) && proto.Equal(c.Node.Mux, e.nativeUDP.node.Mux) && (!tunnel.TLS(c.Node.TunnelProtocol) || proto.Equal(c.Node.Random, e.nativeUDP.node.Random)) && c.Node.TunnelListenHost == e.nativeUDP.node.TunnelListenHost && c.Node.TunnelListenPort == e.nativeUDP.node.TunnelListenPort {
 			e.tunnelPolicy.Store(policyOf(c))
 			return nil
 		}
@@ -205,7 +206,7 @@ func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
 	}
 	if e.tunnel != nil {
 		old := e.tunnel.config
-		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && old.Node != nil && old.Node.TunnelExitEnabled && old.Node.TunnelProtocol == c.Node.TunnelProtocol && old.Node.TunnelListenHost == c.Node.TunnelListenHost && old.Node.TunnelListenPort == c.Node.TunnelListenPort && sameH2Listener(old.Node.Tls, c.Node.Tls) && proto.Equal(old.Node.Random, c.Node.Random) {
+		if c.Node != nil && c.Node.Enabled && c.Node.TunnelExitEnabled && old.Node != nil && old.Node.TunnelExitEnabled && old.Node.TunnelProtocol == c.Node.TunnelProtocol && old.Node.TunnelListenHost == c.Node.TunnelListenHost && old.Node.TunnelListenPort == c.Node.TunnelListenPort && sameH2Listener(old.Node.Tls, c.Node.Tls) && proto.Equal(old.Node.Mux, c.Node.Mux) && proto.Equal(old.Node.Random, c.Node.Random) {
 			if tunnel.TLS(c.Node.TunnelProtocol) {
 				pair, err := tls.X509KeyPair([]byte(c.Node.Tls.Certificate), []byte(c.Node.Tls.PrivateKey))
 				if err != nil {
@@ -310,7 +311,13 @@ func (e *Engine) acceptTunnel(ctx context.Context, ln net.Listener) {
 			continue
 		}
 		e.wg.Add(1)
-		go func() { defer e.wg.Done(); defer e.connections.Add(-1); e.handleTunnel(ctx, conn) }()
+		go func() {
+			defer e.wg.Done()
+			var once sync.Once
+			release := func() { once.Do(func() { e.connections.Add(-1) }) }
+			defer release()
+			e.handleTunnel(context.WithValue(ctx, tunnelConnectionLeaseKey{}, release), conn)
+		}()
 	}
 }
 func (e *Engine) handleTunnel(ctx context.Context, upstream net.Conn) {

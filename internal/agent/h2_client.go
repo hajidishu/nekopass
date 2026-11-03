@@ -61,6 +61,8 @@ type h2Pool struct {
 	next  int
 }
 type h2Transport struct {
+	rawMux *rawMuxPool
+
 	randomUDP *randomUDPPool
 	h3        *h3Transport
 	mu        sync.Mutex
@@ -69,17 +71,18 @@ type h2Transport struct {
 }
 
 func newH2Transport() *h2Transport {
-	return &h2Transport{pools: map[string]*h2Pool{}, randomUDP: newRandomUDPPool(), h3: newH3Transport()}
+	return &h2Transport{rawMux: newRawMuxPool(), pools: map[string]*h2Pool{}, randomUDP: newRandomUDPPool(), h3: newH3Transport()}
 }
 func h2PoolKey(rule *pb.Rule) string {
 	encoded, _ := json.Marshal(rule.Tls)
-	if tunnel.Random(rule.TunnelProtocol) || tunnel.H3(rule.TunnelProtocol) {
-		encoded, _ = json.Marshal([]any{rule.Tls, rule.Random, rule.Congestion, rule.IngressNodeId, rule.EgressNodeId, rule.TunnelToken})
+	if tunnel.Random(rule.TunnelProtocol) || tunnel.H3(rule.TunnelProtocol) || tunnel.MuxSupported(rule.TunnelProtocol) && rule.Mux.GetEnabled() {
+		encoded, _ = json.Marshal([]any{rule.Tls, rule.Random, rule.Congestion, rule.Mux, rule.IngressNodeId, rule.EgressNodeId, rule.TunnelToken})
 	}
 	sum := sha256.Sum256(encoded)
 	return rule.TunnelProtocol + net.JoinHostPort(rule.TunnelHost, strconv.Itoa(int(rule.TunnelPort))) + hex.EncodeToString(sum[:])
 }
 func (t *h2Transport) Prune(rules []*pb.Rule) {
+	t.rawMux.Prune(rules)
 	t.randomUDP.Prune(rules)
 	t.h3.Prune(rules)
 	wanted := map[string]bool{}
@@ -121,6 +124,7 @@ func (t *h2Transport) Prune(rules []*pb.Rule) {
 	}
 }
 func (t *h2Transport) Close() {
+	t.rawMux.Close()
 	t.randomUDP.Close()
 	t.h3.Close()
 	t.mu.Lock()

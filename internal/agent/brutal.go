@@ -162,3 +162,11 @@ func (b *datagramBrutal) wait(ctx context.Context, deadline time.Time, n int) er
 	}
 	return b.controller.Wait(ctx, n)
 }
+
+// Account only previously unreserved transport overhead. This updates the
+// shared sender schedule, never user traffic/quota or Brutal packet feedback.
+func (b *datagramBrutal) reconcileWire(reserved int, actual uint64) {
+	if actual > uint64(reserved) {
+		b.controller.Sent(time.Now(), int(actual)-reserved)
+	}
+}

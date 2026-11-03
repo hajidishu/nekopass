@@ -12,6 +12,7 @@ import (
 
 type NodeProtocolsInput struct {
 	NodeBandwidth
+	Mux                    *tunnel.MuxConfig   `json:"mux,omitempty"`
 	DenyUDPIngressCreation *bool               `json:"deny_udp_ingress_creation,omitempty"`
 	IngressMultiplier      *billing.Rate       `json:"ingress_multiplier,omitempty"`
 	EgressMultiplier       *billing.Rate       `json:"egress_multiplier,omitempty"`
@@ -96,6 +97,9 @@ func loadNodeInput(ctx context.Context, db interface {
 	}
 	v.Random = &random
 	v.TunnelTransport, v.TunnelSecurity = tunnel.Split(v.TunnelProtocol)
+	if err = loadMux(ctx, db, id, &v.Mux); err != nil {
+		return v, hash, err
+	}
 	return v, hash, nil
 }
 

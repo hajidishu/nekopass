@@ -31,41 +31,47 @@ func enableBrutalFixture(t testing.TB, e *Engine, c *pb.ControlMessage, r *pb.Ru
 
 func TestBrutalNativeUDPAllSecurityModes(t *testing.T) {
 	for _, mode := range []string{"plain_udp", "dtls_udp", "random_udp"} {
-		t.Run(mode, func(t *testing.T) {
-			target := randomUDPEcho(t)
-			e, h, c, r := h2Fixture(t, target)
-			c.Node.TunnelProtocol = mode
-			c.EgressRules[0].Protocol = "udp"
-			r.TunnelProtocol = mode
-			r.Protocol = "udp"
-			if mode == "random_udp" {
-				randomFixture(t, c, r, "chacha20-poly1305")
-			}
-			enableBrutalFixture(t, e, c, r, 1250000, 1250000)
-			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-			defer cancel()
-			var queued atomic.Int64
-			conn, err := dialDatagramTunnel(ctx, ctx, r, target, h, &queued)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer conn.Close()
-			for _, body := range [][]byte{{}, []byte("Brutal"), bytes.Repeat([]byte{0x52}, 45000), bytes.Repeat([]byte{0x39}, 65507)} {
-				conn.SetDeadline(time.Now().Add(4 * time.Second))
-				if _, err = conn.Write(body); err != nil {
+		for _, mux := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/mux=%t", mode, mux), func(t *testing.T) {
+				target := randomUDPEcho(t)
+				e, h, c, r := h2Fixture(t, target)
+				c.Node.TunnelProtocol = mode
+				c.EgressRules[0].Protocol = "udp"
+				r.TunnelProtocol = mode
+				r.Protocol = "udp"
+				if mux {
+					c.Node.Mux = &pb.MuxConfig{Enabled: true, MaxStreams: 4, MaxConnections: 2, IdleTimeoutSeconds: 10}
+					r.Mux = proto.Clone(c.Node.Mux).(*pb.MuxConfig)
+				}
+				if mode == "random_udp" || mode == "dtls_udp" {
+					randomFixture(t, c, r, "chacha20-poly1305")
+				}
+				enableBrutalFixture(t, e, c, r, 1250000, 1250000)
+				ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+				defer cancel()
+				var queued atomic.Int64
+				conn, err := dialDatagramTunnel(ctx, ctx, r, target, h, &queued)
+				if err != nil {
 					t.Fatal(err)
 				}
-				buffer := make([]byte, maxDatagram)
-				n, err := conn.Read(buffer)
-				if err != nil || !bytes.Equal(buffer[:n], body) {
-					t.Fatal("datagram boundary or payload changed", len(body), n, err)
+				defer conn.Close()
+				for _, body := range [][]byte{{}, []byte("Brutal"), bytes.Repeat([]byte{0x52}, 45000), bytes.Repeat([]byte{0x39}, 65507)} {
+					conn.SetDeadline(time.Now().Add(4 * time.Second))
+					if _, err = conn.Write(body); err != nil {
+						t.Fatal(err)
+					}
+					buffer := make([]byte, maxDatagram)
+					n, err := conn.Read(buffer)
+					if err != nil || !bytes.Equal(buffer[:n], body) {
+						t.Fatal("datagram boundary or payload changed", len(body), n, err)
+					}
 				}
-			}
-			conn.Close()
-			if queued.Load() != 0 {
-				t.Fatal("receive memory was not released", queued.Load())
-			}
-		})
+				conn.Close()
+				if queued.Load() != 0 {
+					t.Fatal("receive memory was not released", queued.Load())
+				}
+			})
+		}
 	}
 }
 

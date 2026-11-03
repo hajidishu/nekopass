@@ -59,7 +59,7 @@ func prepareNodeRandom(ctx context.Context, tx pgx.Tx, id int64, input *NodeInpu
 			return err
 		}
 	}
-	if err := cfg.normalize(tunnel.Random(input.TunnelProtocol) || input.Random != nil); err != nil {
+	if err := cfg.normalize(tunnel.Random(input.TunnelProtocol) || input.TunnelProtocol == "dtls_udp" || input.Random != nil); err != nil {
 		return err
 	}
 	input.Random = &cfg
@@ -89,22 +89,52 @@ func appendRandomControl(ctx context.Context, tx pgx.Tx, nodeID int64, out *pb.C
 			return nil, err
 		}
 		if cfg.Key == "" {
-			return nil, errors.New("random encryption key not configured")
+			// The local node row is already locked by its control exchange. Never
+			// initialize another node here: reciprocal ingress/exit pulls could
+			// otherwise lock both rows in opposite order. Its own pull fills it.
+			if id != nodeID {
+				cache[id] = nil
+				return nil, nil
+			}
+			// Existing DTLS installations also need an opaque outer envelope.
+			// Initialize its node-level key once, preserving any concurrent winner.
+			key, err := tunnelcrypto.GenerateKey()
+			if err != nil {
+				return nil, err
+			}
+			if _, err = tx.Exec(ctx, "UPDATE nodes SET random_config=jsonb_set(random_config,'{key}',to_jsonb($2::text)) WHERE id=$1 AND COALESCE(random_config->>'key','')=''", id, key); err != nil {
+				return nil, err
+			}
+			if err = tx.QueryRow(ctx, "SELECT random_config FROM nodes WHERE id=$1", id).Scan(&data); err != nil {
+				return nil, err
+			}
+			if err = json.Unmarshal(data, &cfg); err != nil {
+				return nil, err
+			}
+			if err = cfg.normalize(false); err != nil {
+				return nil, err
+			}
+			if cfg.Key == "" {
+				return nil, errors.New("encrypted tunnel key not configured")
+			}
 		}
 		p := &pb.RandomConfig{Cipher: cfg.Cipher, Key: cfg.Key}
 		cache[id] = p
 		return p, nil
 	}
 	var err error
-	if tunnel.Random(out.Node.TunnelProtocol) {
+	if tunnel.Random(out.Node.TunnelProtocol) || out.Node.TunnelProtocol == "dtls_udp" {
 		if out.Node.Random, err = load(nodeID); err != nil {
 			return err
 		}
 	}
 	for _, rule := range out.Rules {
-		if rule.EgressNodeId != 0 && tunnel.Random(rule.TunnelProtocol) {
+		if rule.EgressNodeId != 0 && (tunnel.Random(rule.TunnelProtocol) || rule.TunnelProtocol == "dtls_udp") {
 			if rule.Random, err = load(rule.EgressNodeId); err != nil {
 				return err
+			}
+			if rule.Random == nil {
+				rule.Enabled = false
 			}
 		}
 	}

@@ -39,7 +39,7 @@ func (e *Engine) startRandomUDP(node *pb.NodeConfig) error {
 	if node.Random == nil {
 		return tunnelcrypto.ErrAuthentication
 	}
-	gate, err := tunnelcrypto.NewDatagramServer(tunnelcrypto.ServerConfig{Cipher: node.Random.Cipher, Key: node.Random.Key, Transport: "raw_udp", ExitID: node.NodeId, LinkKey: func(id int64) (string, bool) {
+	gate, err := tunnelcrypto.NewDatagramServer(tunnelcrypto.ServerConfig{Cipher: node.Random.Cipher, Key: node.Random.Key, Transport: "raw_udp", ExitID: node.NodeId, Replay: e.state, LinkKey: func(id int64) (string, bool) {
 		p := e.tunnelPolicy.Load()
 		if p == nil {
 			return "", false
@@ -69,7 +69,10 @@ func (e *Engine) startRandomUDP(node *pb.NodeConfig) error {
 func (l *randomUDPListener) Close() { l.cancel(); l.socket.Close() }
 func (l *randomUDPListener) allowed(a *randomUDPAssociation) bool {
 	n, p := l.e.node.Load(), l.e.tunnelPolicy.Load()
-	return a.ctx.Err() == nil && n != nil && n.Enabled && n.TunnelExitEnabled && n.TunnelProtocol == "random_udp" && n.Random.GetKey() == l.node.Random.GetKey() && n.Random.GetCipher() == l.node.Random.GetCipher() && p != nil && len(a.linkKey) == 64 && p.links[a.crypto.IngressID()] == a.linkKey
+	if a.datagrams != nil {
+		return a.ctx.Err() == nil && n != nil && n.Enabled && n.TunnelExitEnabled && n.TunnelProtocol == l.node.TunnelProtocol && n.Mux.GetEnabled() && p != nil && p.links[a.ingressID()] == a.linkKey
+	}
+	return a.ctx.Err() == nil && n != nil && n.Enabled && n.TunnelExitEnabled && n.TunnelProtocol == "random_udp" && n.Random.GetKey() == l.node.Random.GetKey() && n.Random.GetCipher() == l.node.Random.GetCipher() && p != nil && len(a.linkKey) == 64 && p.links[a.ingressID()] == a.linkKey
 }
 func (l *randomUDPListener) read() {
 	defer l.e.wg.Done()
@@ -146,6 +149,11 @@ func (l *randomUDPListener) read() {
 			defer func() {
 				if !keep {
 					release()
+					l.mu.Lock()
+					if l.handshakes[key] == cached {
+						delete(l.handshakes, key)
+					}
+					l.mu.Unlock()
 				}
 			}()
 			reply, c, err := req.Respond()
@@ -161,14 +169,27 @@ func (l *randomUDPListener) read() {
 				return
 			}
 			a := newRandomUDPAssociation(l.ctx, l.socket, from, c, link, &l.e.udpQueued)
+			a.server = l
 			a.brutal, err = newDatagramBrutal(p.congestion[req.IngressID()], l.e.brutalBudget)
 			if err != nil {
 				a.Close()
 				return
 			}
-			a.server = l
-			a.onConfirmed = release
+			a.muxConfig = l.node.Mux
+			carrierLease := false
+			if l.node.Mux.GetEnabled() {
+				if !l.e.takeMuxCarrier(req.IngressID(), "udp") {
+					a.Close()
+					return
+				}
+				carrierLease = true
+			}
+			a.onConfirmed = func() { l.gate.Complete(digest); release() }
 			a.onClose = func() {
+				l.gate.Complete(digest)
+				if carrierLease {
+					l.e.releaseMuxCarrier(req.IngressID(), "udp")
+				}
 				l.mu.Lock()
 				if l.associations[c.ID()] == a {
 					delete(l.associations, c.ID())
@@ -231,6 +252,20 @@ func (l *randomUDPListener) maintain() {
 func (a *randomUDPAssociation) expire(now time.Time) {
 	a.mu.Lock()
 	var closing []*randomUDPFlow
+	var retries []uint64
+	for id, c := range a.closing {
+		if now.Before(c.next) {
+			continue
+		}
+		if c.attempts >= 3 {
+			delete(a.closing, id)
+			continue
+		}
+		c.attempts++
+		c.next = now.Add(time.Second)
+		a.closing[id] = c
+		retries = append(retries, id)
+	}
 	for id, f := range a.flows {
 		if f.closedAt.IsZero() && !f.remoteClosedAt.IsZero() && now.Sub(f.remoteClosedAt) > 100*time.Millisecond {
 			closing = append(closing, f)
@@ -253,6 +288,9 @@ func (a *randomUDPAssociation) expire(now time.Time) {
 	for _, f := range closing {
 		f.Close()
 	}
+	for _, id := range retries {
+		_ = a.control(randomUDPClose, id, nil)
+	}
 }
 func (l *randomUDPListener) openFlow(a *randomUDPAssociation, id uint64, body []byte) {
 	a.mu.Lock()
@@ -269,7 +307,7 @@ func (l *randomUDPListener) openFlow(a *randomUDPAssociation, id uint64, body []
 	var open udpStreamOpen
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&open) != nil || decoder.Decode(new(any)) != io.EOF || open.Network != "udp" || open.Ingress != a.crypto.IngressID() || open.Rule <= 0 || open.User <= 0 || open.Epoch < 0 || len(open.Target) > 512 || open.Time < time.Now().Unix()-120 || open.Time > time.Now().Unix()+120 || !l.allowed(a) {
+	if decoder.Decode(&open) != nil || decoder.Decode(new(any)) != io.EOF || open.Network != "udp" || open.Ingress != a.ingressID() || open.Rule <= 0 || open.User <= 0 || open.Epoch < 0 || len(open.Target) > 512 || open.Time < time.Now().Unix()-120 || open.Time > time.Now().Unix()+120 || !l.allowed(a) {
 		_ = a.control(randomUDPAck, id, []byte{randomUDPDenied})
 		return
 	}
@@ -292,10 +330,11 @@ func (l *randomUDPListener) openFlow(a *randomUDPAssociation, id uint64, body []
 		return
 	}
 	a.mu.Lock()
-	if len(a.flows) >= maxRandomUDPFlows || !a.opened.takeSequence(id) || a.ctx.Err() != nil {
+	if len(a.flows) >= maxRandomUDPFlows || a.activeFlowsLocked() >= a.flowLimit() || !a.opened.takeSequence(id) || a.ctx.Err() != nil {
 		a.mu.Unlock()
 		l.e.connections.Add(-1)
 		<-l.dials
+		_ = a.control(randomUDPAck, id, []byte{randomUDPBusy})
 		return
 	}
 	f := a.newFlowLocked(id, nil)

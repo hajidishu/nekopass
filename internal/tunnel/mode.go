@@ -2,7 +2,10 @@
 // stable wire/database encoding retained for compatibility with older agents.
 package tunnel
 
-import "errors"
+import (
+	"errors"
+	pb "github.com/nekopass/nekopass/internal/protocol"
+)
 
 func Split(mode string) (transport, security string) {
 	switch mode {
@@ -60,17 +63,15 @@ func MinimumVersion(mode string) int {
 	switch mode {
 	case "tls_h3":
 		return 28
-	case "random_udp":
-		return 27
-	case "random_tcp", "random_h2":
-		return 26
+	case "random_udp", "random_tcp", "random_h2", "dtls_udp":
+		return int(pb.EncryptedTunnelVersion)
 	case "plain_tcp":
 		return 6
 	case "tls_h2":
 		return 11
 	case "tls_tcp", "plain_h2":
 		return 13
-	case "plain_udp", "dtls_udp":
+	case "plain_udp":
 		return 17
 	}
 	return 1 << 30

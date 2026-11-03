@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/tunnelcrypto"
 )
 
@@ -27,7 +28,20 @@ const randomUDPBusy = 4
 const randomUDPClosed = 5
 const maxRandomUDPFlows = 65536
 
+type udpClosing struct {
+	next     time.Time
+	attempts int
+}
+
 type randomUDPAssociation struct {
+	closing map[uint64]udpClosing
+
+	datagrams     net.Conn
+	nativeIngress int64
+	muxConfig     *pb.MuxConfig
+	reserved      int
+	sendMu        sync.Mutex
+
 	brutal        *datagramBrutal
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -88,12 +102,14 @@ func (a *randomUDPAssociation) send(kind byte, id uint64, message uint32, index,
 	if a.ctx.Err() != nil {
 		return net.ErrClosed
 	}
+	reserved := 0
 	if a.brutal != nil && kind == randomUDPData {
 		var deadline time.Time
 		if len(deadlines) > 0 {
 			deadline = deadlines[0]
 		}
-		if err := a.brutal.wait(a.ctx, deadline, randomUDPFrameSize+len(body)+brutalDataHeader+96); err != nil {
+		reserved = randomUDPFrameSize + len(body) + brutalDataHeader + 96
+		if err := a.brutal.wait(a.ctx, deadline, reserved); err != nil {
 			return err
 		}
 		body = a.brutal.frame(body)
@@ -105,6 +121,28 @@ func (a *randomUDPAssociation) send(kind byte, id uint64, message uint32, index,
 	frame[13] = index
 	frame[14] = total
 	copy(frame[15:], body)
+	if a.datagrams != nil {
+		a.sendMu.Lock()
+		defer a.sendMu.Unlock()
+		var deadline time.Time
+		if len(deadlines) > 0 {
+			deadline = deadlines[0]
+		}
+		a.datagrams.SetWriteDeadline(deadline)
+		// DTLS cipher and fragmentation overhead is known at the socket, not
+		// this layer. Reconcile the reservation with actual UDP payload bytes;
+		// controls retain their unpaced path and each data packet is paced once.
+		var before uint64
+		counter, measured := a.datagrams.(interface{ wireBytesSent() uint64 })
+		if measured && reserved > 0 {
+			before = counter.wireBytesSent()
+		}
+		_, err := a.datagrams.Write(frame)
+		if measured && reserved > 0 {
+			a.brutal.reconcileWire(reserved, counter.wireBytesSent()-before)
+		}
+		return err
+	}
 	wire, err := a.crypto.Seal(frame)
 	if err != nil {
 		return err
@@ -120,12 +158,24 @@ func (a *randomUDPAssociation) receive(packet tunnelcrypto.DatagramPacket) {
 		return
 	}
 	plain, err := a.crypto.Open(packet)
-	if err != nil || len(plain) < randomUDPFrameSize {
+	if err != nil {
+		return
+	}
+	a.receiveFrame(plain, packet.Sequence())
+}
+func (a *randomUDPAssociation) ingressID() int64 {
+	if a.crypto != nil {
+		return a.crypto.IngressID()
+	}
+	return a.nativeIngress
+}
+func (a *randomUDPAssociation) receiveFrame(plain []byte, sequence uint64) {
+	if a.ctx.Err() != nil || len(plain) < randomUDPFrameSize {
 		return
 	}
 	kind, id, message, index, total := plain[0], binary.BigEndian.Uint64(plain[1:9]), binary.BigEndian.Uint32(plain[9:13]), int(plain[13]), int(plain[14])
 	body := plain[15:]
-	if kind < randomUDPOpen || kind > randomUDPFeedback || total == 0 || total > 61 || index >= total || len(body) > nativePartSize {
+	if kind < randomUDPOpen || kind > randomUDPFeedback || total == 0 || total > a.maxFragmentCount() || index >= total || len(body) > nativePartSize {
 		return
 	}
 	if kind != randomUDPData && (message != 0 || index != 0 || total != 1) {
@@ -172,6 +222,9 @@ func (a *randomUDPAssociation) receive(packet tunnelcrypto.DatagramPacket) {
 		return
 	}
 	if id == 0 {
+		if kind == randomUDPClose && len(body) == 0 && a.muxConfig.GetEnabled() {
+			a.Close()
+		}
 		return
 	}
 	if kind == randomUDPOpen {
@@ -179,6 +232,14 @@ func (a *randomUDPAssociation) receive(packet tunnelcrypto.DatagramPacket) {
 			a.server.openFlow(a, id, body)
 		}
 		return
+	}
+	if a.muxConfig.GetEnabled() && kind == randomUDPClose && len(body) == 0 {
+		_ = a.control(randomUDPAck, id, []byte{randomUDPClosed})
+	}
+	if kind == randomUDPAck && len(body) == 1 && body[0] == randomUDPClosed {
+		a.mu.Lock()
+		delete(a.closing, id)
+		a.mu.Unlock()
 	}
 	a.mu.Lock()
 	f := a.flows[id]
@@ -208,7 +269,7 @@ func (a *randomUDPAssociation) receive(packet tunnelcrypto.DatagramPacket) {
 			return
 		}
 		a.lastActivity.Store(time.Now().UnixNano())
-		f.nativePeer.receive(packet.Sequence(), nativeData, message, index, total, body)
+		f.nativePeer.receive(sequence, nativeData, message, index, total, body)
 	case randomUDPClose:
 		if len(body) == 0 {
 			if state == 0 {
@@ -224,8 +285,12 @@ func (a *randomUDPAssociation) receive(packet tunnelcrypto.DatagramPacket) {
 }
 func (a *randomUDPAssociation) Close() {
 	a.once.Do(func() {
+		a.notifyMuxClose()
 		a.cancel()
-		if a.server == nil {
+		if a.datagrams != nil {
+			a.datagrams.Close()
+		}
+		if a.server == nil && a.socket != nil {
 			a.socket.Close()
 		}
 		a.confirmedOnce.Do(func() {
@@ -268,6 +333,9 @@ func (f *randomUDPFlow) Write(body []byte) (int, error) {
 	if f.association.brutal != nil {
 		partSize -= brutalDataHeader
 	}
+	if f.association.datagrams != nil {
+		partSize = min(partSize, 860)
+	}
 	total := max(1, (len(body)+partSize-1)/partSize)
 	for i := 0; i < total; i++ {
 		if f.ctx.Err() != nil {
@@ -293,6 +361,12 @@ func (f *randomUDPFlow) Close() error {
 			f.state = randomUDPClosed
 		}
 		f.closedAt = time.Now()
+		if notify && a.ctx.Err() == nil && a.muxConfig.GetEnabled() && len(a.closing) < 4096 {
+			if a.closing == nil {
+				a.closing = map[uint64]udpClosing{}
+			}
+			a.closing[f.id] = udpClosing{next: time.Now().Add(time.Second), attempts: 1}
+		}
 		if a.server == nil {
 			delete(a.flows, f.id)
 		}

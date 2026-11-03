@@ -46,7 +46,7 @@ func TestIndependentNodeTransportChoicesAndAgentCompatibility(t *testing.T) {
 			securityStatus(t, f.request(f.admin, base, "PUT", invalid), 400)
 			instance := Secret()
 			stream := &StreamServer{Server: New(f.p)}
-			for _, version := range []int32{12, 13, 16, 17, 25, 26, 27, 28} {
+			for _, version := range []int32{12, 13, 16, 17, 25, 26, 27, 28, 34, pb.CurrentVersion} {
 				config, err := stream.exchange(ctx, f.p, id, &pb.AgentMessage{InstanceId: instance, ProtocolVersion: version})
 				if err != nil {
 					t.Fatal(err)

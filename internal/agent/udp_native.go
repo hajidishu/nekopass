@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nekopass/nekopass/internal/handshakereplay"
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/tunnel"
 	dtls "github.com/pion/dtls/v3"
@@ -39,6 +40,9 @@ type nativeUDPListener struct {
 	mu         sync.Mutex
 	peers      map[[16]byte]*nativePeer
 	handshakes chan struct{}
+	muxDials   chan struct{}
+	envelope   *nativeEnvelope
+	gate       *handshakereplay.Gate
 }
 
 func nativeOpenCipher(key string) (cipher.AEAD, error) {
@@ -98,6 +102,14 @@ func (l *nativeUDPListener) validCookie(cookie []byte, source *net.UDPAddr, rout
 }
 
 func (e *Engine) startNativeUDP(node *pb.NodeConfig) error {
+	var envelope *nativeEnvelope
+	if tunnel.TLS(node.TunnelProtocol) {
+		var err error
+		envelope, err = newNativeEnvelope(node.Random.GetKey())
+		if err != nil {
+			return err
+		}
+	}
 	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(node.TunnelListenHost, strconv.Itoa(int(node.TunnelListenPort))))
 	if err != nil {
 		return err
@@ -107,7 +119,11 @@ func (e *Engine) startNativeUDP(node *pb.NodeConfig) error {
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	l := &nativeUDPListener{conn: conn, ctx: ctx, cancel: cancel, node: proto.Clone(node).(*pb.NodeConfig), peers: map[[16]byte]*nativePeer{}, handshakes: make(chan struct{}, 32)}
+	l := &nativeUDPListener{conn: conn, ctx: ctx, cancel: cancel, node: proto.Clone(node).(*pb.NodeConfig), peers: map[[16]byte]*nativePeer{}, handshakes: make(chan struct{}, 32), muxDials: make(chan struct{}, 32)}
+	l.envelope = envelope
+	if envelope != nil {
+		l.gate = handshakereplay.NewGate(e.state)
+	}
 	if _, err = rand.Read(l.secret[:]); err != nil {
 		conn.Close()
 		cancel()
@@ -133,11 +149,18 @@ func (e *Engine) readNativeUDP(l *nativeUDPListener) {
 		if err != nil {
 			return
 		}
-		if n < nativeHeader+nativeMAC {
+		wire := buffer[:n]
+		if l.envelope != nil {
+			wire, err = l.envelope.open(wire, true)
+			if err != nil {
+				continue
+			}
+		}
+		if len(wire) < nativeHeader+nativeMAC {
 			continue
 		}
 		var route [16]byte
-		copy(route[:], buffer[:16])
+		copy(route[:], wire[:16])
 		policy := e.tunnelPolicy.Load()
 		if policy == nil {
 			continue
@@ -146,7 +169,7 @@ func (e *Engine) readNativeUDP(l *nativeUDPListener) {
 		if !exists {
 			continue
 		}
-		_, id, seq, kind, msg, index, total, body, valid := decodeNative(buffer[:n], link.key, true)
+		_, id, seq, kind, msg, index, total, body, valid := decodeNative(wire, link.key, true)
 		if !valid {
 			continue
 		}
@@ -158,7 +181,17 @@ func (e *Engine) readNativeUDP(l *nativeUDPListener) {
 				continue
 			}
 			if kind == nativeOpen {
-				peer.send(nativeAccepted, nil)
+				if l.envelope == nil {
+					peer.send(nativeAccepted, nil)
+				} else {
+					if peer.handshakeConfirmed.Load() {
+						continue
+					}
+					retry, err := unsealNativeOpen(link.key, id, body)
+					if err == nil && l.validCookie(retry.Cookie, source, route, id) && peer.replay.takeSequence(seq) {
+						peer.send(nativeAccepted, nil)
+					}
+				}
 				continue
 			}
 			peer.receive(seq, kind, msg, index, total, body)
@@ -171,11 +204,32 @@ func (e *Engine) readNativeUDP(l *nativeUDPListener) {
 		if err != nil || open.Network != "udp" || open.Ingress != link.ingress || open.Time < time.Now().Unix()-120 || open.Time > time.Now().Unix()+120 || !h2RuleAllowed(policy, open.h2Open) {
 			continue
 		}
-		if open.Brutal != link.congestion.GetBrutal() {
+		if open.Brutal != link.congestion.GetBrutal() || open.Mux && !l.node.Mux.GetEnabled() {
 			continue
 		}
 		temporary := newNativePeer(l.ctx, l.conn, source, link.key, id, &e.udpQueued, false)
-		if !l.validCookie(open.Cookie, source, route, id) {
+		temporary.envelope = l.envelope
+		if l.envelope != nil {
+			if !handshakereplay.ValidTimestamp(open.Time, time.Now().Unix()) {
+				temporary.Close()
+				continue
+			}
+			digest := sha256.Sum256(append(append([]byte("nekopass/native-udp/v3/gate/"), route[:]...), id[:]...))
+			temporary.gateDigest = digest
+			challenge, verified, err := l.gate.Exchange(digest, source.String(), handshakereplay.Expiry(open.Time), open.Cookie, func() ([]byte, []byte, error) {
+				cookie := l.cookie(source, route, id, time.Now().Unix()/60)
+				return cookie, cookie, nil
+			})
+			if err != nil {
+				temporary.Close()
+				continue
+			}
+			if !verified {
+				temporary.send(nativeChallenge, challenge)
+				temporary.Close()
+				continue
+			}
+		} else if !l.validCookie(open.Cookie, source, route, id) {
 			temporary.send(nativeChallenge, l.cookie(source, route, id, time.Now().Unix()/60))
 			temporary.Close()
 			continue
@@ -184,7 +238,12 @@ func (e *Engine) readNativeUDP(l *nativeUDPListener) {
 			temporary.Close()
 			continue
 		}
-		temporary.brutal, err = newDatagramBrutal(link.congestion, e.brutalBudget)
+		if open.Mux {
+			temporary.queue = make(chan nativeMessage, 256)
+		}
+		if !open.Mux {
+			temporary.brutal, err = newDatagramBrutal(link.congestion, e.brutalBudget)
+		}
 		if err != nil {
 			temporary.Close()
 			continue
@@ -227,8 +286,20 @@ type nativeLink struct {
 
 func (e *Engine) runNativeUDP(l *nativeUDPListener, peer *nativePeer, open nativeGateOpen) {
 	defer e.wg.Done()
-	defer e.connections.Add(-1)
+	counted := true
+	defer func() {
+		if counted {
+			e.connections.Add(-1)
+		}
+	}()
 	defer func() { peer.Close(); l.mu.Lock(); delete(l.peers, peer.id); l.mu.Unlock() }()
+	if open.Mux {
+		if !e.takeMuxCarrier(open.Ingress, open.Network) {
+			<-l.handshakes
+			return
+		}
+		defer e.releaseMuxCarrier(open.Ingress, open.Network)
+	}
 	var conn net.Conn = peer
 	if tunnel.TLS(l.node.TunnelProtocol) {
 		cfg := e.node.Load()
@@ -254,10 +325,18 @@ func (e *Engine) runNativeUDP(l *nativeUDPListener, peer *nativePeer, open nativ
 			<-l.handshakes
 			return
 		}
-		conn = newDTLSDatagram(encrypted, &e.udpQueued)
+		conn = newDTLSDatagram(encrypted, &e.udpQueued, peer)
+		peer.handshakeConfirmed.Store(true)
+		l.gate.Retire(peer.gateDigest)
 		defer conn.Close()
 	}
 	<-l.handshakes
+	if open.Mux {
+		e.connections.Add(-1)
+		counted = false
+		e.runNativeMux(l, peer, open, conn)
+		return
+	}
 	policy := e.tunnelPolicy.Load()
 	if policy == nil {
 		return
@@ -302,11 +381,24 @@ func dialNativeDatagram(ctx, lifetime context.Context, r *pb.Rule, target string
 		return nil, err
 	}
 	peer := newNativePeer(lifetime, socket, addr, r.TunnelToken, id, queued, true)
+	if tunnel.TLS(r.TunnelProtocol) {
+		peer.envelope, err = newNativeEnvelope(r.Random.GetKey())
+		if err != nil {
+			socket.Close()
+			peer.Close()
+			return nil, err
+		}
+	}
+	if r.Mux.GetEnabled() {
+		peer.queue = make(chan nativeMessage, 256)
+	}
 	var budget *brutal.Budget
 	if len(budgets) > 0 {
 		budget = budgets[0]
 	}
-	peer.brutal, err = newDatagramBrutal(r.Congestion, budget)
+	if !r.Mux.GetEnabled() {
+		peer.brutal, err = newDatagramBrutal(r.Congestion, budget)
+	}
 	if err != nil {
 		socket.Close()
 		peer.Close()
@@ -332,9 +424,19 @@ func dialNativeDatagram(ctx, lifetime context.Context, r *pb.Rule, target string
 			if from.String() != addr.String() {
 				continue
 			}
-			_, pid, seq, kind, msg, index, total, body, ok := decodeNative(buf[:n], peer.key, false)
+			wire := buf[:n]
+			if peer.envelope != nil {
+				wire, err = peer.envelope.open(wire, false)
+				if err != nil {
+					continue
+				}
+			}
+			_, pid, seq, kind, msg, index, total, body, ok := decodeNative(wire, peer.key, false)
 			if ok && pid == id {
 				if kind == nativeChallenge || kind == nativeAccepted {
+					if peer.envelope != nil && !peer.replay.takeSequence(seq) {
+						continue
+					}
 					peer.receiveControl(kind, body)
 				} else {
 					peer.receive(seq, kind, msg, index, total, body)
@@ -344,6 +446,10 @@ func dialNativeDatagram(ctx, lifetime context.Context, r *pb.Rule, target string
 	}()
 	open := nativeGateOpen{udpStreamOpen: udpStreamOpen{h2Open: h2Open{Network: "udp", Ingress: r.IngressNodeId, Rule: r.Id, User: r.UserId, Epoch: r.QuotaEpoch, Target: target}, Time: time.Now().Unix()}}
 	open.Brutal = peer.brutal != nil
+	open.Mux = r.Mux.GetEnabled()
+	if open.Mux {
+		open.Brutal = r.Congestion.GetBrutal()
+	}
 	accepted := false
 	for !accepted {
 		if ctx.Err() != nil {
@@ -396,7 +502,7 @@ func dialNativeDatagram(ctx, lifetime context.Context, r *pb.Rule, target string
 			}
 			return nil, err
 		}
-		conn = newDTLSDatagram(encrypted, queued)
+		conn = newDTLSDatagram(encrypted, queued, peer)
 	}
 	success = true
 	return conn, nil

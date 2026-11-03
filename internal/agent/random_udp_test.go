@@ -23,6 +23,9 @@ func randomUDPEcho(t testing.TB) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// This fixture is the single destination for concurrent forwarding tests.
+	// Size its socket buffer so the fixture itself does not discard a burst.
+	_ = socket.SetReadBuffer(1 << 20)
 	t.Cleanup(func() { socket.Close() })
 	go func() {
 		buf := make([]byte, maxDatagram)

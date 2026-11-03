@@ -34,6 +34,7 @@ const server=http.createServer((req,res)=>{
    const dialog=page.getByRole('dialog',{name:'编辑传输协议',exact:true});
    for(const label of ['允许作为入口','作为出口节点','安全性','uTLS 指纹','证书模式','隧道对外地址'])assert.equal(await dialog.getByText(label,{exact:true}).count(),0,label+' leaked into transport dialog');
    await select(dialog,'传输协议',value);
+   assert.equal(await dialog.getByTestId('mux-enabled').count(),['raw(tcp)','raw(udp)'].includes(value)?1:0);
    if(['raw(udp)','HTTP/3'].includes(value)){await select(dialog,'拥塞控制','Brutal')}else{assert.equal(await dialog.getByText('拥塞控制',{exact:true}).count(),0)}
    if(value==='h2'){await input(dialog,'HTTP Path').fill('/custom/stream');await input(dialog,'HTTP Host').fill('stream.example.test');await input(dialog,'连接池上限').fill('3')}
    if(process.env.NEKOPASS_UI_SCREENSHOT_DIR){fs.mkdirSync(process.env.NEKOPASS_UI_SCREENSHOT_DIR,{recursive:true});await dialog.screenshot({path:path.join(process.env.NEKOPASS_UI_SCREENSHOT_DIR,'node-transport-dialog.png')})}
@@ -50,6 +51,15 @@ const server=http.createServer((req,res)=>{
   assert.equal(await parent.getByTestId('client-tcp-brutal-enabled').getByRole('switch').getAttribute('aria-checked'),'false');await parent.getByTestId('client-tcp-brutal-enabled').click();
   await input(parent,'上行带宽').fill('200');await input(parent,'下行带宽').fill('1000');
   assert.equal(await parent.getByText('请填写准确的带宽数值，填写高于实际带宽的数值会导致大幅丢包和延迟',{exact:true}).isVisible(),true);
+  await parent.getByRole('button',{name:'编辑传输协议',exact:true}).click();
+  let muxDialog=page.getByRole('dialog',{name:'编辑传输协议',exact:true});
+  assert.equal(await muxDialog.getByTestId('mux-enabled').getByRole('switch').getAttribute('aria-checked'),'false');
+  await muxDialog.getByTestId('mux-enabled').click();await input(muxDialog,'每连接最大子会话数').fill('48');await input(muxDialog,'底层连接数量上限').fill('3');
+  await muxDialog.getByRole('button',{name:'取消',exact:true}).click();await muxDialog.waitFor({state:'hidden'});
+  await parent.getByRole('button',{name:'编辑传输协议',exact:true}).click();muxDialog=page.getByRole('dialog',{name:'编辑传输协议',exact:true});
+  assert.equal(await muxDialog.getByTestId('mux-enabled').getByRole('switch').getAttribute('aria-checked'),'false');
+  await muxDialog.getByTestId('mux-enabled').click();await input(muxDialog,'每连接最大子会话数').fill('48');await input(muxDialog,'底层连接数量上限').fill('3');
+  await muxDialog.getByRole('button',{name:'确定',exact:true}).click();await muxDialog.waitFor({state:'hidden'});
   await input(parent,'节点名称').fill('已编辑但未保存');
   await input(parent,'公网隧道端口').fill('32443');
   assert.equal(await input(parent,'入口流量倍率').inputValue(),'1');
@@ -108,7 +118,7 @@ const server=http.createServer((req,res)=>{
   assert.equal(body.client_tcp_brutal_enabled,true);assert.equal(body.bandwidth_up_mbps,200);assert.equal(body.bandwidth_down_mbps,1000);assert.equal(body.brutal_enabled,true);
   assert.equal(body.deny_udp_ingress_creation,true);
   assert.equal(body.ingress_multiplier,'0');assert.equal(body.egress_multiplier,'1.2345');
-  assert.equal(body.tls.client_sni,'final.example.test');assert.equal(body.tls.path,'/custom/stream');assert.equal(body.tls.host,'stream.example.test');assert.equal(body.tls.pool_size,3);assert.equal(body.tls.public_port,32443);assert.equal(body.tls.dns_credentials.api_token,'fixture');assert.equal(body.tls.fallback_url,'https://fallback.example.test');assert.equal(body.tls.padding_enabled,true);assert.deepEqual(body.tls.padding_scheme,policy.split('\n'));
+  assert.equal(body.tls.client_sni,'final.example.test');assert.equal(body.tls.path,'/custom/stream');assert.equal(body.tls.host,'stream.example.test');assert.equal(body.tls.pool_size,3);assert.equal(body.tls.public_port,32443);assert.equal(body.tls.dns_credentials.api_token,'fixture');assert.equal(body.tls.fallback_url,'https://fallback.example.test');assert.equal(body.tls.padding_enabled,true);assert.deepEqual(body.mux,{enabled:true,max_connections:3,max_streams:48,idle_timeout_seconds:60});assert.deepEqual(body.tls.padding_scheme,policy.split('\n'));
   await parent.getByRole('button',{name:'关闭',exact:true}).click();
   await page.getByRole('button',{name:'添加节点',exact:true}).click();parent=page.getByRole('dialog',{name:'添加节点',exact:true});
   assert.equal(await input(parent,'入口流量倍率').inputValue(),'1');assert.equal(await input(parent,'出口流量倍率').inputValue(),'0');

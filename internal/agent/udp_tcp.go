@@ -28,9 +28,18 @@ type udpStreamOpen struct {
 	Time           int64 `json:"time"`
 	Padding        bool  `json:"padding,omitempty"`
 	PaddingVersion int   `json:"padding_version,omitempty"`
+	Mux            bool  `json:"mux,omitempty"`
 }
 
 func dialRawDatagramTunnel(ctx context.Context, r *pb.Rule, target string) (net.Conn, error) {
+	c, err := dialRawTunnelRequest(ctx, r, target, false)
+	if err != nil {
+		return nil, err
+	}
+	return &framedDatagram{Conn: c}, nil
+}
+
+func dialRawTunnelRequest(ctx context.Context, r *pb.Rule, target string, multiplex bool) (net.Conn, error) {
 	if !tunnel.Raw(r.TunnelProtocol) {
 		return nil, errors.New("unsupported UDP tunnel")
 	}
@@ -38,6 +47,8 @@ func dialRawDatagramTunnel(ctx context.Context, r *pb.Rule, target string) (net.
 	if err != nil {
 		return nil, err
 	}
+	stopRaw := context.AfterFunc(ctx, func() { raw.Close() })
+	defer stopRaw()
 	c := raw
 	var binding []byte
 	if tunnel.TLS(r.TunnelProtocol) {
@@ -79,8 +90,16 @@ func dialRawDatagramTunnel(ctx context.Context, r *pb.Rule, target string) (net.
 	var nonce [16]byte
 	rand.Read(nonce[:])
 	open := udpStreamOpen{h2Open: h2Open{Network: "udp", Ingress: r.IngressNodeId, Rule: r.Id, User: r.UserId, Epoch: r.QuotaEpoch, Target: target, Nonce: hex.EncodeToString(nonce[:])}, Time: time.Now().Unix(), Padding: scheme != nil}
+	open.Mux = multiplex
+	paddingVersion := padding.WireVersion
+	if multiplex {
+		paddingVersion = padding.MuxWireVersion
+	}
+	if multiplex && r.Protocol != "udp" {
+		open.Network = "tcp"
+	}
 	if scheme != nil {
-		open.PaddingVersion = padding.WireVersion
+		open.PaddingVersion = paddingVersion
 	}
 	metadata, _ := json.Marshal(open)
 	host := net.JoinHostPort(r.TunnelHost, strconv.Itoa(int(r.TunnelPort)))
@@ -123,16 +142,20 @@ func dialRawDatagramTunnel(ctx context.Context, r *pb.Rule, target string) (net.
 	if response.StatusCode != 200 || !hmac.Equal([]byte(response.Header.Get("X-Stream-Reply")), []byte(h2ResponseProof(r.TunnelToken, binding, metadata))) {
 		return nil, errors.New("UDP tunnel authentication refused")
 	}
-	if scheme != nil && response.Header.Get("X-Stream-Padding-Version") != strconv.Itoa(padding.WireVersion) {
+	if scheme != nil && response.Header.Get("X-Stream-Padding-Version") != strconv.Itoa(paddingVersion) {
 		return nil, errors.New("UDP tunnel padding version mismatch")
 	}
 	c.SetDeadline(time.Time{})
 	success = true
 	var peer net.Conn = &bufferedConn{Conn: c, reader: reader}
 	if scheme != nil {
-		peer = padding.NewConn(peer, scheme)
+		if multiplex {
+			peer = &muxWriteConn{Conn: padding.NewMuxConn(peer, scheme)}
+		} else {
+			peer = padding.NewConn(peer, scheme)
+		}
 	}
-	return &framedDatagram{Conn: peer}, nil
+	return peer, nil
 }
 
 func (e *Engine) handleUDPStream(ctx context.Context, c net.Conn, reader *bufio.Reader) {
@@ -149,7 +172,7 @@ func (e *Engine) handleUDPStream(ctx context.Context, c net.Conn, reader *bufio.
 	encoded := request.Header.Get("X-Stream")
 	metadata, err := base64.RawURLEncoding.DecodeString(encoded)
 	var open udpStreamOpen
-	if err != nil || len(metadata) > 2048 || json.Unmarshal(metadata, &open) != nil || open.Network != "udp" || identity != 0 && identity != open.Ingress || len(open.Nonce) != 32 || open.Time < time.Now().Unix()-120 || open.Time > time.Now().Unix()+120 || node == nil || policy == nil {
+	if err != nil || len(metadata) > 2048 || json.Unmarshal(metadata, &open) != nil || (open.Network != "udp" && !(open.Mux && open.Network == "tcp")) || identity != 0 && identity != open.Ingress || len(open.Nonce) != 32 || open.Time < time.Now().Unix()-120 || open.Time > time.Now().Unix()+120 || node == nil || policy == nil || open.Mux && !node.Mux.GetEnabled() {
 		e.serveRawCamouflage(ctx, c, reader, request)
 		return
 	}
@@ -176,8 +199,35 @@ func (e *Engine) handleUDPStream(ctx context.Context, c net.Conn, reader *bufio.
 		return
 	}
 	scheme, paddingErr := nodePadding(node)
-	if paddingErr != nil || open.Padding != (scheme != nil) || scheme != nil && (open.PaddingVersion != padding.WireVersion || !scheme.ValidAuth(len(request.Header.Get("X-Stream-Padding")))) || scheme == nil && open.PaddingVersion != 0 {
+	paddingVersion := padding.WireVersion
+	if open.Mux {
+		paddingVersion = padding.MuxWireVersion
+	}
+	if paddingErr != nil || open.Padding != (scheme != nil) || scheme != nil && (open.PaddingVersion != paddingVersion || !scheme.ValidAuth(len(request.Header.Get("X-Stream-Padding")))) || scheme == nil && open.PaddingVersion != 0 {
 		e.serveRawCamouflage(ctx, c, reader, request)
+		return
+	}
+	if open.Mux {
+		if !e.takeMuxCarrier(open.Ingress, open.Network) {
+			return
+		}
+		defer e.releaseMuxCarrier(open.Ingress, open.Network)
+		if release, ok := ctx.Value(tunnelConnectionLeaseKey{}).(func()); ok {
+			release()
+		}
+		paddingHeader := ""
+		if scheme != nil {
+			paddingHeader = "X-Stream-Padding-Version: " + strconv.Itoa(paddingVersion) + "\r\n"
+		}
+		if _, err = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Stream-Reply: " + h2ResponseProof(key, binding, metadata) + "\r\n" + paddingHeader + "\r\n")); err != nil {
+			return
+		}
+		c.SetDeadline(time.Time{})
+		var peer net.Conn = &bufferedConn{Conn: c, reader: reader}
+		if scheme != nil {
+			peer = &muxWriteConn{Conn: padding.NewMuxConn(peer, scheme)}
+		}
+		e.serveRawMux(ctx, peer, open.Ingress, key)
 		return
 	}
 	if open.Target == tunnelHealthTarget {

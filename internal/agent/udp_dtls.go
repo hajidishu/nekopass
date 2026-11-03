@@ -17,11 +17,14 @@ type dtlsDatagram struct {
 	next            atomic.Uint32
 	parts           map[uint32]*udpParts
 	queued          *atomic.Int64
+	outer           *nativePeer
 }
 
-func newDTLSDatagram(c net.Conn, queued *atomic.Int64) *dtlsDatagram {
-	return &dtlsDatagram{Conn: c, parts: map[uint32]*udpParts{}, queued: queued}
+func newDTLSDatagram(c net.Conn, queued *atomic.Int64, outer *nativePeer) *dtlsDatagram {
+	return &dtlsDatagram{Conn: c, parts: map[uint32]*udpParts{}, queued: queued, outer: outer}
 }
+
+func (c *dtlsDatagram) wireBytesSent() uint64 { return c.outer.wireBytesSent() }
 func (c *dtlsDatagram) Write(b []byte) (int, error) {
 	if len(b) > maxDatagram {
 		return 0, errors.New("DTLS datagram too large")

@@ -448,6 +448,9 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 	if e = appendBrutalControl(ctx, tx, r.ProtocolVersion, out); e != nil {
 		return nil, e
 	}
+	if e = appendMuxControl(ctx, tx, r.ProtocolVersion, out); e != nil {
+		return nil, e
+	}
 	if r.ProtocolVersion < 21 {
 		out.Node.TlsInbounds = nil
 	}
@@ -463,6 +466,9 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 				tlsVersions[rule.EgressNodeId] = version
 			}
 			if rule.Protocol != "tcp" && version < 16 {
+				rule.Enabled = false
+			}
+			if !encryptedRuleSupported(rule, r.ProtocolVersion, int32(version)) {
 				rule.Enabled = false
 			}
 			if rule.TunnelProtocol == "tls_tcp" && rule.Tls.GetPaddingEnabled() && (r.ProtocolVersion < 23 || version < 23) {
@@ -483,6 +489,11 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 		}
 	}
 	finishGroupDrafts(out, groupDrafts, r.ProtocolVersion, originalRuleCount)
+	if r.ProtocolVersion < pb.EncryptedTunnelVersion && encryptedWireRequired(out.Node.TunnelProtocol, out.Node.Tls.GetPaddingEnabled(), out.Node.Mux.GetEnabled()) {
+		out.Node.TunnelExitEnabled = false
+		out.TunnelLinks = nil
+		out.EgressRules = nil
+	}
 	if out.Node.TunnelProtocol == "tls_tcp" && out.Node.Tls.GetPaddingEnabled() && r.ProtocolVersion < 23 {
 		out.Node.TunnelExitEnabled = false
 	}

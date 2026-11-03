@@ -91,11 +91,13 @@ message Rule {
   bool metering_configured = 36;
   RandomConfig random = 37;
   TunnelCongestion congestion = 38;
+  MuxConfig mux = 39;
 }
 message EgressPeer {
  int64 node_id = 1; string host = 2; int32 port = 3; string token = 4;
  string protocol = 5; TLSClientConfig tls = 6; int32 weight = 7; bool standby = 8; int64 traffic_rate = 9; RandomConfig random = 10;
  TunnelCongestion congestion = 11;
+ MuxConfig mux = 12;
 }
 message OriginTLSConfig { bool enabled = 1; string server_name = 2; string root_ca = 3; repeated string alpn = 4; }
 message SharedTLSInbound {
@@ -115,6 +117,7 @@ message TunnelLink {
   TunnelCongestion congestion = 3;
 }
 message TunnelCongestion { bool brutal = 1; uint64 send_bps = 2; uint64 receive_bps = 3; }
+message MuxConfig { bool enabled = 1; int32 max_connections = 2; int32 max_streams = 3; int32 idle_timeout_seconds = 4; }
 message EgressRule {
   int64 rule_id = 1;
   int64 ingress_node_id = 2;
@@ -189,6 +192,7 @@ message NodeConfig {
  uint64 bandwidth_down_bps = 29;
  bool brutal_enabled = 30;
  bool client_tcp_brutal_enabled = 31;
+ MuxConfig mux = 32;
 }
 
 message IPRecoveryConfig {
