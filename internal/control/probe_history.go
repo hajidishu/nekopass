@@ -92,6 +92,9 @@ func minTime(a, b time.Time) time.Time {
 }
 
 func acceptProbe(ctx context.Context, tx pgx.Tx, node int64, p *pb.Probe, now time.Time) error {
+	// PostgreSQL timestamps retain microseconds. Use that same precision on
+	// both ends of the durable interval so repeated samples cannot add drift.
+	now = now.Truncate(time.Microsecond)
 	var previous []byte
 	if err := tx.QueryRow(ctx, "SELECT probe FROM nodes WHERE id=$1 FOR UPDATE", node).Scan(&previous); err != nil {
 		return err
@@ -122,6 +125,7 @@ func acceptProbe(ctx context.Context, tx pgx.Tx, node int64, p *pb.Probe, now ti
 		}
 		current := map[string]probeCounter{}
 		var rx, txBytes int64
+		observed := false
 		for _, counter := range p.NetworkCounters {
 			v := probeCounter{counter.RxBytes, counter.TxBytes}
 			current[counter.Name] = v
@@ -130,6 +134,7 @@ func acceptProbe(ctx context.Context, tx pgx.Tx, node int64, p *pb.Probe, now ti
 			}
 			prior, ok := oldCounters[counter.Name]
 			if oldBoot != p.BootId {
+				observed = true
 				rx += v.RX
 				txBytes += v.TX
 				continue
@@ -137,6 +142,7 @@ func acceptProbe(ctx context.Context, tx pgx.Tx, node int64, p *pb.Probe, now ti
 			if !ok {
 				continue
 			} // A newly selected interface starts a fresh baseline.
+			observed = true
 			if v.RX >= prior.RX {
 				rx += v.RX - prior.RX
 			} else {
@@ -148,7 +154,7 @@ func acceptProbe(ctx context.Context, tx pgx.Tx, node int64, p *pb.Probe, now ti
 				txBytes += v.TX
 			}
 		}
-		if hasPrevious && (rx > 0 || txBytes > 0) {
+		if hasPrevious && observed {
 			start := received
 			if oldBoot != p.BootId && p.UptimeReady {
 				// Limit conversion to the retained interval before making a Duration.
@@ -160,6 +166,15 @@ func acceptProbe(ctx context.Context, tx pgx.Tx, node int64, p *pb.Probe, now ti
  ON CONFLICT(node_id,day) DO UPDATE SET rx_bytes=LEAST(9223372036854775807::numeric,node_probe_traffic_daily.rx_bytes::numeric+excluded.rx_bytes)::bigint,tx_bytes=LEAST(9223372036854775807::numeric,node_probe_traffic_daily.tx_bytes::numeric+excluded.tx_bytes)::bigint`, node, day.Day.Format("2006-01-02"), day.RX, day.TX)
 				if err != nil {
 					return err
+				}
+			}
+			if now.After(start) {
+				for _, hour := range splitDashboardHours(start, now, rx, txBytes) {
+					_, err = tx.Exec(ctx, `INSERT INTO node_probe_traffic_hourly(node_id,bucket_at,rx_bytes,tx_bytes,observed_ns) VALUES($1,$2,$3,$4,$5)
+ ON CONFLICT(node_id,bucket_at) DO UPDATE SET rx_bytes=LEAST(9223372036854775807::numeric,node_probe_traffic_hourly.rx_bytes::numeric+excluded.rx_bytes)::bigint,tx_bytes=LEAST(9223372036854775807::numeric,node_probe_traffic_hourly.tx_bytes::numeric+excluded.tx_bytes)::bigint,observed_ns=LEAST(3600000000000,node_probe_traffic_hourly.observed_ns+excluded.observed_ns)`, node, hour.At, hour.RX, hour.TX, hour.ObservedNS)
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -207,6 +222,10 @@ func acceptProbe(ctx context.Context, tx pgx.Tx, node int64, p *pb.Probe, now ti
 		return err
 	}
 	_, err = tx.Exec(ctx, "DELETE FROM node_probe_traffic_daily WHERE node_id=$1 AND day<$2::date", node, now.In(probeLocation).AddDate(0, 0, -29).Format("2006-01-02"))
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, "DELETE FROM node_probe_traffic_hourly WHERE node_id=$1 AND bucket_at<$2", node, now.Truncate(time.Hour).Add(-47*time.Hour))
 	return err
 }
 

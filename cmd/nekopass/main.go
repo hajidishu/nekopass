@@ -108,6 +108,7 @@ func run() error {
 	go server.RunSubscriptionClock(ctx)
 	go server.RunCertificateClock(ctx)
 	go server.RunTelegramBot(ctx)
+	go server.RunPanelProbe(ctx)
 	if trusted, exists := os.LookupEnv("NEKOPASS_TRUSTED_PROXIES"); exists {
 		if err = server.SetTrustedProxies(trusted); err != nil {
 			return err

@@ -56,12 +56,22 @@ func (s *Server) tickets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uid := current(r).ID
+	filter := r.URL.Query().Get("status")
+	if filter != "" && filter != "waiting_staff" && filter != "waiting_user" && filter != "closed" {
+		fail(w, 400, "工单状态无效")
+		return
+	}
+	priority := r.URL.Query().Get("priority")
+	if priority != "" && priority != "high" && priority != "medium" && priority != "low" {
+		fail(w, 400, "工单优先级无效")
+		return
+	}
 	var total int64
-	if err := s.Pool.QueryRow(r.Context(), "SELECT count(*) FROM tickets WHERE $1 OR user_id=$2", staff, uid).Scan(&total); err != nil {
+	if err := s.Pool.QueryRow(r.Context(), "SELECT count(*) FROM tickets WHERE ($1 OR user_id=$2) AND ($3::text='' OR status=$3) AND ($4::text='' OR priority=$4)", staff, uid, filter, priority).Scan(&total); err != nil {
 		s.dbError(w, err)
 		return
 	}
-	rows, err := s.Pool.Query(r.Context(), `SELECT t.id,t.user_id,u.username,t.title,t.priority,t.status,t.created_at,t.updated_at FROM tickets t JOIN users u ON u.id=t.user_id WHERE $1 OR t.user_id=$2 ORDER BY CASE WHEN $1 THEN CASE t.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END ELSE 0 END,t.updated_at DESC,t.id DESC LIMIT 20 OFFSET $3`, staff, uid, (page-1)*20)
+	rows, err := s.Pool.Query(r.Context(), `SELECT t.id,t.user_id,u.username,t.title,t.priority,t.status,t.created_at,t.updated_at FROM tickets t JOIN users u ON u.id=t.user_id WHERE ($1 OR t.user_id=$2) AND ($4::text='' OR t.status=$4) AND ($5::text='' OR t.priority=$5) ORDER BY CASE WHEN $1 THEN CASE t.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END ELSE 0 END,t.updated_at DESC,t.id DESC LIMIT 20 OFFSET $3`, staff, uid, (page-1)*20, filter, priority)
 	if err != nil {
 		s.dbError(w, err)
 		return

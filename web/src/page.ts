@@ -24,3 +24,10 @@ export function safeReturnPath(raw: string | null, isAdmin: boolean) {
  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || /[\\\r\n]/.test(raw)) return '/'
  try { const u = new URL(raw, location.origin); if (u.origin !== location.origin || u.hash || u.username || u.password) return '/'; const path = u.pathname; const user = ['/', '/shop', '/orders', '/profile', '/tickets', '/referrals', '/forward_rules', '/node_status'].includes(path); const admin = ['/admin', '/admin/orders', '/admin/tickets', '/admin/payment_gateways', '/admin/announcements', '/admin/users', '/admin/plans', '/admin/nodes', '/admin/node_groups', '/admin/settings'].includes(path) || /^\/admin\/users\/[1-9]\d*\/forward_rules$/.test(path) || /^\/admin\/nodes\/[1-9]\d*\/(ddns|protocols|ip-recovery)$/.test(path); return user || isAdmin && admin ? path + u.search : '/' } catch { return '/' }
 }
+
+export function consumeCreateIntent(){
+ const url=new URL(location.href)
+ if(url.searchParams.get('create')!=='1')return false
+ url.searchParams.delete('create');history.replaceState(null,'',url.pathname+url.search+url.hash)
+ return true
+}

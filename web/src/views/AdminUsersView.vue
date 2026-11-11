@@ -6,7 +6,7 @@ import PageShell from '../PageShell.vue'
 import Icon from '../Icon.vue'
 import LimitInput from '../LimitInput.vue'
 import { resourcesOf, planResources, resourceChanges, type ResourceForm } from '../user-resource-form'
-import {usePage} from '../page'
+import {usePage,consumeCreateIntent} from '../page'
 import {api,bytes,quotaText,limitText,type User,type Plan,type NodeGroup} from '../api'
 const users=ref<User[]>([]),plans=ref<Plan[]>([]),userPage=ref(1),search=ref(''),dialog=ref(false),editID=ref(0)
 const resource=reactive(resourcesOf()),originalResource=ref<ResourceForm>(),originalUser=ref<User>(),nodeGroups=ref<NodeGroup[]>([])
@@ -17,7 +17,7 @@ function credit(u:User){rechargeUser.value=u;Object.assign(recharge,{amount:'100
 async function saveCredit(){if(!rechargeUser.value)return;await run(async()=>{await api(`admin/users/${rechargeUser.value!.id}/recharge`,'POST',recharge);rechargeDialog.value=false;await refresh();ElMessage.success('充值成功，已记入余额明细')})}
 const filtered=computed(()=>users.value.filter(u=>u.username.toLowerCase().includes(search.value.toLowerCase())))
 const paged=computed(()=>filtered.value.slice((userPage.value-1)*25,userPage.value*25))
-const {me,loading,error,busy,run,refresh}=usePage(async()=>{const[u,p,g]=await Promise.all([api<User[]>('admin/users'),api<Plan[]>('admin/plans'),api<NodeGroup[]>('admin/node-groups')]);users.value=u;plans.value=p;nodeGroups.value=g},{admin:true,interval:5000})
+const {me,loading,error,busy,run,refresh}=usePage(async()=>{const[u,p,g]=await Promise.all([api<User[]>('admin/users'),api<Plan[]>('admin/plans'),api<NodeGroup[]>('admin/node-groups')]);users.value=u;plans.value=p;nodeGroups.value=g;if(consumeCreateIntent())edit()},{admin:true,interval:5000})
 async function logoutUser(u:User){
  try{await ElMessageBox.confirm(`退出 ${u.username} 的所有登录设备？用户之后仍可重新登录。`,'强制退出登录',{confirmButtonText:'确定退出',cancelButtonText:'取消',type:'warning'})}catch{return}
  await run(async()=>{await api(`admin/users/${u.id}/logout`,'POST',{});if(u.id===me.value?.id){location.assign('/login');return};ElMessage.success('该用户的所有登录会话已撤销')})

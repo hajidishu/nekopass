@@ -2,11 +2,11 @@
 import {reactive,ref} from 'vue'
 import {ElMessage,ElMessageBox} from 'element-plus'
 import PageShell from '../PageShell.vue'
-import {usePage} from '../page'
+import {usePage,consumeCreateIntent} from '../page'
 import {api} from '../api'
 type Notice={id:number;title:string;content:string;published:boolean;sort_order:number}
 const notices=ref<Notice[]>([]),page=ref(1),total=ref(0),dialog=ref(false),id=ref(0),form=reactive({title:'',content:'',published:true,sort_order:0})
-const {me,loading,error,busy,run,refresh}=usePage(async()=>{const data=await api<{items:Notice[];total:number}>('admin/announcements?page='+page.value);notices.value=data.items;total.value=data.total},{admin:true})
+const {me,loading,error,busy,run,refresh}=usePage(async()=>{const data=await api<{items:Notice[];total:number}>('admin/announcements?page='+page.value);notices.value=data.items;total.value=data.total;if(consumeCreateIntent())edit()},{admin:true})
 function edit(n?:Notice){id.value=n?.id||0;Object.assign(form,n?{title:n.title,content:n.content,published:n.published,sort_order:n.sort_order}:{title:'',content:'',published:true,sort_order:0});dialog.value=true}
 async function save(){await run(async()=>{await api('admin/announcements'+(id.value?'/'+id.value:''),id.value?'PUT':'POST',form);dialog.value=false;await refresh();ElMessage.success('公告已保存')})}
 async function remove(n:Notice){try{await ElMessageBox.confirm('删除公告“'+n.title+'”？','删除公告',{confirmButtonText:'删除',cancelButtonText:'取消'});await run(async()=>{await api('admin/announcements/'+n.id,'DELETE',{});await refresh()})}catch{/* cancelled */}}

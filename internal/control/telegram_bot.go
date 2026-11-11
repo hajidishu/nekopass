@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nekopass/nekopass/internal/probe"
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/release"
 	"github.com/nekopass/nekopass/internal/telegram"
@@ -29,15 +28,6 @@ func (s *Server) telegramInfo() telegramStatus {
 		return *v
 	}
 	return telegramStatus{State: "starting"}
-}
-func (s *Server) samplePanelProbe(ctx context.Context) {
-	sampler := probe.NewSampler()
-	for ctx.Err() == nil {
-		s.panelProbe.Store(sampler.Sample(&pb.NodeConfig{DiskPath: "/"}))
-		if !telegramWait(ctx, 5*time.Second) {
-			return
-		}
-	}
 }
 func telegramWait(ctx context.Context, d time.Duration) bool {
 	t := time.NewTimer(d)
@@ -89,12 +79,8 @@ func (s *Server) RunTelegramBot(ctx context.Context) {
 				done = make(chan struct{})
 				go func(done chan struct{}) {
 					defer close(done)
-					var samplers sync.WaitGroup
-					samplers.Add(1)
-					go func() { defer samplers.Done(); s.samplePanelProbe(session) }()
 					s.telegramSession(session, cfg)
 					cancel()
-					samplers.Wait()
 				}(done)
 			}
 		}

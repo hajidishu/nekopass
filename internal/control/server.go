@@ -134,6 +134,7 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	api.HandleFunc("POST /api/v1/logout", s.logout)
 	api.HandleFunc("POST /api/v1/admin/users/{id}/logout", s.logoutUser)
 	api.HandleFunc("GET /api/v1/admin/settings", s.getSettings)
+	api.HandleFunc("GET /api/v1/admin/dashboard", s.adminDashboard)
 	api.HandleFunc("GET /api/v1/admin/updates", s.checkUpdates)
 	api.HandleFunc("GET /api/v1/admin/updates/panel", s.panelUpdateStatus)
 	api.HandleFunc("POST /api/v1/admin/updates/panel", s.updatePanel)
