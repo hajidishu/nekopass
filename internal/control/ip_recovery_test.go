@@ -98,3 +98,63 @@ func TestIPRecoveryAdminScopeAndPerNodeControl(t *testing.T) {
 		t.Fatal("user return exposed admin page")
 	}
 }
+
+func TestIPRecoveryProfilesUniqueAndFailClosedOnOldAgents(t *testing.T) {
+	f := newSecurityFixture(t)
+	ctx := context.Background()
+	var first, second int64
+	for _, node := range []*int64{&first, &second} {
+		if err := f.p.QueryRow(ctx, "INSERT INTO nodes(name,token_hash,protocol_version) VALUES($1,$2,35) RETURNING id", "fixture-profile-"+Secret(), Hash(Secret())).Scan(node); err != nil {
+			t.Fatal(err)
+		}
+		id := *node
+		t.Cleanup(func() { f.p.Exec(ctx, "DELETE FROM nodes WHERE id=$1", id) })
+	}
+	cfg := iprecovery.DefaultConfig()
+	cfg.Enabled, cfg.BindingMode, cfg.ProfileID = true, "profile", "fixture-profile-one"
+	cfg.TargetIP, cfg.ShareGroupToken = "1.1.1.1", "fixture-share-token"
+	put := func(node int64) int {
+		return f.request(f.admin, fmt.Sprintf("admin/nodes/%d/ip-recovery", node), "PUT", cfg).Code
+	}
+	if got := put(first); got != 200 {
+		t.Fatal("profile-only config rejected", got)
+	}
+	cfg.AccountID, cfg.RegionName, cfg.InstanceID = "stale-account", "ap-southeast-1", "i-stale"
+	if got := put(second); got != 409 {
+		t.Fatal("duplicate profile allowed with stale fixed target", got)
+	}
+	cfg.ProfileID = "fixture-profile-two"
+	if got := put(second); got != 200 {
+		t.Fatal("different profiles conflict", got)
+	}
+	for _, version := range []int32{35, pb.IPRecoveryProfileVersion} {
+		if _, err := f.p.Exec(ctx, "UPDATE nodes SET protocol_version=$2 WHERE id=$1", second, version); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := f.p.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := &pb.ControlMessage{Node: &pb.NodeConfig{}}
+		err = appendIPRecoveryControl(ctx, tx, second, out)
+		tx.Rollback(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.Node.IpRecovery == nil || out.Node.IpRecovery.ProfileId != cfg.ProfileID || out.Node.IpRecovery.BindingMode != "profile" || out.Node.IpRecovery.Enabled != (version >= pb.IPRecoveryProfileVersion) {
+			t.Fatal("profile capability guard incorrect", out.Node.IpRecovery)
+		}
+	}
+	cfg.BindingMode = "instance"
+	if got := put(second); got != 200 {
+		t.Fatal("could not switch to fixed instance", got)
+	}
+	cfg.ProfileID = "fixture-unused-id"
+	if got := put(first); got != 409 {
+		t.Fatal("fixed duplicate instance not rejected", got)
+	}
+	cfg.InstanceID = "i-other"
+	if got := put(first); got != 200 {
+		t.Fatal("different fixed instance rejected", got)
+	}
+}

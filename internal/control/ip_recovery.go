@@ -94,7 +94,7 @@ func (s *Server) saveNodeIPRecovery(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var conflict *pgconn.PgError
 		if errors.As(err, &conflict) && conflict.Code == "23505" {
-			fail(w, 409, "该小助理实例已有其他节点启用自动换 IP")
+			fail(w, 409, "该小助理实例或档案已有其他节点启用自动换 IP")
 			return
 		}
 		s.dbError(w, err)
@@ -154,7 +154,17 @@ func appendIPRecoveryControl(ctx context.Context, tx pgx.Tx, node int64, out *pb
 	if err = cfg.Normalize(); err != nil {
 		return err
 	}
-	out.Node.IpRecovery = &pb.IPRecoveryConfig{Enabled: cfg.Enabled, Generation: generation, ResetSequence: reset, TargetIp: cfg.TargetIP, FailureThreshold: int32(cfg.FailureThreshold), CooldownSeconds: int32(cfg.CooldownSeconds), InstanceType: cfg.InstanceType, AuthToken: cfg.AuthToken, ShareGroupToken: cfg.ShareGroupToken, AccountId: cfg.AccountID, RegionName: cfg.RegionName, InstanceId: cfg.InstanceID, StaticIp: cfg.StaticIP}
+	enabled := cfg.Enabled
+	if cfg.BindingMode == "profile" {
+		var version int32
+		if err = tx.QueryRow(ctx, "SELECT protocol_version FROM nodes WHERE id=$1", node).Scan(&version); err != nil {
+			return err
+		}
+		// Older agents ignore the binding fields and could act on an obsolete
+		// fixed instance saved in this form. Send disabled until they upgrade.
+		enabled = enabled && version >= pb.IPRecoveryProfileVersion
+	}
+	out.Node.IpRecovery = &pb.IPRecoveryConfig{Enabled: enabled, Generation: generation, ResetSequence: reset, TargetIp: cfg.TargetIP, FailureThreshold: int32(cfg.FailureThreshold), CooldownSeconds: int32(cfg.CooldownSeconds), InstanceType: cfg.InstanceType, AuthToken: cfg.AuthToken, ShareGroupToken: cfg.ShareGroupToken, AccountId: cfg.AccountID, RegionName: cfg.RegionName, InstanceId: cfg.InstanceID, StaticIp: cfg.StaticIP, BindingMode: cfg.BindingMode, ProfileId: cfg.ProfileID}
 	return nil
 }
 func acceptIPRecoveryReport(ctx context.Context, tx pgx.Tx, node int64, status *pb.IPRecoveryStatus) error {
@@ -172,6 +182,11 @@ func acceptIPRecoveryReport(ctx context.Context, tx pgx.Tx, node int64, status *
 	for _, ip := range []string{status.OldIp, status.NewIp} {
 		if ip != "" && !iprecovery.PublicIPv4(ip) {
 			return errors.New("自动换 IP 状态地址无效")
+		}
+	}
+	for _, value := range []string{status.InstanceId, status.AccountId, status.RegionName} {
+		if len(value) > 255 || strings.ContainsAny(value, "\r\n\x00") {
+			return errors.New("自动换 IP 实例状态无效")
 		}
 	}
 	var generation int64
@@ -197,7 +212,7 @@ func acceptIPRecoveryReport(ctx context.Context, tx pgx.Tx, node int64, status *
 			feedback = strings.ReplaceAll(feedback, secret, "[已隐藏]")
 		}
 	}
-	report := iprecovery.Status{Generation: status.Generation, State: status.State, Failures: int(status.Failures), Reachable: status.Reachable, CheckedUnix: status.CheckedUnix, LastAttemptUnix: status.LastAttemptUnix, LastChangedUnix: status.LastChangedUnix, CooldownUntilUnix: status.CooldownUntilUnix, OldIP: status.OldIp, NewIP: status.NewIp, Error: truncate(feedback, 500)}
+	report := iprecovery.Status{Generation: status.Generation, State: status.State, Failures: int(status.Failures), Reachable: status.Reachable, CheckedUnix: status.CheckedUnix, LastAttemptUnix: status.LastAttemptUnix, LastChangedUnix: status.LastChangedUnix, CooldownUntilUnix: status.CooldownUntilUnix, OldIP: status.OldIp, NewIP: status.NewIp, Error: truncate(feedback, 500), InstanceID: status.InstanceId, AccountID: status.AccountId, RegionName: status.RegionName}
 	data, _ := json.Marshal(report)
 	_, err = tx.Exec(ctx, "UPDATE node_ip_recovery SET status=$3,status_received_at=now() WHERE node_id=$1 AND generation=$2", node, generation, data)
 	return err

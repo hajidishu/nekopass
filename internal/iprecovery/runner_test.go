@@ -36,6 +36,10 @@ type fakeCloud struct {
 	ambiguous bool
 }
 
+func (f *fakeCloud) Resolve(_ context.Context, cfg Config) (Instance, error) {
+	return Instance{AccountID: cfg.AccountID, RegionName: cfg.RegionName, ID: cfg.InstanceID}, nil
+}
+
 func (f *fakeCloud) IP(context.Context, Config) (string, error) {
 	if f.changed.Load() {
 		return "2.2.2.2", nil

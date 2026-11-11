@@ -2267,6 +2267,8 @@ type IPRecoveryConfig struct {
 	InstanceId       string                 `protobuf:"bytes,11,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
 	StaticIp         bool                   `protobuf:"varint,12,opt,name=static_ip,json=staticIp,proto3" json:"static_ip,omitempty"`
 	ResetSequence    int64                  `protobuf:"varint,13,opt,name=reset_sequence,json=resetSequence,proto3" json:"reset_sequence,omitempty"`
+	BindingMode      string                 `protobuf:"bytes,14,opt,name=binding_mode,json=bindingMode,proto3" json:"binding_mode,omitempty"`
+	ProfileId        string                 `protobuf:"bytes,15,opt,name=profile_id,json=profileId,proto3" json:"profile_id,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -2392,6 +2394,20 @@ func (x *IPRecoveryConfig) GetResetSequence() int64 {
 	return 0
 }
 
+func (x *IPRecoveryConfig) GetBindingMode() string {
+	if x != nil {
+		return x.BindingMode
+	}
+	return ""
+}
+
+func (x *IPRecoveryConfig) GetProfileId() string {
+	if x != nil {
+		return x.ProfileId
+	}
+	return ""
+}
+
 type IPRecoveryStatus struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	Generation        int64                  `protobuf:"varint,1,opt,name=generation,proto3" json:"generation,omitempty"`
@@ -2405,6 +2421,9 @@ type IPRecoveryStatus struct {
 	OldIp             string                 `protobuf:"bytes,9,opt,name=old_ip,json=oldIp,proto3" json:"old_ip,omitempty"`
 	NewIp             string                 `protobuf:"bytes,10,opt,name=new_ip,json=newIp,proto3" json:"new_ip,omitempty"`
 	Error             string                 `protobuf:"bytes,11,opt,name=error,proto3" json:"error,omitempty"`
+	InstanceId        string                 `protobuf:"bytes,12,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	AccountId         string                 `protobuf:"bytes,13,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	RegionName        string                 `protobuf:"bytes,14,opt,name=region_name,json=regionName,proto3" json:"region_name,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -2512,6 +2531,27 @@ func (x *IPRecoveryStatus) GetNewIp() string {
 func (x *IPRecoveryStatus) GetError() string {
 	if x != nil {
 		return x.Error
+	}
+	return ""
+}
+
+func (x *IPRecoveryStatus) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *IPRecoveryStatus) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *IPRecoveryStatus) GetRegionName() string {
+	if x != nil {
+		return x.RegionName
 	}
 	return ""
 }
@@ -3860,7 +3900,7 @@ const file_api_control_proto_rawDesc = "" +
 	"\x12bandwidth_down_bps\x18\x1d \x01(\x04R\x10bandwidthDownBps\x12%\n" +
 	"\x0ebrutal_enabled\x18\x1e \x01(\bR\rbrutalEnabled\x129\n" +
 	"\x19client_tcp_brutal_enabled\x18\x1f \x01(\bR\x16clientTcpBrutalEnabled\x12(\n" +
-	"\x03mux\x18  \x01(\v2\x16.nekopass.v1.MuxConfigR\x03mux\"\xd6\x03\n" +
+	"\x03mux\x18  \x01(\v2\x16.nekopass.v1.MuxConfigR\x03mux\"\x98\x04\n" +
 	"\x10IPRecoveryConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1e\n" +
 	"\n" +
@@ -3881,7 +3921,10 @@ const file_api_control_proto_rawDesc = "" +
 	"\vinstance_id\x18\v \x01(\tR\n" +
 	"instanceId\x12\x1b\n" +
 	"\tstatic_ip\x18\f \x01(\bR\bstaticIp\x12%\n" +
-	"\x0ereset_sequence\x18\r \x01(\x03R\rresetSequence\"\xf1\x02\n" +
+	"\x0ereset_sequence\x18\r \x01(\x03R\rresetSequence\x12!\n" +
+	"\fbinding_mode\x18\x0e \x01(\tR\vbindingMode\x12\x1d\n" +
+	"\n" +
+	"profile_id\x18\x0f \x01(\tR\tprofileId\"\xd2\x03\n" +
 	"\x10IPRecoveryStatus\x12\x1e\n" +
 	"\n" +
 	"generation\x18\x01 \x01(\x03R\n" +
@@ -3896,7 +3939,13 @@ const file_api_control_proto_rawDesc = "" +
 	"\x06old_ip\x18\t \x01(\tR\x05oldIp\x12\x15\n" +
 	"\x06new_ip\x18\n" +
 	" \x01(\tR\x05newIp\x12\x14\n" +
-	"\x05error\x18\v \x01(\tR\x05error\"\x98\x03\n" +
+	"\x05error\x18\v \x01(\tR\x05error\x12\x1f\n" +
+	"\vinstance_id\x18\f \x01(\tR\n" +
+	"instanceId\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\r \x01(\tR\taccountId\x12\x1f\n" +
+	"\vregion_name\x18\x0e \x01(\tR\n" +
+	"regionName\"\x98\x03\n" +
 	"\n" +
 	"DDNSConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1e\n" +

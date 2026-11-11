@@ -73,6 +73,7 @@ type Engine struct {
 	challengeServers map[int32]*http.Server
 	ipRecoveryConfig *pb.IPRecoveryConfig
 	ipRecoveryCancel context.CancelFunc
+	ipRecoveryDone   <-chan struct{}
 	ipRecoveryStatus atomic.Pointer[pb.IPRecoveryStatus]
 	ipRecoveryAPI    func() iprecovery.API
 	ipRecoveryProbe  func(context.Context, string) (bool, error)

@@ -1391,16 +1391,18 @@ components:
     IPRecoveryConfig:
       type: object
       additionalProperties: false
-      description: Runs independently on the agent every five seconds; does not use the cloud provider GFW detector. Requires agent protocol 19.
+      description: Runs independently on the agent every five seconds; does not use the cloud provider GFW detector. Fixed instances require agent protocol 19; profile binding requires protocol 36 and is disabled on older agents until upgraded.
       properties:
         enabled: {type: boolean, default: false}
         target_ip: {type: string, description: Public IPv4 responding to ICMP echo; required when enabled}
         failure_threshold: {type: integer, minimum: 1, maximum: 720, default: 6}
         cooldown_seconds: {type: integer, minimum: 30, maximum: 86400, default: 300}
         instance_type: {type: string, enum: [ec2, lightsail], default: ec2}
+        binding_mode: {type: string, enum: [instance, profile], default: instance, description: Fixed instance identifier or follow a cloud instance profile across replacements}
+        profile_id: {type: string, maxLength: 255, description: Required in profile mode; account, region and instance are resolved using the configured authentication or sharing token}
         auth_token: {type: string, maxLength: 4096, description: Administrator-only X-Auth-Token; at least one credential required when enabled}
         share_group_token: {type: string, maxLength: 4096, description: Administrator-only alternative sharing credential}
-        account_id: {type: string, maxLength: 255, description: Cloud account record ID; may be empty when using a sharing credential}
+        account_id: {type: string, maxLength: 255, description: Cloud account record ID in fixed mode; may be empty when using a sharing credential. Profile mode resolves this from the profile.}
         region_name: {type: string, maxLength: 255}
         instance_id: {type: string, maxLength: 255, description: EC2 instance ID or Lightsail instance name}
         static_ip: {type: boolean, default: false}

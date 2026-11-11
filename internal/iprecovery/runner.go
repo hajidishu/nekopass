@@ -8,20 +8,25 @@ import (
 )
 
 type Durable struct {
-	Generation      int64  `json:"generation"`
-	ResetSequence   int64  `json:"reset_sequence"`
-	LastAttemptUnix int64  `json:"last_attempt_unix"`
-	LastChangedUnix int64  `json:"last_changed_unix"`
-	Pending         bool   `json:"pending"`
-	OldIP           string `json:"old_ip"`
-	NewIP           string `json:"new_ip"`
-	TaskTag         string `json:"task_tag"`
+	LegacyTargetUnknown bool     `json:"legacy_target_unknown,omitempty"`
+	Instance            Instance `json:"instance"`
+	Generation          int64    `json:"generation"`
+	ResetSequence       int64    `json:"reset_sequence"`
+	LastAttemptUnix     int64    `json:"last_attempt_unix"`
+	LastChangedUnix     int64    `json:"last_changed_unix"`
+	Pending             bool     `json:"pending"`
+	OldIP               string   `json:"old_ip"`
+	NewIP               string   `json:"new_ip"`
+	TaskTag             string   `json:"task_tag"`
 }
 type Store interface {
 	LoadRecovery(string) (Durable, error)
 	SaveRecovery(string, Durable) error
 }
 type Status struct {
+	InstanceID        string `json:"instance_id"`
+	AccountID         string `json:"account_id"`
+	RegionName        string `json:"region_name"`
 	Generation        int64  `json:"generation"`
 	State             string `json:"state"`
 	Failures          int    `json:"failures"`
@@ -76,6 +81,7 @@ func (r *Runner) Run(ctx context.Context) {
 	}
 	status := Status{Generation: cfg.Generation, State: "checking"}
 	emit := func(d Durable) {
+		status.InstanceID, status.AccountID, status.RegionName = d.Instance.ID, d.Instance.AccountID, d.Instance.RegionName
 		status.LastAttemptUnix = d.LastAttemptUnix
 		status.LastChangedUnix = d.LastChangedUnix
 		status.OldIP = d.OldIP
@@ -220,8 +226,25 @@ func (r *Runner) change(parent context.Context, key string, disk Durable, newAtt
 		}
 		return true
 	}
+	if !newAttempt && disk.Pending && disk.LegacyTargetUnknown {
+		send("uncertain", "旧换 IP 任务缺少实例记录，请确认任务结束后重置等待状态", true, false)
+		return
+	}
+	if newAttempt || disk.Instance.ID == "" {
+		instance, err := r.API.Resolve(ctx, r.Config)
+		if err != nil {
+			send("error", "无法解析小助理实例，请检查绑定标识、凭证及分享权限；补机期间将自动重试", true, false)
+			return
+		}
+		disk.Instance = instance
+		disk.LegacyTargetUnknown = false
+		if !save() {
+			return
+		}
+	}
+	operation := r.Config.ForInstance(disk.Instance)
 	if newAttempt {
-		ip, err := r.API.IP(ctx, r.Config)
+		ip, err := r.API.IP(ctx, operation)
 		if err != nil {
 			send("error", "无法查询小助理实例，请检查凭证、地区和实例信息", true, false)
 			return
@@ -235,7 +258,7 @@ func (r *Runner) change(parent context.Context, key string, disk Durable, newAtt
 		if !save() {
 			return
 		}
-		task, err := r.API.Change(ctx, r.Config)
+		task, err := r.API.Change(ctx, operation)
 		if err != nil {
 			var apiError *APIError
 			if errors.As(err, &apiError) && !apiError.Ambiguous {
@@ -268,7 +291,31 @@ func (r *Runner) change(parent context.Context, key string, disk Durable, newAtt
 		if parent.Err() != nil {
 			return
 		}
-		ip, err := r.API.IP(ctx, r.Config)
+		if r.Config.BindingMode == "profile" && (disk.Instance.Type == "" || disk.Instance.Type == r.Config.InstanceType) {
+			current, err := r.API.Resolve(ctx, r.Config)
+			if err == nil && current != disk.Instance {
+				// A replacement is a different operation target, not completion of
+				// the old target's PATCH. Retain the profile's cooldown and never
+				// transplant its task tag or infer success from the new machine's IP.
+				disk.Instance = current
+				disk.Pending = false
+				disk.TaskTag, disk.OldIP, disk.NewIP = "", "", ""
+				disk.LastAttemptUnix = r.Now().Unix()
+				if save() {
+					send("cooldown", "实例档案已切换到新实例，冷却后重新检测", true, false)
+				}
+				return
+			}
+			if err != nil {
+				// Do not classify a stale instance as current while the provider
+				// has no replacement or profile access is temporarily unavailable.
+				if !r.waitPoll(ctx, parent, results, disk) {
+					return
+				}
+				continue
+			}
+		}
+		ip, err := r.API.IP(ctx, operation)
 		if err == nil && ip != disk.OldIP {
 			disk.NewIP = ip
 			disk.LastChangedUnix = r.Now().Unix()
@@ -281,7 +328,7 @@ func (r *Runner) change(parent context.Context, key string, disk Durable, newAtt
 			return
 		}
 		if disk.TaskTag != "" && ctx.Err() == nil {
-			task, found, err := r.API.Task(ctx, r.Config, disk.TaskTag)
+			task, found, err := r.API.Task(ctx, operation, disk.TaskTag)
 			if err == nil && found && task.Ended() {
 				if task.Status == "error" {
 					disk.Pending = false
@@ -306,15 +353,25 @@ func (r *Runner) change(parent context.Context, key string, disk Durable, newAtt
 				}
 			}
 		}
-		timer := time.NewTimer(r.PollInterval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			if parent.Err() == nil {
-				send("uncertain", "尚未确认换 IP 结果，将继续查询；不会重复提交请求", true, false)
-			}
+		if !r.waitPoll(ctx, parent, results, disk) {
 			return
-		case <-timer.C:
 		}
+	}
+}
+
+func (r *Runner) waitPoll(ctx, parent context.Context, results chan<- jobResult, disk Durable) bool {
+	timer := time.NewTimer(r.PollInterval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		if parent.Err() == nil {
+			select {
+			case results <- jobResult{disk: disk, state: "uncertain", feedback: "尚未确认换 IP 结果，将继续查询；不会重复提交请求", done: true}:
+			case <-parent.Done():
+			}
+		}
+		return false
+	case <-timer.C:
+		return true
 	}
 }

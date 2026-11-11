@@ -31,10 +31,63 @@ func (t Task) Ended() bool {
 }
 
 type API interface {
+	Resolve(context.Context, Config) (Instance, error)
 	IP(context.Context, Config) (string, error)
 	Change(context.Context, Config) (Task, error)
 	Task(context.Context, Config, string) (Task, bool, error)
 }
+
+func (c *Client) Resolve(ctx context.Context, cfg Config) (Instance, error) {
+	if cfg.BindingMode != "profile" {
+		return Instance{Type: cfg.InstanceType, AccountID: cfg.AccountID, RegionName: cfg.RegionName, ID: cfg.InstanceID}, nil
+	}
+	var result struct {
+		ID             string `json:"id"`
+		InstanceID     string `json:"instance_id"`
+		InstanceCamel  string `json:"instanceId"`
+		Name           string `json:"instance_name"`
+		NameCamel      string `json:"instanceName"`
+		AccountID      string `json:"account_id"`
+		AccountCamel   string `json:"accountId"`
+		RegionName     string `json:"region_name"`
+		RegionCamel    string `json:"regionName"`
+		AccountInvalid bool   `json:"account_invalid"`
+		InvalidCamel   bool   `json:"accountInvalid"`
+	}
+	path := "/ec2-instance-profiles/"
+	if cfg.InstanceType == "lightsail" {
+		path = "/lightsail-instance-profiles/"
+	}
+	// The profile is authoritative. Do not use a stale account or region saved
+	// before replacement, including when the replacement moved across accounts.
+	lookup := cfg
+	lookup.AccountID, lookup.RegionName, lookup.InstanceID = "", "", ""
+	if err := c.call(ctx, lookup, http.MethodGet, path+url.PathEscape(cfg.ProfileID), nil, &result); err != nil {
+		return Instance{}, err
+	}
+	if result.ID != "" && result.ID != cfg.ProfileID || result.AccountInvalid || result.InvalidCamel {
+		return Instance{}, errors.New("实例档案不可用，请检查档案和分享权限")
+	}
+	first := func(values ...string) string {
+		for _, value := range values {
+			if value != "" {
+				return value
+			}
+		}
+		return ""
+	}
+	id := first(result.InstanceID, result.InstanceCamel)
+	if cfg.InstanceType == "lightsail" {
+		id = first(result.Name, result.NameCamel)
+	}
+	instance := Instance{Type: cfg.InstanceType, AccountID: first(result.AccountID, result.AccountCamel), RegionName: first(result.RegionName, result.RegionCamel), ID: id}
+	resolved := cfg.ForInstance(instance)
+	if err := resolved.Normalize(); err != nil {
+		return Instance{}, errors.New("实例档案暂未关联可用实例，等待补机完成或检查分享权限")
+	}
+	return instance, nil
+}
+
 type APIError struct {
 	Status    int
 	Ambiguous bool
