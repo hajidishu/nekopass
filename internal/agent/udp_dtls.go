@@ -110,6 +110,12 @@ func (c *dtlsDatagram) Read(b []byte) (int, error) {
 }
 func (c *dtlsDatagram) Close() error {
 	err := c.Conn.Close()
+	// A concurrent DTLS close can mark the encrypted connection closed before
+	// its underlying packet transport is drained. This wrapper owns that peer:
+	// explicitly close it so queued packets cannot outlive the association.
+	if c.outer != nil {
+		_ = c.outer.Close()
+	}
 	c.readMu.Lock()
 	for _, p := range c.parts {
 		c.queued.Add(-p.queued)

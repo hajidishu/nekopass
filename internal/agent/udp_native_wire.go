@@ -48,6 +48,7 @@ type nativePeer struct {
 	queue                       chan nativeMessage
 	parts                       map[uint32]*udpParts
 	queued                      *atomic.Int64
+	readers                     sync.WaitGroup
 	mu                          sync.Mutex
 	readDeadline, writeDeadline time.Time
 	deadlineChanged             chan struct{}
@@ -277,6 +278,14 @@ func (p *nativePeer) receive(seq uint64, kind byte, msg uint32, index, total int
 	}
 }
 func (p *nativePeer) next() (nativeMessage, error) {
+	p.mu.Lock()
+	if p.ctx.Err() != nil {
+		p.mu.Unlock()
+		return nativeMessage{}, net.ErrClosed
+	}
+	p.readers.Add(1)
+	p.mu.Unlock()
+	defer p.readers.Done()
 	for {
 		p.mu.Lock()
 		deadline := p.readDeadline
@@ -336,7 +345,6 @@ func (p *nativePeer) Write(b []byte) (int, error) {
 func (p *nativePeer) Close() error {
 	p.cancel()
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	for _, parts := range p.parts {
 		p.queued.Add(-parts.queued)
 	}
@@ -346,6 +354,11 @@ func (p *nativePeer) Close() error {
 		case m := <-p.queue:
 			p.queued.Add(-udpQueueCharge(len(m.payload)))
 		default:
+			p.mu.Unlock()
+			// A reader may already have removed a packet from the queue but
+			// not released its reservation. Cancellation and mu prevent new
+			// readers from joining while the outstanding receives finish.
+			p.readers.Wait()
 			return nil
 		}
 	}
