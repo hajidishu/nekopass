@@ -42,7 +42,7 @@ jobs:
             sudo -u postgres createuser runner
           fi
           sudo -u postgres createdb -O runner nekopass_ci_test
-      - name: Go tests, vet and vulnerabilities
+      - name: Go tests and vet
         env:
           NEKOPASS_TEST_DATABASE_URL: postgres://runner@/nekopass_ci_test?host=/var/run/postgresql&sslmode=disable
         run: |
@@ -53,6 +53,8 @@ jobs:
           go vet ./...
           go build -o .local/nekopass-startup-test ./cmd/nekopass
           python3 tests/panel_startup_test.py --binary .local/nekopass-startup-test
+      - name: Go vulnerability scan
+        run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           govulncheck ./...
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

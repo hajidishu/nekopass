@@ -60,15 +60,19 @@ jobs:
             sudo -u postgres createuser runner
           fi
           sudo -u postgres createdb -O runner nekopass_release_test
-      - name: Tests and dependencies
+      - name: Go tests and vet
         run: |
           # Native ICMP tests use unprivileged ping sockets on this CI host.
           sudo sysctl -w 'net.ipv4.ping_group_range=0 2147483647'
           go test -race -p 1 ./...
           (cd third_party/quic-go && go test -race -p 1 ./...)
           go vet ./...
+      - name: Go vulnerability scan
+        run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           govulncheck ./...
+      - name: Frontend dependencies
+        run: |
           npm --prefix web ci
           npm --prefix web test
           npm --prefix web audit --audit-level=low
