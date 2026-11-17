@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - 'docs/**'
+      - 'third_party/picomatch/**'
+      - 'tests/picomatch-security.test.cjs'
       - '.github/workflows/docs.yml'
       - 'scripts/check-public.py'
   workflow_dispatch:
@@ -45,6 +47,7 @@ jobs:
         env:
           VITEPRESS_BASE: '${{ steps.pages.outputs.base_path }}/'
         run: |
+          npm --prefix docs test
           npm --prefix docs run typecheck
           npm --prefix docs run build
       - name: Upload site

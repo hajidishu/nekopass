@@ -52,6 +52,13 @@ class PublicGuardTests(unittest.TestCase):
         self.assertTrue(GUARD.inspect(name, (declaration + json.dumps(secrets.token_hex(32))).encode()))
         self.assertTrue(GUARD.inspect('third_party/unknown/file.go', b'package unknown'))
 
+    def test_reviewed_picomatch_sources_still_check_credentials(self):
+        name = 'third_party/picomatch/lib/parse.js'
+        self.assertFalse(GUARD.inspect(name, b"'use strict';"))
+        self.assertFalse(GUARD.inspect('third_party/picomatch/LICENSE', b'MIT License'))
+        self.assertTrue(GUARD.inspect('third_party/picomatch/unreviewed.js', b''))
+        self.assertTrue(GUARD.inspect(name, ('api_token = ' + json.dumps(secrets.token_hex(32))).encode()))
+
     def setup_repository(self, root):
         self.git(root, 'init', '-q')
         self.git(root, 'config', 'user.name', 'Public guard fixture')

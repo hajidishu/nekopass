@@ -25,6 +25,10 @@ EXTENSIONS = {'.go', '.mod', '.sum', '.sql', '.proto', '.yaml', '.yml', '.md', '
               '.sh', '.ps1', '.py', '.ts', '.mts', '.js', '.cjs', '.mjs', '.json', '.vue',
               '.html', '.css', '.svg', '.example', '.service'}
 MAX_FILE = 2 * 1024 * 1024
+# Reviewed build-only picomatch fork; keep unknown vendored files blocked.
+PICOMATCH_FILES = {'LICENSE', 'NEKOPASS.md', 'package.json', 'index.js', 'posix.js',
+                   'lib/constants.js', 'lib/utils.js', 'lib/scan.js',
+                   'lib/parse.js', 'lib/picomatch.js'}
 RULES = [
     ('private-key', re.compile(r'-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----')),
     ('cloud-access-key', re.compile(r'\b(?:AKIA|ASIA)[A-Z0-9]{16}\b')),
@@ -54,9 +58,14 @@ def path_problem(name):
         return None if name in ROOT_FILES else 'unreviewed-root-file'
     if path.parts[0] not in SOURCE_DIRS:
         return 'unreviewed-directory'
-    if path.parts[0] == 'third_party' and (len(path.parts)<3 or path.parts[1]!='quic-go'):
-        return 'unreviewed-dependency'
-    if name == 'third_party/quic-go/LICENSE':
+    if path.parts[0] == 'third_party':
+        if len(path.parts) < 3:
+            return 'unreviewed-dependency'
+        if path.parts[1] != 'quic-go' and not (
+            path.parts[1] == 'picomatch' and '/'.join(path.parts[2:]) in PICOMATCH_FILES
+        ):
+            return 'unreviewed-dependency'
+    if name in {'third_party/quic-go/LICENSE', 'third_party/picomatch/LICENSE'}:
         return None
     if path.parts[0] == '.githooks' and path.name in {'pre-commit', 'pre-push'}:
         return None
