@@ -12,12 +12,14 @@ import (
 	"github.com/nekopass/nekopass/internal/ddns"
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/telegram"
+	"golang.org/x/time/rate"
 )
 
 type fakeTelegram struct {
 	texts     []string
 	chats     []int64
 	edits     int
+	answers   int
 	keyboards []*telegram.Keyboard
 }
 
@@ -44,6 +46,7 @@ func (f *fakeTelegram) Edit(ctx context.Context, chat, message int64, text strin
 	return f.Send(ctx, chat, text, k)
 }
 func (f *fakeTelegram) Answer(_ context.Context, _ string, text string) error {
+	f.answers++
 	if text != "" {
 		f.texts = append(f.texts, text)
 	}
@@ -79,6 +82,44 @@ func saveTelegramFixture(t *testing.T, f *securityFixture) SystemSettings {
 	return saved
 }
 
+func TestTelegramIgnoresNonPrivateUpdates(t *testing.T) {
+	// An unconfigured Server also proves group traffic never reads the database.
+	s := &Server{}
+	api := &fakeTelegram{}
+	bot := telegram.User{ID: 12345, IsBot: true}
+	denied := rate.NewLimiter(rate.Every(time.Hour), 3)
+	for _, kind := range []string{"group", "supergroup", "channel", ""} {
+		for _, text := range []string{"1", "hello", "", "/start", "/start@fixture_bot", "/status", "/nodes"} {
+			for _, from := range []*telegram.User{nil, {ID: 42}, {ID: 43}, {ID: 99, IsBot: true}} {
+				msg := &telegram.Message{ID: 1, Date: 1, From: from, Chat: telegram.Chat{ID: -100123, Type: kind}, Text: text}
+				for _, u := range []telegram.Update{
+					{Message: msg},
+					{Callback: &telegram.Callback{ID: "fixture", From: telegram.User{ID: 42}, Message: msg, Data: "nodes:0"}},
+				} {
+					if err := s.handleTelegramUpdate(context.Background(), api, "fixture-token", bot, u, denied); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+		}
+	}
+	for _, callback := range []*telegram.Callback{
+		{ID: "fixture-missing-message", From: telegram.User{ID: 42}},
+		{ID: "fixture-inline", From: telegram.User{ID: 43}, InlineMessageID: "fixture-inline"},
+		{ID: "fixture-inline-with-message", From: telegram.User{ID: 42}, InlineMessageID: "fixture-inline", Message: &telegram.Message{Chat: telegram.Chat{ID: 42, Type: "private"}}},
+	} {
+		if err := s.handleTelegramUpdate(context.Background(), api, "fixture-token", bot, telegram.Update{Callback: callback}, denied); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(api.texts) != 0 || len(api.chats) != 0 || api.edits != 0 || api.answers != 0 {
+		t.Fatal("non-private update triggered a Telegram response")
+	}
+	if denied.Tokens() != 3 {
+		t.Fatal("group traffic consumed the private denial budget")
+	}
+}
+
 func TestTelegramPrivateAuthPaginationAndSettingsSecrecy(t *testing.T) {
 	f := newSecurityFixture(t)
 	cfg := saveTelegramFixture(t, f)
@@ -100,7 +141,7 @@ func TestTelegramPrivateAuthPaginationAndSettingsSecrecy(t *testing.T) {
 	update := func(user, chat int64, kind string) telegram.Update {
 		return telegram.Update{Message: &telegram.Message{ID: 1, From: &telegram.User{ID: user}, Chat: telegram.Chat{ID: chat, Type: kind}, Text: "/start"}}
 	}
-	for _, u := range []telegram.Update{update(43, 43, "private"), update(42, -100123, "supergroup"), update(42, 43, "private"), update(42, 42, "group")} {
+	for _, u := range []telegram.Update{update(43, 43, "private"), update(42, 43, "private")} {
 		before := len(api.texts)
 		if err := f.s.handleTelegramUpdate(ctx, api, cfg.Telegram.Token, bot, u, nil); err != nil {
 			t.Fatal(err)
@@ -108,6 +149,15 @@ func TestTelegramPrivateAuthPaginationAndSettingsSecrecy(t *testing.T) {
 		if len(api.texts) != before+1 || !strings.Contains(api.texts[before], telegram.DeniedText) || strings.Contains(api.texts[before], "fixture-panel") {
 			t.Fatal("unauthorized access disclosed panel")
 		}
+	}
+	before := len(api.texts)
+	for _, u := range []telegram.Update{update(42, -100123, "supergroup"), update(42, 42, "group")} {
+		if err := f.s.handleTelegramUpdate(ctx, api, cfg.Telegram.Token, bot, u, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(api.texts) != before {
+		t.Fatal("group command triggered a reply")
 	}
 	if err := f.s.handleTelegramUpdate(ctx, api, cfg.Telegram.Token, bot, update(42, 42, "private"), nil); err != nil {
 		t.Fatal(err)
@@ -131,7 +181,7 @@ func TestTelegramPrivateAuthPaginationAndSettingsSecrecy(t *testing.T) {
 		t.Fatal("second page not correct")
 	}
 	u.Callback.From.ID = 43
-	before := api.edits
+	before = api.edits
 	f.s.handleTelegramUpdate(ctx, api, cfg.Telegram.Token, bot, u, nil)
 	if api.edits != before {
 		t.Fatal("notification recipient accessed administrator callback")
@@ -191,6 +241,13 @@ func TestTelegramIPCountDedupRecoveryAndRevokedTarget(t *testing.T) {
 	}
 	if len(api.texts) != 4 {
 		t.Fatal("configured targets not delivered", len(api.texts))
+	}
+	delivered := make(map[int64]int)
+	for _, chat := range api.chats {
+		delivered[chat]++
+	}
+	if delivered[-100123] != 2 || delivered[43] != 2 {
+		t.Fatal("configured group or private notification delivery changed", delivered)
 	}
 	for _, text := range api.texts {
 		if !strings.Contains(text, "近 7 天已更换 1 次 IP") || strings.Contains(text, "fixture-private-key") || strings.Contains(text, d.Token) {

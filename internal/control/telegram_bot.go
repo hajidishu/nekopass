@@ -194,6 +194,19 @@ func (s *Server) telegramNotificationLoop(ctx context.Context, api telegram.API,
 }
 
 func (s *Server) handleTelegramUpdate(ctx context.Context, api telegram.API, token string, bot telegram.User, u telegram.Update, denied *rate.Limiter) error {
+	// Groups are notification destinations only. Ignore incoming non-private
+	// updates before reading settings or consuming the private denial budget.
+	chatMessage := u.Message
+	if u.Callback != nil {
+		// Inline callbacks do not identify a private chat and are unsupported.
+		if u.Callback.Message == nil || u.Callback.InlineMessageID != "" {
+			return nil
+		}
+		chatMessage = u.Callback.Message
+	}
+	if chatMessage != nil && chatMessage.Chat.Type != "private" {
+		return nil
+	}
 	settings, err := s.readSettings(ctx)
 	if err != nil {
 		return err
@@ -234,8 +247,6 @@ func (s *Server) handleTelegramUpdate(ctx context.Context, api telegram.API, tok
 		text := telegram.DeniedText
 		if message.Chat.Type == "private" && message.Chat.ID == from.ID {
 			text += fmt.Sprintf("\n你的 Telegram 用户 ID：<code>%d</code>", from.ID)
-		} else if message.Chat.Type == "group" || message.Chat.Type == "supergroup" {
-			text += fmt.Sprintf("\n当前群组 Chat ID：<code>%d</code>\n管理功能仅支持管理员私聊。", message.Chat.ID)
 		}
 		return api.Send(ctx, message.Chat.ID, text, nil)
 	}
