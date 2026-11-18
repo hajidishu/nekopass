@@ -588,6 +588,42 @@ func TestRawTCPMuxHalfClose(t *testing.T) {
 	}
 }
 
+type muxControlCarrier struct{ *nativePeer }
+
+func (*muxControlCarrier) Write(b []byte) (int, error) { return len(b), nil }
+
+func TestNativeMuxFlowClosePreservesPendingCarrierBuffers(t *testing.T) {
+	var queued atomic.Int64
+	a := newRandomUDPAssociation(context.Background(), nil, nil, nil, "fixture-mux-close", &queued)
+	a.muxConfig = &pb.MuxConfig{Enabled: true}
+	carrier := newNativePeer(a.ctx, nil, nil, "fixture-mux-close", [16]byte{1}, &queued, true)
+	a.datagrams = &muxControlCarrier{carrier}
+	defer a.Close()
+	f := a.newFlowLocked(1, nil)
+	f.state = randomUDPReady
+	// A paused carrier reader can legitimately hold a close acknowledgement
+	// while the logical flow also has an unread fragment of its own.
+	carrier.receiveControl(nativeData, make([]byte, randomUDPFrameSize+1))
+	f.nativePeer.receive(1, nativeData, 1, 0, 2, []byte("unread fragment"))
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if f.ctx.Err() == nil || a.ctx.Err() != nil || carrier.ctx.Err() != nil {
+		t.Fatal("closing one flow changed the shared carrier lifetime")
+	}
+	if used := queued.Load(); used != udpQueueCharge(randomUDPFrameSize+1) {
+		t.Fatal("flow cleanup lost its fragment or the live carrier reservation", used)
+	}
+	second := a.newFlowLocked(2, nil)
+	if second.ctx.Err() != nil {
+		t.Fatal("carrier could not accept another logical flow")
+	}
+	a.Close()
+	if queued.Load() != 0 || second.ctx.Err() == nil || carrier.ctx.Err() == nil {
+		t.Fatal("association teardown did not close flows and release the shared budget", queued.Load())
+	}
+}
+
 func TestNativeMuxSecurityModesAndFlowIsolation(t *testing.T) {
 	for _, mode := range []string{"plain_udp", "dtls_udp", "random_udp"} {
 		t.Run(mode, func(t *testing.T) {

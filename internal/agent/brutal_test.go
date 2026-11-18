@@ -67,6 +67,9 @@ func TestBrutalNativeUDPAllSecurityModes(t *testing.T) {
 					}
 				}
 				conn.Close()
+				// A Mux carrier can still receive close acknowledgements after a
+				// logical flow closes. Assert the shared budget after pool teardown.
+				h.Close()
 				if queued.Load() != 0 {
 					t.Fatal("receive memory was not released", queued.Load())
 				}
