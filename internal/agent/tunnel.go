@@ -440,14 +440,14 @@ func (e *Engine) handleTunnel(ctx context.Context, upstream net.Conn) {
 	}
 	finished := make(chan error, 2)
 	go func() {
-		_, err := io.Copy(targetConn, upstream)
+		err := copyTunnelStream(targetConn, upstream)
 		if tcp, ok := targetConn.(*net.TCPConn); ok {
 			_ = tcp.CloseWrite()
 		}
 		finished <- err
 	}()
 	go func() {
-		_, err := io.Copy(upstream, targetConn)
+		err := copyTunnelStream(upstream, targetConn)
 		if tcp, ok := upstream.(interface{ CloseWrite() error }); ok {
 			_ = tcp.CloseWrite()
 		}

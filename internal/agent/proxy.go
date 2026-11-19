@@ -19,9 +19,20 @@ var proxySignature = []byte("\r\n\r\n\x00\r\nQUIT\n")
 type bufferedConn struct {
 	net.Conn
 	reader *bufio.Reader
+	prefix []byte
 }
 
-func (c *bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+func (c *bufferedConn) Read(p []byte) (int, error) {
+	if len(c.prefix) != 0 {
+		n := copy(p, c.prefix)
+		c.prefix = c.prefix[n:]
+		return n, nil
+	}
+	if c.reader != nil {
+		return c.reader.Read(p)
+	}
+	return c.Conn.Read(p)
+}
 func (c *bufferedConn) CloseWrite() error {
 	if v, ok := c.Conn.(interface{ CloseWrite() error }); ok {
 		return v.CloseWrite()
