@@ -6,6 +6,8 @@
 
 接收开关用于读取上游提供的原始客户端地址；发送开关要求目标服务支持 Proxy Protocol。来源列表留空时，禁止规则接收 Proxy Protocol。
 
+「PROXY Protocol使用兼容nyanpass的行为」默认关闭。开启后，支持此设置的入口节点发送 PPv2 时保留客户端源地址及端口，将头里的目标地址设为 `0.0.0.0:0`（IPv4）或 `[::]:0`（IPv6）。
+
 这里配置的是业务转发的 PROXY Protocol 来源。网页 Nginx 的 `X-Forwarded-For` / `X-Forwarded-Proto` 信任另由 `NEKOPASS_TRUSTED_PROXIES` 控制，见 [反向代理](./proxy.md)。
 
 ## 禁止的目标 IP 网段

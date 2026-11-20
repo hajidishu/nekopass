@@ -14,6 +14,7 @@ func TestAdministratorNetworkSettingsCannotBeOverriddenByTenant(t *testing.T) {
 	ctx := context.Background()
 	settings := defaultSettings()
 	settings.ProxyTrustedCIDRs = []string{"192.0.2.10/32"}
+	settings.ProxyNyanpassCompat = true
 	securityStatus(t, f.request(f.user, "admin/settings", "PUT", settings), 403)
 	securityStatus(t, f.request(f.admin, "admin/settings", "PUT", settings), 200)
 	var node int64
@@ -39,7 +40,7 @@ func TestAdministratorNetworkSettingsCannotBeOverriddenByTenant(t *testing.T) {
 	stream := &StreamServer{Server: f.s}
 	report := &pb.AgentMessage{InstanceId: Secret(), ProtocolVersion: 14}
 	out, err := stream.exchange(ctx, f.p, node, report)
-	if err != nil || !out.Node.SecurityConfigured || !out.Node.Enabled || len(out.Node.TargetDenyCidrs) != len(networkpolicy.Defaults()) || len(out.Rules) != 1 || !out.Rules[0].Enabled {
+	if err != nil || !out.Node.SecurityConfigured || !out.Node.Enabled || !out.Node.ProxyNyanpassCompat || len(out.Node.TargetDenyCidrs) != len(networkpolicy.Defaults()) || len(out.Rules) != 1 || !out.Rules[0].Enabled {
 		t.Fatal("security policy not delivered", err)
 	}
 	input.ProxyAccept = "off"
@@ -54,9 +55,10 @@ func TestAdministratorNetworkSettingsCannotBeOverriddenByTenant(t *testing.T) {
 	}
 	settings.TargetDenyCIDRs = []string{}
 	settings.ProxyTrustedCIDRs = []string{}
+	settings.ProxyNyanpassCompat = false
 	securityStatus(t, f.request(f.admin, "admin/settings", "PUT", settings), 200)
 	out, err = stream.exchange(ctx, f.p, node, report)
-	if err != nil || !out.Node.Enabled || out.Rules[0].Enabled || len(out.Rules[0].ProxyTrustedCidrs) != 0 {
+	if err != nil || !out.Node.Enabled || out.Node.ProxyNyanpassCompat || out.Rules[0].Enabled || len(out.Rules[0].ProxyTrustedCidrs) != 0 {
 		t.Fatal("admin override/trust removal ignored", err)
 	}
 	input.Targets = []string{"127.0.0.1:80"}

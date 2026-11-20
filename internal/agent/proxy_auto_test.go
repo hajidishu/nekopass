@@ -18,7 +18,7 @@ func TestAutoProxyReceivesBothVersionsAndPreservesPayload(t *testing.T) {
 				defer b.Close()
 				done := make(chan error, 1)
 				go func() {
-					err := writeProxy(a, version, want)
+					err := writeProxy(a, version, want, false)
 					if err == nil {
 						_, err = a.Write([]byte("payload"))
 					}

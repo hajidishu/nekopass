@@ -34,6 +34,7 @@ type SystemSettings struct {
 	ReferralMode                  string            `json:"referral_mode"`
 	ReferralRate                  string            `json:"referral_rate"`
 	ProxyTrustedCIDRs             []string          `json:"proxy_trusted_cidrs"`
+	ProxyNyanpassCompat           bool              `json:"proxy_nyanpass_compat"`
 	TargetDenyCIDRs               []string          `json:"target_deny_cidrs"`
 	SiteName                      string            `json:"site_name"`
 	PanelURL                      string            `json:"panel_url"`

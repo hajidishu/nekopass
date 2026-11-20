@@ -1994,6 +1994,7 @@ type NodeConfig struct {
 	BrutalEnabled          bool                   `protobuf:"varint,30,opt,name=brutal_enabled,json=brutalEnabled,proto3" json:"brutal_enabled,omitempty"`
 	ClientTcpBrutalEnabled bool                   `protobuf:"varint,31,opt,name=client_tcp_brutal_enabled,json=clientTcpBrutalEnabled,proto3" json:"client_tcp_brutal_enabled,omitempty"`
 	Mux                    *MuxConfig             `protobuf:"bytes,32,opt,name=mux,proto3" json:"mux,omitempty"`
+	ProxyNyanpassCompat    bool                   `protobuf:"varint,33,opt,name=proxy_nyanpass_compat,json=proxyNyanpassCompat,proto3" json:"proxy_nyanpass_compat,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -2250,6 +2251,13 @@ func (x *NodeConfig) GetMux() *MuxConfig {
 		return x.Mux
 	}
 	return nil
+}
+
+func (x *NodeConfig) GetProxyNyanpassCompat() bool {
+	if x != nil {
+		return x.ProxyNyanpassCompat
+	}
+	return false
 }
 
 type IPRecoveryConfig struct {
@@ -3863,7 +3871,7 @@ const file_api_control_proto_rawDesc = "" +
 	"generation\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x14\n" +
 	"\x05state\x18\x03 \x01(\tR\x05state\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\xa6\v\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"\xda\v\n" +
 	"\n" +
 	"NodeConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1f\n" +
@@ -3900,7 +3908,8 @@ const file_api_control_proto_rawDesc = "" +
 	"\x12bandwidth_down_bps\x18\x1d \x01(\x04R\x10bandwidthDownBps\x12%\n" +
 	"\x0ebrutal_enabled\x18\x1e \x01(\bR\rbrutalEnabled\x129\n" +
 	"\x19client_tcp_brutal_enabled\x18\x1f \x01(\bR\x16clientTcpBrutalEnabled\x12(\n" +
-	"\x03mux\x18  \x01(\v2\x16.nekopass.v1.MuxConfigR\x03mux\"\x98\x04\n" +
+	"\x03mux\x18  \x01(\v2\x16.nekopass.v1.MuxConfigR\x03mux\x122\n" +
+	"\x15proxy_nyanpass_compat\x18! \x01(\bR\x13proxyNyanpassCompat\"\x98\x04\n" +
 	"\x10IPRecoveryConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1e\n" +
 	"\n" +

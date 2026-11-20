@@ -161,7 +161,7 @@ func readProxy(c net.Conn, mode string, trusted []string) (net.Conn, proxyAddres
 	}
 	return wrapped, a, nil
 }
-func writeProxy(c net.Conn, mode string, a proxyAddresses) error {
+func writeProxy(c net.Conn, mode string, a proxyAddresses, nyanpassCompat bool) error {
 	if mode == "" || mode == "off" {
 		return nil
 	}
@@ -184,11 +184,20 @@ func writeProxy(c net.Conn, mode string, a proxyAddresses) error {
 			family = 0x11
 			length = 12
 		}
+		dstPort := a.dst.Port()
+		if nyanpassCompat {
+			if src.Is4() {
+				dst = netip.IPv4Unspecified()
+			} else {
+				dst = netip.IPv6Unspecified()
+			}
+			dstPort = 0
+		}
 		data = append(data, 0x21, family, 0, byte(length))
 		data = append(data, src.AsSlice()...)
 		data = append(data, dst.AsSlice()...)
 		data = binary.BigEndian.AppendUint16(data, a.src.Port())
-		data = binary.BigEndian.AppendUint16(data, a.dst.Port())
+		data = binary.BigEndian.AppendUint16(data, dstPort)
 	} else {
 		return errors.New("invalid proxy mode")
 	}

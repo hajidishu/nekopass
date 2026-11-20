@@ -388,7 +388,7 @@ func (e *Engine) forwardPrepared(l *listener, client net.Conn, addresses proxyAd
 	rate := connectionRate(target, l.rule)
 	defer a.beginMeter(rate)()
 	ctx = context.WithValue(ctx, meteringKey{}, rate)
-	if err = writeProxy(target, l.rule.ProxySend, addresses); err != nil {
+	if err = writeProxy(target, l.rule.ProxySend, addresses, e.node.Load().GetProxyNyanpassCompat()); err != nil {
 		target.Close()
 		return
 	}

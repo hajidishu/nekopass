@@ -8,8 +8,8 @@ import {api} from '../api'
 import {loadSite} from '../site'
 type SMTP={host:string;port:number;security:string;username:string;password:string;from:string;from_name:string}
 type TelegramSettings={enabled:boolean;token:string;admin_ids:number[];notification_chat_ids:number[];statistics_days:number}
-type Settings={telegram:TelegramSettings;registration_email_verification:boolean;force_invite:boolean;terms_url:string;privacy_url:string;registration_enabled:boolean;captcha_mode:string;smtp:SMTP;referral_enabled:boolean;referral_mode:string;referral_rate:string;site_name:string;panel_url:string;agent_host:string;agent_port:number;agent_transport:string;installer_url:string;release_base_url:string;agent_version:string;install_token_minutes:number;proxy_trusted_cidrs:string[];target_deny_cidrs:string[]}
-const form=reactive<Settings>({telegram:{enabled:false,token:'',admin_ids:[],notification_chat_ids:[],statistics_days:7},registration_email_verification:true,force_invite:false,terms_url:'',privacy_url:'',registration_enabled:false,captcha_mode:'image',smtp:{host:'',port:587,security:'starttls',username:'',password:'',from:'',from_name:''},referral_enabled:false,referral_mode:'first',referral_rate:'15',site_name:'Nekopass',panel_url:'',agent_host:'',agent_port:9443,agent_transport:'tls',installer_url:'https://github.com/hajidishu/nekopass/releases/latest/download/install-agent.sh',release_base_url:'https://github.com/hajidishu/nekopass/releases/download',agent_version:'latest',install_token_minutes:30,proxy_trusted_cidrs:[],target_deny_cidrs:[]})
+type Settings={telegram:TelegramSettings;registration_email_verification:boolean;force_invite:boolean;terms_url:string;privacy_url:string;registration_enabled:boolean;captcha_mode:string;smtp:SMTP;referral_enabled:boolean;referral_mode:string;referral_rate:string;site_name:string;panel_url:string;agent_host:string;agent_port:number;agent_transport:string;installer_url:string;release_base_url:string;agent_version:string;install_token_minutes:number;proxy_trusted_cidrs:string[];proxy_nyanpass_compat:boolean;target_deny_cidrs:string[]}
+const form=reactive<Settings>({telegram:{enabled:false,token:'',admin_ids:[],notification_chat_ids:[],statistics_days:7},registration_email_verification:true,force_invite:false,terms_url:'',privacy_url:'',registration_enabled:false,captcha_mode:'image',smtp:{host:'',port:587,security:'starttls',username:'',password:'',from:'',from_name:''},referral_enabled:false,referral_mode:'first',referral_rate:'15',site_name:'Nekopass',panel_url:'',agent_host:'',agent_port:9443,agent_transport:'tls',installer_url:'https://github.com/hajidishu/nekopass/releases/latest/download/install-agent.sh',release_base_url:'https://github.com/hajidishu/nekopass/releases/download',agent_version:'latest',install_token_minutes:30,proxy_trusted_cidrs:[],proxy_nyanpass_compat:false,target_deny_cidrs:[]})
 watch(()=>form.referral_enabled,value=>{if(!value)form.force_invite=false})
 const proxyTrustText=ref(''),targetDenyText=ref(''),telegramAdmins=ref(''),telegramChats=ref('')
 const telegramStatus=ref<{state:string;username?:string;error?:string}|null>(null)
@@ -143,6 +143,12 @@ async function copyKey(){try{await copyText(shownKey.value);ElMessage.success('�
             <el-form label-position="top" @submit.prevent="save">
               <div class="form-section-title">转发安全</div>
               <el-form-item label="PROXY Protocol 信任来源"><el-input v-model="proxyTrustText" type="textarea" :rows="4" placeholder="每行一个 CIDR，例如 192.0.2.10/32" /><span class="field-tip">只信任这些来源提供的客户端 IP；留空禁止规则接收 PROXY Protocol。仅管理员可以修改。</span></el-form-item>
+              <el-form-item label="PROXY Protocol使用兼容nyanpass的行为">
+                <div>
+                  <el-switch v-model="form.proxy_nyanpass_compat" aria-describedby="proxy-nyanpass-compat-note" />
+                  <div id="proxy-nyanpass-compat-note" class="field-tip">如果你使用PROXY Protocol的时候一切正常就请不要开启此选项</div>
+                </div>
+              </el-form-item>
               <el-form-item label="禁止转发的目标 IP 网段"><el-input v-model="targetDenyText" type="textarea" :rows="10" placeholder="每行一个 IPv4 / IPv6 CIDR" /><span class="field-tip">直转和隧道出口均检查实际解析后的 IP。默认禁止本机、内网、链路本地、组播、云 metadata 等特殊地址；需要内网转发时移除对应网段，留空允许全部目标。旧节点须升级后才能执行这些限制。</span></el-form-item>
             </el-form>
             <div class="form-section-title api-key-section">管理 API 密钥</div>

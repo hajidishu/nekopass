@@ -193,6 +193,7 @@ message NodeConfig {
  bool brutal_enabled = 30;
  bool client_tcp_brutal_enabled = 31;
  MuxConfig mux = 32;
+ bool proxy_nyanpass_compat = 33;
 }
 
 message IPRecoveryConfig {

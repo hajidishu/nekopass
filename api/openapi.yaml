@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.20.2
+  version: 0.20.3
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -1491,6 +1491,7 @@ components:
         referral_mode: {type: string, enum: [first, recurring], default: first}
         referral_rate: {type: string, default: '15', description: Percent 0–100 with up to two decimal places}
         proxy_trusted_cidrs: {type: array, maxItems: 64, items: {type: string}, description: Administrator-only PROXY receiver trust boundary}
+        proxy_nyanpass_compat: {type: boolean, default: false, description: Zero the destination IP and port in outgoing PROXY v2 headers while preserving the client source}
         target_deny_cidrs: {type: array, maxItems: 256, items: {type: string}, description: Block actual resolved final target IPs; explicit empty array allows all targets}
         site_name: {type: string, minLength: 1, maxLength: 64}
         panel_url: {type: string, description: HTTP or HTTPS origin without subpath; may include port}

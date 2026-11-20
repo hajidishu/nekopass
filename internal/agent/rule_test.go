@@ -20,42 +20,49 @@ func (c addressedConn) LocalAddr() net.Addr {
 	return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 4567}
 }
 func TestProxyRoundTripPreservesPayload(t *testing.T) {
-	for _, mode := range []string{"v1", "v2"} {
-		for _, host := range []string{"192.0.2.3", "2001:db8::3"} {
-			t.Run(mode+host, func(t *testing.T) {
-				dst := "198.51.100.2"
-				if host[0] == '2' {
-					dst = "2001:db8::4"
+	for _, tt := range []struct {
+		name, mode, src, dst, expectedDst string
+		compat                            bool
+	}{
+		{"v1_ipv4", "v1", "192.0.2.3:1234", "198.51.100.2:443", "198.51.100.2:443", false},
+		{"v1_ipv6", "v1", "[2001:db8::3]:1234", "[2001:db8::4]:443", "[2001:db8::4]:443", false},
+		{"v2_ipv4", "v2", "192.0.2.3:1234", "198.51.100.2:443", "198.51.100.2:443", false},
+		{"v2_ipv6", "v2", "[2001:db8::3]:1234", "[2001:db8::4]:443", "[2001:db8::4]:443", false},
+		{"compat_v1", "v1", "192.0.2.3:1234", "198.51.100.2:443", "198.51.100.2:443", true},
+		{"compat_v2_ipv4", "v2", "192.0.2.3:1234", "198.51.100.2:443", "0.0.0.0:0", true},
+		{"compat_v2_ipv6", "v2", "[2001:db8::3]:1234", "[2001:db8::4]:443", "[::]:0", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			src := netip.MustParseAddrPort(tt.src)
+			addresses := proxyAddresses{src, netip.MustParseAddrPort(tt.dst)}
+			want := proxyAddresses{src, netip.MustParseAddrPort(tt.expectedDst)}
+			a, b := net.Pipe()
+			defer a.Close()
+			defer b.Close()
+			done := make(chan error, 1)
+			go func() {
+				err := writeProxy(a, tt.mode, addresses, tt.compat)
+				if err == nil {
+					_, err = a.Write([]byte("payload"))
 				}
-				want := proxyAddresses{netip.AddrPortFrom(netip.MustParseAddr(host), 1234), netip.AddrPortFrom(netip.MustParseAddr(dst), 443)}
-				a, b := net.Pipe()
-				defer a.Close()
-				defer b.Close()
-				done := make(chan error, 1)
-				go func() {
-					err := writeProxy(a, mode, want)
-					if err == nil {
-						_, err = a.Write([]byte("payload"))
-					}
-					a.Close()
-					done <- err
-				}()
-				conn, got, err := readProxy(addressedConn{b}, mode, []string{"127.0.0.0/8"})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if got != want {
-					t.Fatalf("got %+v want %+v", got, want)
-				}
-				payload, err := io.ReadAll(conn)
-				if err != nil || string(payload) != "payload" {
-					t.Fatalf("%q %v", payload, err)
-				}
-				if err = <-done; err != nil {
-					t.Fatal(err)
-				}
-			})
-		}
+				a.Close()
+				done <- err
+			}()
+			conn, got, err := readProxy(addressedConn{b}, tt.mode, []string{"127.0.0.0/8"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Fatalf("got %+v want %+v", got, want)
+			}
+			payload, err := io.ReadAll(conn)
+			if err != nil || string(payload) != "payload" {
+				t.Fatalf("%q %v", payload, err)
+			}
+			if err = <-done; err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 func TestProxyRejectsUntrustedAndMalformed(t *testing.T) {
